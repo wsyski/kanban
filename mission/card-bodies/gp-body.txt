@@ -1,9 +1,11 @@
-GATE (human in normal runs; script in --auto-gates mode — never a worker).
+PLAN GATE — lane <N>. The driver never commits. Nothing is committed unless a human chooses to commit it.
 
-Authorize the PLAN. Before completing:
-1. Read mission/plans/task-<N>-plan.md (staged) and the RVp verdict (parent card result).
-2. Require RVp PASS.
-3. Commit ONLY the plan file: git commit -m "plan(task-<N>): <title>" (mission/plans/** must be the only staged content).
-4. Complete with the commit SHA in the result. This commit is what unblocks the task's TW card.
+The driver completes this card only when the plan review verdict is PASS, and records the evidence (staged file count + verdict) in the result.
 
-Never open the gate without a PASS verdict on record.
+If this lane runs with human gates (the default), the driver pauses here and logs HUMAN GATE READY. Your options as the gate-holder:
+1. Read mission/plans/lane-<N>-plan.md and the RVp verdict (parent card result).
+2. Inspect what is staged: git diff --cached --stat
+3. Commit the plan if you want it in history — entirely at your discretion, with an explicit pathspec. The flow does not require it.
+4. Complete this card: hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "<what you decided>"
+
+Completing this card is what unblocks the lane's TW card. Never open the gate without a PASS verdict on record.

@@ -79,7 +79,22 @@ chain**. Surplus lanes stay parked — they are not archived, not auto-completed
 the same data used to measure real agent minutes).
 
 ### D4 — The board waits, visibly
-Cards are filed at creation, all `blocked` with reason `"parked: awaiting raw idea"`.
+Cards are filed at creation with the **lane root** `blocked` (reason
+`"parked: awaiting lane activation"`) and the rest of the lane `todo`, held by their
+board parents.
+
+Only the root is blocked, and it is filed **without** a board-level parent, because
+hermes's `block_task` transitions only `running`/`ready` cards: a card created with a
+parent is `todo` and silently refuses to block. An unblocked root is worse than a CLI
+error — `recompute_ready` promotes any non-sticky card once its parents finish, so a
+worker could claim `P<k>` before the driver snapshotted its idea or pruned the lane.
+A parentless root is `ready` at creation, so the block takes and is *sticky*: only an
+explicit unblock releases it, which is what `open_lane` does after resolving the idea.
+
+Cross-lane sequencing therefore lives in the driver rather than in a board edge —
+`lane_graph` gives lane *k*'s root the parent prefix `Gc{k-1}`, and `tick()` will not
+call `open_lane` until that gate is done. Intra-lane chaining still uses board edges,
+the mechanism the smoke runs proved.
 "Not started" is a visible board state, not an absence. This reuses the mechanism
 portfolio's own R1 card already ran (`blocked: "Parked until explicit launch"` →
 `promoted_manual`).
@@ -116,7 +131,7 @@ Inside an idea file, as HTML comments — invisible when rendered, machine-parse
 with a strict regex, unknown keys are an error:
 
 ```markdown
-<!-- integration-tests: no -->
+<!-- integration-tests: false -->
 <!-- auto-gates: true -->
 ```
 
@@ -132,7 +147,7 @@ edited while an earlier lane is running. So when lane *k*'s root unblocks (lane
 | condition | action |
 |---|---|
 | file missing or empty | hard stop — lane stays parked, chain halts, deadman notice |
-| `integration-tests: no` (or board default) | archive `TI<k>`, `RVc<k>`; relink `RVa<k> → Gc<k>`; run |
+| `integration-tests: false` (or board default) | archive `TI<k>`, `RVc<k>`; relink `RVa<k> → Gc<k>`; run |
 | `auto-gates: true` (or board default) | that lane's gates complete without waiting |
 | otherwise | run the full lane, gates wait for the human |
 
@@ -251,10 +266,11 @@ its rework loop are built on, it works, and the operator's instruction was that 
 scenario is unchanged from the smoke test. Replacing it is a driver rewrite with no
 defect motivating it.
 
-**6. Header booleans restricted to exactly `true` / `false`.** Rejected: the
-operator wrote `<!-- integration-tests: no -->` and ratified that syntax, and the
-shipped example file uses it. `yes`/`no`/`true`/`false`/`on`/`off`/`1`/`0` all
-parse.
+**6. Header booleans restricted to exactly `true` / `false`.** ~~Rejected~~ —
+**accepted on the operator's instruction (2026-09-07).** The earlier draft also took
+`yes`/`no`/`on`/`off`/`1`/`0`; the operator ruled that one spelling is the convention.
+`_as_bool` now accepts exactly `true` or `false` and raises `expected true or false`
+on anything else, and every example and document uses it.
 
 **7. Migration via temporary slugs with a nine-step quiescence and cutover
 protocol.** Rejected as ceremony beyond the risk: both boards are backed up to

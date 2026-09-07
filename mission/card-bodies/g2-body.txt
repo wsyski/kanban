@@ -1,8 +1,0 @@
-GATE (human — this card never spawns a worker). Authorization record for this mission.
-
-Before completing this gate:
-1. hermes kanban --board smoke-test show <RVA-id> — reviewer verdict is PASS (in the result field).
-2. In <REPO>: git status shows this mission's files staged; git log still at the baseline this mission started from (stage-only held).
-3. Every acceptance suite passes from the staged tree: for s in tests/run_*.sh; do bash $s; done
-4. Commit the staged project (the human authorization record) and push to origin.
-5. kanban_complete this gate with the commit SHA and pushed ref as the result.

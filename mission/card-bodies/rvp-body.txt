@@ -1,13 +1,15 @@
-VERDICT CARD — plan review. You review a PLAN (not code). Never edit anything; never stage.
+VERDICT CARD — plan review for lane <N>. You review a PLAN, not code. Never edit anything; never stage.
 
-HARD RULES: (1) Read-only on the repo; write only /tmp/<YOUR-CARD-ID>.review. (2) No commit/branch/stash/reset/clean. (3) Do not write profile memories.
+HARD RULES: (1) Read-only on the repo; write only /tmp/<YOUR-CARD-ID>.review. (2) Do not commit, branch, stash, reset, clean. (3) Do not write profile memories.
 
-TASK: The parent card (P) delivered a staged plan at mission/plans/task-<N>-plan.md (attachment: patch). Review it against mission/input-spec.md:
-(a) Spec coverage: every spec requirement maps to a plan task — nothing extra (YAGNI), nothing missing.
-(b) Superpowers format: header + Global Constraints + numbered tasks with Files/Interfaces/checkbox steps; every code step has real code, no TBD/TODO/placeholder.
-(c) Testability: every plan task has a RED-then-GREEN test step the TW/C cards can execute verbatim.
-(d) Stage-only compliance: no step commits, no branches; files land under the task's own directory (wordcount-cli/ or wordcount-service/).
+TASK: the parent card delivered a staged plan at mission/plans/lane-<N>-plan.md (attachment: patch). Review it against the lane's raw idea at <IDEA>:
+(a) Coverage: every requirement in the idea maps to a plan task — nothing extra (YAGNI), nothing missing.
+(b) Format: header + Global Constraints + numbered tasks with Files/Interfaces/checkbox steps; every code step has real code, no TBD/TODO/placeholder.
+(c) Testability: every plan task has a RED-then-GREEN step the later cards can execute verbatim.
+(d) Stage-only compliance: no step commits, no branches; files land under this lane's own target paths.
 
-VERDICT (complete via `hermes kanban` CLI, result field mandatory):
-- PASS: complete with --result "PASS: <one-line per (a)-(d)>".
-- REJECT: complete with --result "REJECT: <numbered findings>"; the plan card re-opens for a revision round (max 3; then human escalation).
+Reproduce, do not skim: re-derive every numeric claim yourself before accepting it.
+
+VERDICT (result field mandatory):
+- PASS: complete with --result "PASS: <one line per (a)-(d)>".
+- REJECT: complete with --result "REJECT: <numbered findings, each with reproduction steps>". The plan card re-opens for a revision round (max 3, then human escalation).

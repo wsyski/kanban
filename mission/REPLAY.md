@@ -1,5 +1,14 @@
 # Replay manual — kanban smoke missions (word-count CLI, Spring Boot service, Maven)
 
+> **HISTORICAL — this whole document, not just its v1 section.** It records the
+> scenario-v2 runs of 2026-09-05/06 and the machinery they used. That machinery has
+> been retired: `mission/replay.sh`, `mission/file-mission.sh` and
+> `mission/scenario.json` no longer exist, so every command below that invokes them
+> will fail. The board is now generic — one template, N lanes, ideas entered by a
+> human. For how to run one, see README §3 and `mission/create-board.sh --help`.
+> Kept for provenance: the timing data and the per-card records below are the
+> evidence behind README §4 and §8.
+
 **Scenario v2 (plan-first, stage-only, 2 sequential tasks) executed end-to-end
 2026-09-06 13:09→16:42** — full timing data in `timing.jsonl` (609 driver
 ticks), report generator `timing-report.py`. Gate commits: plan-1 `cfb1401`,

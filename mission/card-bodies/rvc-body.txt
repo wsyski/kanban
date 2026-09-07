@@ -1,12 +1,10 @@
-VERDICT CARD — final review AFTER integration tests (task 2 only). Never edit; never stage.
+VERDICT CARD — final review for lane <N>, before the code gate. Never edit anything; never stage.
 
-HARD RULES: (1) Read-only except /tmp/<YOUR-CARD-ID>.review. (2) No commit/branch/stash/reset/clean. (3) No profile memories.
+HARD RULES: (1) Read-only on the repo; write only /tmp/<YOUR-CARD-ID>.review. (2) Do not commit, branch, stash, reset, clean. (3) Do not write profile memories.
 
-TASK: The TI card added failsafe ITs (and possibly touched the pom). Whatever changed after RVa2, you now review the COMPLETE staged diff:
-(a) git diff --cached — only wordcount-service/ files, no target/, no strays; TI's additions present.
-(b) mvn -q verify — full lifecycle GREEN: unit + contract + failsafe ITs (real booted context).
-(c) mvn -q -DskipTests package → fat jar builds; boot it on a random port, curl /count/health → 200 ok, kill it (only /tmp state).
-(d) IT quality: ITs are real tests (assert exact bodies/status), not stubs; health-poll pattern present.
-(e) Task 1 regression: if wordcount-cli/ suites exist, run them too — must still pass.
+TASK: the last check before the gate. Against the full staged diff:
+(a) The whole suite passes from a clean run — run it yourself, do not trust the previous card's claim.
+(b) The staged index contains all of this lane's files and nothing else.
+(c) The integration tests exercise real behavior, not mocks of the thing under test.
 
-VERDICT via CLI — result field mandatory: "PASS: <per (a)-(e)>" or "REJECT: <numbered>" (re-open TI card, max 3 rounds).
+VERDICT: complete with --result "PASS: full suite <totals>, <n> files staged" or "REJECT: <numbered findings>".

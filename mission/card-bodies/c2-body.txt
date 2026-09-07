@@ -1,9 +1,0 @@
-HARD RULES — breaking any of these fails the card, whatever else you achieve:
-(1) Do NOT commit, branch, stash, reset, restore, clean. (2) mvn 3.9 + Java 17, ~/.m2 pre-warmed (openapi-generator 7.x); no installs. (3) Stage ONLY your own files; never target/. (4) Do not write profile memories. (5) Patch + result-field evidence on completion.
-
-TASK (task 2 — wordcount-service/): Implement per plan task-2 so TW2's contract tests go GREEN:
-- Hand-written spec src/main/resources/api/openapi.yaml (EXACTLY the input-spec contract: POST /count JSON + Error model; GET /count/health) — write it FIRST.
-- pom.xml: spring-boot-starter-web + openapi-generator-maven-plugin 7.x (generator spring, interfaceOnly, useTags or bare) generating API interface + models into target/generated-sources; controller implements the generated interface (compile-time conformance).
-- Counting service: same word definition as task 1 (runs of non-whitespace, UTF-8 safe); coder-owned JUnit unit tests for it (surefire) — TDD: test RED → code GREEN.
-- Verify GREEN: mvn -q test → TW2's contract tests + your unit tests all pass; paste summary. Attach patch (pom + spec + src/main + your unit tests only).
-- Do NOT modify TW2's test files.

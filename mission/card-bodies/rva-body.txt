@@ -1,12 +1,13 @@
-HARD RULES — breaking any of these fails the card, whatever else you achieve:
-(1) Do NOT commit, branch, stash, reset, restore, clean. (2) Read-only on the repo except /tmp/<YOUR-CARD-ID>.review. (3) Do not write profile memories.
+VERDICT CARD — implementation review for lane <N>. Never edit anything; never stage.
 
-TASK: Final review verdict on the staged implementation (parent = coder, tests staged by TW). Do all of:
-(a) git diff --cached — full staged diff contains ONLY this task's files (wordcount-cli/ or wordcount-service/ per card title) + no build output (target/, build/) + no strays from other tasks.
-(b) Build + run EVERY suite for this task (mvn -q test / verify per plan; task-2 also runs the failsafe ITs). All GREEN required — and the other task's suites must still pass if they exist.
-(c) Spot-check by hand: contract cases (stdin/count for task 1; /count and /count/health incl. 400-error case for task 2) against the plan's declared behavior in mission/plans/task-<N>-plan.md.
-(d) Confirm stage-only held: no commits by workers (git log unchanged except plan-gate commits), no branch.
+HARD RULES: (1) Read-only on the repo; write only /tmp/<YOUR-CARD-ID>.review. (2) Do not commit, branch, stash, reset, clean. (3) Do not write profile memories.
 
-VERDICT via `hermes kanban` CLI — result field MANDATORY:
-- "PASS: <findings per (a)-(d)>" → done.
-- "REJECT: <numbered findings>" → re-open the CODER card for one fix round (max 3 rounds total, then block for human).
+TASK: review the STAGED diff in <WORKDIR> (git diff --cached), not the worktree, against mission/plans/lane-<N>-plan.md and the lane's idea at <IDEA>:
+(a) The plan's tasks are all implemented, and nothing beyond them is.
+(b) The tests actually exercise the behavior they claim to; run them yourself.
+(c) No commits, no branches, no files outside this lane's target paths.
+(d) Error handling does not silently swallow failures.
+
+Reproduce, do not skim. Every PASS must be earned by re-derivation; every REJECT must list concrete reproduction steps.
+
+VERDICT: complete with --result "PASS: <one line per (a)-(d)>" or "REJECT: <numbered findings with reproduction steps>".

@@ -1,2 +1,12 @@
 build/
 target/
+mission/ideas/
+mission/runs/
+__pycache__/
+*.pyc
+
+# IDE
+.idea/
+.classpath
+.project
+.settings/

@@ -1,7 +1,0 @@
-HARD RULES — breaking any of these fails the card, whatever else you achieve:
-(1) Do NOT commit, branch, stash, reset, restore, clean. (2) mvn 3.9 + Java 17; no installs. (3) Stage ONLY your own files (src/test only + maybe pom failsafe config if the plan says so); never target/. (4) Do not write profile memories. (5) Patch + result-field evidence.
-
-TASK (task 2 — wordcount-service/): Write the FAILSAFE integration tests per plan task-2:
-- src/test/java/... *IT.java (failsafe naming): @SpringBootTest(RANDOM_PORT) + TestRestTemplate; poll GET /count/health until 200 (timeout ~15s) BEFORE asserting on /count; then full contract: word count exact (UTF-8, tabs/multi-space, 400-word body), 400 empty text, 400 missing field with error body, health JSON shape.
-- pom: maven-failsafe-plugin wired to run *IT in mvn verify (add to pom ONLY if not already there — coordinate: if the coder's pom already wires failsafe, do not touch it; state that in the result).
-- Verify: mvn -q verify → unit + contract + IT all GREEN (ITs boot the REAL context). Paste summary. Attach patch.

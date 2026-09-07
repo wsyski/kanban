@@ -1,10 +1,11 @@
-GATE (human in normal runs; script in --auto-gates mode — never a worker).
+CODE GATE — lane <N>. The driver never commits. Nothing is committed unless a human chooses to commit it.
 
-Authorize the CODE. Before completing:
-1. Reviewer verdict of this task's final review (parent card) is PASS — check the parent's result.
-2. All suites GREEN from a clean build (mvn -q test / verify as applicable).
-3. The staged index contains ALL of this task's files and nothing else. Review the staged diff: git diff --cached --stat.
-4. YOU commit: git commit -m "task <N>: <one line>" — the flow itself never commits; the commit is the gate-holder's act.
-5. Complete with the commit SHA in the result. This commit is what unlocks the next task's root card.
+The driver completes this card only when the final review verdict is PASS, and records the staged path list in the result. It runs no build of its own — the reviewer cards ran the tests, and at a manual gate you run whatever verification you want.
 
-Never commit anything except this task's staged files.
+If this lane runs with human gates (the default), the driver pauses here. Your options as the gate-holder:
+1. Check the parent card's PASS verdict and the suite evidence in the driver log.
+2. Inspect the staged index: git diff --cached --stat
+3. Commit and push if you want this work in history — entirely at your discretion, with an explicit pathspec. The flow does not require it.
+4. Complete this card: hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "<what you decided>"
+
+Completing this card is what releases the next lane's root card.

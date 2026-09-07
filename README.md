@@ -1,24 +1,23 @@
 # kanban-smoke-test
 
-Smoke-test repo for the **coding-team kanban** solution: multi-profile agents
-(manager plans, tester tests RED-first, coder implements, reviewer gates the
-verdict, human gate commits) building real Maven projects on a kanban board.
+**coding-team kanban**: multi-profile agents (manager plans, tester tests
+RED-first, coder implements, reviewer gates the verdict, human gate commits)
+building real work on a kanban board, from a generic lane template
+instantiated per board.
 
-Two deliverables per replay: the **products** built by the lane itself, and
-the **recipe** that makes the run re-executable.
+A LANE is one full instance of the card graph executing one human-entered
+idea. Lanes are capacity, ideas are demand: file N lanes, enter ideas, and
+the board runs them in order. See §3.
 
-> Run 1 (2026-09-05, 3 missions): provenance below.
-> Run 2 (2026-09-06, scenario v2 — full timing + instrumentation): §4–§8.
+> Run 1 (2026-09-05, 3 missions) and run 2 (2026-09-06, scenario v2 — full
+> timing + instrumentation) predate the generic template; kept as historical
+> record in §4 and §8.
 
-- Products: `wordcount-cli/` (fat-jar stdin→count CLI), `wordcount-service/`
-  (spec-first Spring Boot REST API).
-- Recipe: everything under `mission/` — input spec, card bodies, board
-  declaration (`scenario.json`), driver (`run.py`), timing
-  (`timing.jsonl` + `timing-report.py`), replay one-liner (`replay.sh`).
-
-```
-mission/replay.sh                  # ONE command: board → cards → launch → drive
-```
+- Products of the original runs: `wordcount-cli/` (fat-jar stdin→count CLI),
+  `wordcount-service/` (spec-first Spring Boot REST API).
+- Template: `mission/lanes.py` (card graph + idea parsing),
+  `mission/create-board.sh` (board instantiation), `mission/start-board.sh`
+  (driver launch), example ideas in `docs/example-ideas/`.
 
 ---
 
@@ -31,7 +30,7 @@ mission/replay.sh                  # ONE command: board → cards → launch →
 | Workers STAGE only (`git add -- own paths`), never commit/push | card bodies hard-rules block (first section); reviewed by reviewers |
 | Nobody commits before the human gate — not even the driver | run.py `--auto-gates` completes gate cards with "HUMAN COMMIT REQUIRED" |
 | `git add`/`git diff` always allowed (provenance patches) | card bodies |
-| Task N+1 chain-root parented to task N's gate card | scenario.json — the board itself is the sequencer |
+| Lane N+1's root parented to lane N's gate card | `mission/lanes.py` — the board itself is the sequencer |
 | Every card's evidence | `git diff --cached` patch attached to the card |
 | Verdicts in the result field | reviewer card bodies mandate it |
 
@@ -52,50 +51,39 @@ mvn -q dependency:get -Dartifact=org.openapitools:openapi-generator-maven-plugin
 mvn -q dependency:get -Dartifact=org.apache.maven.plugins:maven-failsafe-plugin:3.5.4
 ```
 
-## 3. Replay — one command
+## 3. Creating and running a board
 
-```
-cd /opt/projects/kanban-smoke-test/main/kanban-smoke-test
-mission/replay.sh
-```
+    mission/create-board.sh --slug <s> --title "<t>" --lanes <n> [flags]
+    $EDITOR mission/ideas/<s>/lane-1.md      # enter your raw idea
+    mission/start-board.sh --slug <s>
 
-What it does (no repo reset needed — workers are stage-only):
+Flags, all off by default: `--auto-start`, `--auto-gates`,
+`--skip-integration-tests`. `--ideas <file>` preloads ideas from one markdown
+document, split at `## ` headings in document order. `mission/create-board.sh
+--help` is the authoritative list.
 
-1. Pre-flight: profiles up, assets present
-2. Creates-or-reuses the board (`scenario.json` → slug + workdir)
-3. Reclaims + archives ALL leftover cards on that board — never re-file
-   over live cards (orphans burn budget on archived cards and re-stage stale
-   files)
-4. Deletes generated source (`git clean` `wordcount-*/`, `target/`) —
-   committed history and `mission/` untouched
-5. Files every card from `mission/scenario.json` (title-deduped, idempotent)
-6. Launches task 1's root; starts `run.py --auto-gates` in the background
-   — from its first tick it appends status snapshots to
-   `mission/timing.jsonl`
-7. Prints watch commands
+Lanes are capacity, ideas are demand: file 3 lanes, enter 1 idea, and the board
+runs that one and stops. Per-idea headers override the board defaults:
 
-Your role (the human gate — the point of the scenario): when the driver log
-prints `GATE Gxx: ... HUMAN COMMIT REQUIRED`:
+    <!-- integration-tests: false -->
+    <!-- auto-gates: true -->
 
-```
-hermes kanban --board smoke-test show <gate-id>     # read verdict evidence
-(cd wordcount-cli && mvn -q test) | (cd wordcount-service && mvn -q verify)   # suite GREEN?
-git add <staged files> && git commit -m "<gate commit msg>" -- <pathspec> && git push origin main
-```
+Ideas, snapshots and run data are board-scoped and untracked:
+`mission/ideas/<slug>/`, `mission/runs/<slug>/`. Workers read the immutable
+snapshot the driver writes when the lane opens, never the file you are editing —
+so you can write lane 3's idea while lane 1 is still running.
 
-The chain continues by itself after each gate commit.
+**The driver never commits.** All work is staged on the current branch. At a
+human gate the driver pauses and records the evidence; you commit at your
+discretion, or not at all. With gates skipped, nothing is committed.
 
-Watch:
+Two ready-to-run examples live in `docs/example-ideas/`:
+`smoke-test.md` (two small lanes, reproduces the original run-1/run-2
+products) and `portfolio.md` (one lane, board-default
+`--skip-integration-tests`). Each file's own preamble carries the exact
+`create-board.sh` invocation to file it.
 
-```
-hermes kanban --board smoke-test list
-tail -f /tmp/run-replay.log
-python3 mission/timing-report.py            # after Gc2
-hermes kanban --board smoke-test runs <id>  # per-card attempts
-~/.hermes/kanban/boards/smoke-test/logs/<card-id>.log   # worker transcripts
-```
-
-## 4. Timing statistics (final run 2026-09-06)
+## 4. Timing statistics (historical: scenario v2, pre-generic; final run 2026-09-06)
 
 **Totals: 175 min agent work / 213 min wall clock = 18% overhead.**
 
@@ -209,9 +197,10 @@ Notes on the work vs wall split:
 
 - **Single driver discipline:** exactly one `run.py` at a time; duplicates
   idle silently and interleave log output. Kill all, start one.
-- **Re-filing mid-run is forbidden:** first archive + reclaim every card.
-  Orphaned workers burn full budgets on archived cards and can re-stage
-  stale file content into the index.
+- **Re-filing mid-run is forbidden:** `create-board.sh` refuses if the board
+  already exists. To start over, archive/reclaim every card first
+  (`mission/reset.sh` does this). Orphaned workers burn full budgets on
+  archived cards and can re-stage stale file content into the index.
 - **Turn budgets are global, not per-profile:** `agent.max_turns` (80) in
   `~/.hermes/config.yaml` governs every kanban worker. A profile-level
   shadow value caused two run-killing exhaustions — never set
@@ -233,7 +222,7 @@ Notes on the work vs wall split:
 
 ## 6. Gate discipline (stage-only flow)
 
-The full authorization chain per task:
+The full authorization chain per lane, with `--auto-gates` off (the default):
 
 ```
 workers stage (git add own paths) + attach per-card patch
@@ -244,23 +233,31 @@ driver completes the gate card: "HUMAN COMMIT REQUIRED"
         ↓
 human runs the suite, commits with explicit pathspec, pushes
         ↓
-board sees gate done → next task's root unblocks
+board sees gate done → next lane's root unblocks
 ```
 
-Nothing under `wordcount-*/` enters history except through a gate commit;
-`mission/` assets are committed freely by the operator between runs.
+Nothing the idea builds enters history except through a gate commit;
+`mission/` assets are committed freely by the operator between runs. With
+`--auto-gates`, the driver plays the gate-holder role itself: verifies,
+commits, records the SHA — useful for smoke-testing the machinery, not for
+real work.
 
-## 7. Making a NEW scenario (genericity)
+## 7. Filing a new idea (genericity)
 
-1. Write `mission/scenario.json` (template: this repo) — board slug, task
-   sequence, cards[] `{title, body-file, assignee, parent, skill}`.
-2. Write the card bodies in `mission/card-bodies/` (hard rules FIRST).
-3. Write the task contract in `mission/input-spec.md` — that file is the
-   immutable source; card bodies point workers at it.
-4. If the driver's card graph differs from the shipped one, extend
-   `CARDS` in `mission/run.py` to match the new titles/parents.
-5. `mission/replay.sh <your-scenario>.json` — board, cards, launch, drive.
-   Timing collection is automatic.
+The card graph (`mission/lanes.py`) and card bodies (`mission/card-bodies/`)
+are shared across every board — nothing scenario-specific to write per idea.
+To run new work:
+
+1. Create or reuse a board (§3): `mission/create-board.sh --slug <s>
+   --title "<t>" --lanes <n>`.
+2. Write the idea into `mission/ideas/<s>/lane-<k>.md` — free text, plus the
+   optional `<!-- integration-tests: false -->` / `<!-- auto-gates: true -->`
+   headers to override the board's defaults for that lane only.
+3. `mission/start-board.sh --slug <s>` launches the driver.
+
+Only touch `mission/card-bodies/` or `mission/lanes.py` when the card graph
+itself needs to change (a new role, a new gate) — that changes every board,
+not just one idea. See `docs/example-ideas/` for two worked examples.
 
 ## 8. Provenance — run 1 (2026-09-05, three missions)
 

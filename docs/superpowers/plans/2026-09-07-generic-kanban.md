@@ -218,7 +218,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import lanes
 
 IDEA = """## Idea 1: wordcount CLI
-<!-- integration-tests: no -->
+<!-- integration-tests: false -->
 <!-- auto-gates: true -->
 
 Build a fat-jar CLI reading stdin and printing a word count.
@@ -227,14 +227,14 @@ Build a fat-jar CLI reading stdin and printing a word count.
 
 def test_parse_idea_extracts_headers_and_body():
     headers, body = lanes.parse_idea(IDEA)
-    assert headers == {"integration-tests": "no", "auto-gates": "true"}
+    assert headers == {"integration-tests": "false", "auto-gates": "true"}
     assert "fat-jar CLI" in body
     assert "integration-tests" not in body
 
 
 def test_parse_idea_rejects_unknown_key():
     with pytest.raises(ValueError, match="unknown idea header"):
-        lanes.parse_idea("## X\n<!-- integraton-tests: no -->\n\ntext\n")
+        lanes.parse_idea("## X\n<!-- integraton-tests: false -->\n\ntext\n")
 
 
 def test_parse_idea_ignores_ordinary_html_comments():
@@ -258,7 +258,7 @@ def test_split_ideas_empty_document_yields_nothing():
 def test_resolve_prefers_header_over_board_default():
     defaults = {"integration_tests": True, "auto_gates": False}
     opts = lanes.resolve_lane_options(
-        defaults, {"integration-tests": "no", "auto-gates": "true"})
+        defaults, {"integration-tests": "false", "auto-gates": "true"})
     assert opts == {"integration_tests": False, "auto_gates": True}
 
 
@@ -267,6 +267,13 @@ def test_resolve_falls_back_to_board_default():
     opts = lanes.resolve_lane_options(defaults, {})
     assert opts["integration_tests"] is False
     assert opts["auto_gates"] is True
+
+
+def test_bool_values_are_exactly_true_or_false():
+    with pytest.raises(ValueError, match="expected true or false"):
+        lanes.resolve_lane_options({}, {"integration-tests": "no"})
+    with pytest.raises(ValueError, match="expected true or false"):
+        lanes.resolve_lane_options({}, {"auto-gates": "1"})
 
 
 def test_resolve_rejects_a_suite_header():
@@ -304,8 +311,7 @@ import re
 HEADER_KEYS = frozenset({"integration-tests", "auto-gates"})
 
 _HEADER_RE = re.compile(r"^<!--\s*([A-Za-z][A-Za-z0-9-]*)\s*:\s*(.*?)\s*-->\s*$")
-_TRUE = {"yes", "true", "on", "1"}
-_FALSE = {"no", "false", "off", "0"}
+_BOOL = {"true": True, "false": False}
 
 
 def parse_idea(text):
@@ -351,12 +357,12 @@ def split_ideas(text):
 
 
 def _as_bool(value, fallback):
+    """Exactly `true` or `false`. One spelling, so a header always reads the
+    same way in every idea file."""
     v = str(value).strip().lower()
-    if v in _TRUE:
-        return True
-    if v in _FALSE:
-        return False
-    raise ValueError(f"expected yes/no, got {value!r}")
+    if v not in _BOOL:
+        raise ValueError(f"expected true or false, got {value!r}")
+    return _BOOL[v]
 
 
 def resolve_lane_options(board_defaults, headers):
@@ -422,7 +428,7 @@ import file_lanes
 DOC = """Example ideas for the smoke test.
 
 ## Idea 1: CLI
-<!-- integration-tests: no -->
+<!-- integration-tests: false -->
 
 Build the CLI.
 
@@ -440,7 +446,7 @@ def test_import_writes_one_file_per_section(tmp_path):
     n = file_lanes.import_ideas(str(doc), str(ideas), lane_count=3)
     assert n == 2
     assert (ideas / "lane-1.md").read_text().startswith("## Idea 1: CLI")
-    assert "integration-tests: no" in (ideas / "lane-1.md").read_text()
+    assert "integration-tests: false" in (ideas / "lane-1.md").read_text()
     assert (ideas / "lane-2.md").read_text().startswith("## Idea 2: service")
     assert not (ideas / "lane-3.md").exists()
 
@@ -537,7 +543,6 @@ def file_board(board, repo, workdir, lane_count, key_prefix):
     unblocks the root. The body points there, never at the mutable source.
     """
     made = {}
-    prev_gate = None
     for lane in range(1, lane_count + 1):
         for card in lanes.lane_cards(lane, integration_tests=True):
             snapshot = f"{repo}/mission/runs/{board}/snapshots/lane-{lane}.md"
@@ -551,16 +556,16 @@ def file_board(board, repo, workdir, lane_count, key_prefix):
                     "--max-runtime", "60m", "--max-retries", "1",
                     "--idempotency-key", f"{key_prefix}-{card['id']}",
                     "--created-by", "manager", "--json"]
-            parent = made.get(card["parent"]) if card["parent"] else prev_gate
+            parent = made.get(card["parent"]) if card["parent"] else None
             if parent:
                 args += ["--parent", parent]
             if card["skill"]:
                 args += ["--skill", card["skill"]]
             cid = json.loads(kb(board, *args))["id"]
             made[card["id"]] = cid
-            kb(board, "block", "--kind", "needs_input", cid,
-               "parked: awaiting raw idea")
-        prev_gate = made[f"Gc{lane}"]
+            if card["parent"] is None:
+                kb(board, "block", "--kind", "needs_input", cid,
+                   "parked: awaiting lane activation")
     return made
 
 
@@ -617,7 +622,7 @@ Lanes are capacity, ideas are demand. Lanes are filed parked; the human
 writes mission/ideas/<slug>/lane-<k>.md and starts the board. The first lane
 with no idea stops the chain. Per-idea headers override the board defaults:
 
-    <!-- integration-tests: no -->
+    <!-- integration-tests: false -->
     <!-- auto-gates: true -->
 
 The driver NEVER commits. Work is staged; humans commit at gates.
@@ -1395,7 +1400,7 @@ TASK: write integration tests that exercise the lane's deliverable end to end, a
 
 Complete with --result "<n> integration tests, full suite: <totals>".
 
-This card exists only on lanes that run with integration tests. A lane whose idea declares `integration-tests: no` has it archived before the lane opens.
+This card exists only on lanes that run with integration tests. A lane whose idea declares `integration-tests: false` has it archived before the lane opens.
 ```
 
 `rvc-body.txt`:
@@ -1507,7 +1512,7 @@ def test_smoke_test_example_reproduces_the_original_two_lanes():
     sections = lanes.split_ideas(open(os.path.join(DOCS, "smoke-test.md")).read())
     assert len(sections) == 2
     first, _ = lanes.parse_idea(sections[0])
-    assert first["integration-tests"] == "no"
+    assert first["integration-tests"] == "false"
 ```
 
 - [ ] **Step 3: Run test to verify it fails**
@@ -1518,7 +1523,7 @@ Expected: FAIL — `docs/example-ideas` does not exist.
 - [ ] **Step 4: Write `docs/example-ideas/smoke-test.md`**
 
 Source the content from `mission/input-spec.md` (Task 1 and Task 2 sections), condensed
-into two ideas. Lane 1 carries `integration-tests: no` (the original task 1 had no `TI`);
+into two ideas. Lane 1 carries `integration-tests: false` (the original task 1 had no `TI`);
 lane 2 declares the suite so the code gate has evidence.
 
 ```markdown
@@ -1531,7 +1536,7 @@ directly runnable:
         --lanes 2 --ideas docs/example-ideas/smoke-test.md
 
 ## Idea 1: word-count CLI
-<!-- integration-tests: no -->
+<!-- integration-tests: false -->
 
 Build a command-line word counter in `wordcount-cli/`: a Maven module producing
 a fat jar that reads text from stdin and prints the number of words to stdout.
@@ -1629,7 +1634,7 @@ document, split at `## ` headings in document order. `mission/create-board.sh
 Lanes are capacity, ideas are demand: file 3 lanes, enter 1 idea, and the board
 runs that one and stops. Per-idea headers override the board defaults:
 
-    <!-- integration-tests: no -->
+    <!-- integration-tests: false -->
     <!-- auto-gates: true -->
 
 Ideas, snapshots and run data are board-scoped and untracked:
@@ -1774,7 +1779,7 @@ Expected: `TI1` and `RVc1` are absent from the live list (archived); `Gc1`'s par
 BOARD=smoke-test python3 mission/run.py --once 2>&1 | head -20
 hermes kanban --board smoke-test list | grep -E "TI1|RVc1"
 ```
-Expected: lane 1 logs `its=False` (its idea header says `integration-tests: no`), so
+Expected: lane 1 logs `its=False` (its idea header says `integration-tests: false`), so
 `TI1`/`RVc1` are archived — while lane 2's cards (`TI2`, `RVc2`) remain, because lane 2
 has not opened yet and its idea declares no override. Reclaim and re-park `P1` as in
 Step 5 when done.

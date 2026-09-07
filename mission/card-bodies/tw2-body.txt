@@ -1,8 +1,0 @@
-HARD RULES — breaking any of these fails the card, whatever else you achieve:
-(1) Do NOT commit, branch, stash, reset, restore, clean. (2) mvn 3.9 + Java 17, ~/.m2 pre-warmed; no installs. (3) Stage ONLY your own files; never target/. (4) Do not write profile memories. (5) Patch + result-field evidence on completion.
-
-TASK (task 2 — wordcount-service/): Write contract acceptance tests FIRST, per plan task-2 and the spec api/openapi.yaml (mission/input-spec.md is the contract source):
-- JUnit tests (surefire) exercising the CONTRACT the service must honor: POST /count JSON cases (word count exact incl. UTF-8 + tabs/multi-space, 400 on empty text, 400 on missing text field with {"error": ...}), GET /count/health returns {"service": ..., "status": "ok"}.
-- These are @SpringBootTest(RANDOM_PORT) + TestRestTemplate tests under src/test/java/ ... named like *ContractTest — they DO boot the context (that is fine: they are acceptance, not failsafe ITs, which the TI2 card adds).
-- Verify RED: mvn -q test → new tests FAIL (controller missing / 404). Paste summary. Attach patch.
-- Do NOT touch api/openapi.yaml (reviewer-reviewed artifact) or the failsafe IT naming slot (*IT.java) — those belong to other cards.

@@ -1,40 +1,88 @@
 #!/usr/bin/env python3
-"""Unattended driver for the scenario-v2 kanban smoke missions.
+"""Driver for generic kanban board missions.
 
---auto-gates : driver plays gate-holder (commits staged plan/code at Gp/Gc,
-               files plan-revision rounds on REJECT, unblocks on handoff).
-default      : normal run — promotes handoffs, WAITS at gates for a human.
+The driver never commits. Gates wait for a human unless the lane's idea (or
+the board default) sets auto-gates, in which case the gate auto-completes on
+a PASS verdict with staged-file evidence — still no commit.
 
-Usage: mission/run.py [--auto-gates] [--once] [--timeout-min 120]
+Usage: mission/run.py [--once] [--timeout-min 120]
 """
 import json, subprocess, sys, time, os, re, datetime
 
 BOARD = os.environ.get("BOARD", "smoke-test")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TIMING_PATH = os.path.join(REPO, "mission", "timing.jsonl")
-AUTO = "--auto-gates" in sys.argv
 ONCE = "--once" in sys.argv
 POLL = 20
 
-# ordered card graph: title -> (parents by title prefix, kind, task)
-CARDS = [
-    ("P1: implementation plan - wordcount CLI", [], "plan", 1),
-    ("RVp1: plan review - wordcount CLI", ["P1"], "rvp", 1),
-    ("Gp1: plan gate - wordcount CLI", ["RVp1", "P1-rev", "RVp1-r"], "gp", 1),
-    ("TW1: unit tests (RED-first, JUnit) - wordcount CLI", ["Gp1"], "tw", 1),
-    ("C1: implement - wordcount CLI", ["TW1"], "c", 1),
-    ("RVa1: reviewer verdict - wordcount CLI", ["C1"], "rva", 1),
-    ("Gc1: code gate - wordcount CLI", ["RVa1"], "gc", 1),
-    ("P2: implementation plan - wordcount service", ["Gc1"], "plan", 2),
-    ("RVp2: plan review - wordcount service", ["P2", "P2-rev", "RVp2-r"], "rvp", 2),
-    ("Gp2: plan gate - wordcount service", ["RVp2", "P2-rev", "RVp2-r"], "gp", 2),
-    ("TW2: contract acceptance tests (RED-first) - wordcount service", ["Gp2"], "tw", 2),
-    ("C2: implement - wordcount service", ["TW2"], "c", 2),
-    ("RVa2: reviewer verdict - wordcount service", ["C2"], "rva", 2),
-    ("TI2: failsafe integration tests - wordcount service", ["RVa2"], "ti", 2),
-    ("RVc2: final review - wordcount service", ["TI2"], "rvc", 2),
-    ("Gc2: code gate - wordcount service", ["RVc2"], "gc", 2),
-]
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import lanes
+
+BOARD_CFG = os.path.join(REPO, "mission", "boards", f"{BOARD}.json")
+IDEAS_DIR = os.path.join(REPO, "mission", "ideas", BOARD)
+RUN_DIR = os.path.join(REPO, "mission", "runs", BOARD)
+SNAP_DIR = os.path.join(RUN_DIR, "snapshots")
+
+
+def manifest():
+    """Board manifest. REPO is template_root (control files); WORKDIR is the
+    only tree git ever runs in — they differ when a board points elsewhere."""
+    try:
+        return json.load(open(BOARD_CFG))
+    except FileNotFoundError:
+        return {"workdir": REPO, "integration_tests": True, "auto_gates": False}
+
+
+def board_defaults():
+    return manifest()
+
+
+WORKDIR = manifest().get("workdir", REPO)
+
+TIMING_PATH = os.path.join(RUN_DIR, "timing.jsonl")
+
+
+def board_lane_count(state):
+    n = 0
+    for title in state:
+        m = re.match(r"^P(\d+):", title)
+        if m:
+            n = max(n, int(m.group(1)))
+    return n
+
+
+def lane_graph(state):
+    """(title, parent-prefixes, kind, lane) rows for every lane on the board.
+
+    Parents are expressed as title PREFIXES so the existing prefix matching
+    (and the rework loop's P<k>-rev / RVp<k>-r cards) keeps working. A card
+    that was pruned at unblock time is simply absent from `state`, and
+    parents_done() treats a missing parent as not-done — so pruning must
+    also repoint Gc's parent, which open_lane() does on the board itself.
+    """
+    rows = []
+    for lane in range(1, board_lane_count(state) + 1):
+        present = [c for c in lanes.lane_cards(lane, integration_tests=True)
+                   if c["title"] in state]
+        prev = None
+        for c in present:
+            parents = [prev] if prev else ([f"Gc{lane - 1}"] if lane > 1 else [])
+            if c["code"] == "RVp":
+                parents += [f"P{lane}-rev", f"RVp{lane}-r"]
+            if c["code"] == "Gp":
+                parents = [f"RVp{lane}", f"P{lane}-rev", f"RVp{lane}-r"]
+            rows.append((c["title"], parents, c["code"].lower(), lane))
+            prev = c["id"]
+    return rows
+
+
+def lane_options(lane):
+    parsed = lanes.read_idea(os.path.join(IDEAS_DIR, f"lane-{lane}.md"))
+    if parsed is None:
+        return None
+    headers, body = parsed
+    opts = lanes.resolve_lane_options(board_defaults(), headers)
+    opts["idea"] = body
+    return opts
 
 def kb(*args, capture=True):
     r = subprocess.run(["hermes", "kanban", "--board", BOARD, *args],
@@ -68,41 +116,10 @@ def result_of(state, prefix):
     return (card or {}).get("result") or ""
 
 def git(*args):
-    r = subprocess.run(["git", "-C", REPO, *args], capture_output=True, text=True)
+    r = subprocess.run(["git", "-C", WORKDIR, *args], capture_output=True, text=True)
     if r.returncode != 0:
         raise RuntimeError(f"git {args}: {r.stderr.strip()[:200]}")
     return r.stdout.strip()
-
-def commit_push(msg, paths):
-    for p in paths:
-        git("add", "--", p)
-    if not git("status", "--porcelain"):
-        # everything already committed (e.g. gate re-entry) — idempotent exit
-        return git("rev-parse", "--short", "HEAD")
-    git("commit", "-m", msg)
-    sha = git("rev-parse", "--short", "HEAD")
-    git("push", "origin", "main")
-    return sha
-
-def recorded_sha(card):
-    """A commit sha already recorded on the gate card (result or summary)."""
-    for src in (card.get("result"), card.get("summary")):
-        if src:
-            m = re.search(r"\b[0-9a-f]{7,40}\b", src)
-            if m:
-                return m.group(0)
-    return ""
-
-def complete_gate(title, sha="", what=""):
-    st = board()
-    cid = card_id(st, title)
-    if st[title]["status"] == "blocked":
-        kb("unblock", cid)  # ready cards must NOT be unblocked (raises)
-    res = f"Auto-gates: {what}" + (f" recorded at {sha}." if sha else " — HUMAN COMMIT+PUSH REQUIRED at the gate.")
-    kb("complete", cid,
-       "--result", res,
-       "--summary", f"auto-gates {title.split(':')[0]}" + (f" @ {sha}" if sha else " (human commit pending)"))
-    log(f"GATE {title.split(':')[0]} completed" + (f" @ {sha}" if sha else " — HUMAN COMMIT REQUIRED"))
 
 def card_id(state, title):
     c = state.get(title)
@@ -110,49 +127,39 @@ def card_id(state, title):
         raise RuntimeError(f"card missing: {title}")
     return c["id"]
 
-def plan_review_pass(state, task):
-    # latest of RVp / RVp-r2 / RVp-r3 with a verdict
-    best = None
-    for pref in (f"RVp{'2' if task==2 else '1'}", f"RVp{'2' if task==2 else '1'}-r2",
-                 f"RVp{'2' if task==2 else '1'}-r3"):
+def plan_review_pass(state, lane):
+    best = ""
+    for pref in (f"RVp{lane}:", f"RVp{lane}-r2", f"RVp{lane}-r3"):
         t, c = title_of_prefix(state, pref)
-        if c and c["status"] == "done" and c.get("result"):
-            best = c["result"]
-    return best or ""
+        if c and c["status"] == "done" and (c.get("result") or c.get("summary")):
+            best = c.get("result") or c.get("summary")
+    return best
 
-def file_revision(state, task, round_no, findings):
-    n = f"{'2' if task==2 else '1'}"
-    prod = f"P{n}"
-    rev_title = f"{prod}-rev-{round_no}: plan revision round {round_no} - wordcount {'CLI' if task==1 else 'service'}"
-    rvp_title = f"RVp{n}-r{round_no+1}: plan review round {round_no+1} - wordcount {'CLI' if task==1 else 'service'}"
+def file_revision(state, lane, round_no, findings):
+    rev_title = f"P{lane}-rev-{round_no}: plan revision round {round_no} - lane {lane}"
+    rvp_title = f"RVp{lane}-r{round_no + 1}: plan review round {round_no + 1} - lane {lane}"
     if title_of_prefix(state, rev_title)[0]:
         return  # already filed
     pbody = open(f"{REPO}/mission/card-bodies/p-body.txt").read()
     pbody += f"\nREVISION ROUND {round_no} of 3 (max 3, then human escalation).\n\nYour plan was REJECTED. Findings to fix EXACTLY:\n{findings}\nFix ONLY these, re-verify every numeric expectation by computation, re-stage, re-attach, complete with a change summary.\n"
     out = kb("create", rev_title, "--body", pbody, "--assignee", "manager",
              "--workspace", f"dir:{REPO}", "--max-runtime", "60m", "--max-retries", "1",
-             "--idempotency-key", f"smoke2-rev-{prod}-{round_no}", "--created-by", "manager", "--json")
+             "--idempotency-key", f"{BOARD}-rev-P{lane}-{round_no}", "--created-by", "manager", "--json")
     rev_id = json.loads(out)["id"]
     rvbody = open(f"{REPO}/mission/card-bodies/rvp-body.txt").read()
     rvbody += f"\nREVIEW ROUND {round_no+1} of 3. Plan revised after REJECT. Re-verify the findings are fixed AND re-check (a)-(d). Verdict in result field.\n"
     out = kb("create", rvp_title, "--body", rvbody, "--assignee", "reviewer",
              "--parent", rev_id, "--workspace", f"dir:{REPO}", "--max-runtime", "45m",
-             "--max-retries", "1", "--idempotency-key", f"smoke2-rvp-{prod}-r{round_no+1}",
+             "--max-retries", "1", "--idempotency-key", f"{BOARD}-rvp-P{lane}-r{round_no + 1}",
              "--created-by", "manager", "--json")
     rvp_id = json.loads(out)["id"]
-    kb("link", rvp_id, card_id(state, [t for t in state if t.startswith(f"Gp{n}:")][0]))
+    kb("link", rvp_id, card_id(state, lanes.card_title("Gp", lane)))
     log(f"filed revision round {round_no}: {rev_title} + {rvp_title}")
 
-def run_suite(task):
-    if task == 1:
-        r = subprocess.run(["mvn", "-q", "test"], cwd=f"{REPO}/wordcount-cli",
-                           capture_output=True, text=True)
-    else:
-        r = subprocess.run(["mvn", "-q", "verify"], cwd=f"{REPO}/wordcount-service",
-                           capture_output=True, text=True)
-    if r.returncode != 0:
-        raise RuntimeError(f"task {task} suite failed:\n{r.stdout[-1500:]}")
-    return True
+def staged_files():
+    """Paths staged in WORKDIR — the evidence a gate records in place of a SHA."""
+    out = git("diff", "--cached", "--name-only")
+    return [l for l in out.splitlines() if l.strip()]
 
 def runs_result(card_id):
     """Last completed run's summary/result for this card (fallback when the
@@ -170,46 +177,36 @@ def verdict(state, prefix):
         return ""
     return c.get("result") or c.get("summary") or (runs_result(c["id"]) if c.get("id") else "")
 
-def gate_action(state, title, kind, task):
-    n = "1" if task == 1 else "2"
+def gate_action(state, title, kind, lane):
+    opts = lane_options(lane) or {}
+    auto = bool(opts.get("auto_gates"))
     if kind == "gp":
-        verdict_txt = plan_review_pass(state, task)
+        verdict_txt = plan_review_pass(state, lane)
         if not verdict_txt.startswith("PASS"):
             return f"waiting: plan review verdict = {verdict_txt[:40]!r}"
-        if AUTO:
-            # stage-only: the DRIVER never commits — record the verdict and
-            # leave the actual commit+push to the human gate executor.
-            kb("complete", card_id(state, title),
-               f"Auto-gates: plan task-{n} ready for human commit (verdict PASS, staged).")
-            log(f"GATE {title.split(':')[0]}: verdict PASS — HUMAN COMMIT REQUIRED")
-        else:
-            log(f"HUMAN GATE READY: {title} (plan staged, verdict PASS) — waiting for human")
-        return "gate-held"
-    if kind == "gc":
-        verdict_txt = verdict(state, f"RV{'c' if task==2 else 'a'}{n}")
+        evidence = f"plan staged ({len(staged_files())} files), verdict PASS"
+    else:  # gc
+        final = "RVc" if state.get(lanes.card_title("RVc", lane)) else "RVa"
+        verdict_txt = verdict(state, f"{final}{lane}")
         if not verdict_txt.startswith("PASS"):
             return f"waiting: final review verdict = {verdict_txt[:40]!r}"
-        suite = f"{suite_line(task)}"
-        log(f"GATE {title.split(':')[0]} suite evidence: {suite}")
-        if AUTO:
-            # stage-only: no suite-run/commit here — human gate does that.
-            complete_gate(title, "", f"code task-{n} staged — human commit required")
-            log(f"GATE {title.split(':')[0]}: ready — HUMAN COMMIT REQUIRED")
-        else:
-            log(f"HUMAN GATE READY: {title} ({len(git('status','--porcelain').splitlines())} files staged) — waiting for human")
-        return "gate-held"
-    return "skip"
-
-def suite_line(task):
-    import subprocess as sp
-    if task == 1:
-        r = sp.run(["mvn","-q","test"],cwd=f"{REPO}/wordcount-cli",capture_output=True,text=True)
-        out = f"(mvn -q test rc={r.returncode})"
+        staged = staged_files()
+        evidence = f"{len(staged)} files staged, verdict PASS"
+        log(f"GATE {title.split(':')[0]} evidence: {evidence}; "
+            f"staged: {', '.join(staged[:8])}")
+    if auto:
+        cid = card_id(state, title)
+        if state[title]["status"] == "blocked":
+            kb("unblock", cid)
+        kb("complete", cid,
+           "--result", f"auto-gate (lane {lane}): {evidence}. NOTHING COMMITTED.",
+           "--summary", f"auto-gate {title.split(':')[0]} — no commit")
+        log(f"GATE {title.split(':')[0]}: auto-completed — nothing committed")
     else:
-        r = sp.run(["mvn","-q","verify"],cwd=f"{REPO}/wordcount-service",capture_output=True,text=True)
-        m = re.findall(r"Tests run: \d+, Failures: \d+, Errors: \d+", r.stdout)
-        out = f"(mvn verify rc={r.returncode}, last: {m[-1] if m else 'no test summary'})"
-    return "GREEN " + out if r.returncode == 0 else "FAIL " + out
+        log(f"HUMAN GATE READY: {title} — {evidence}. "
+            f"Commit at your discretion, then: hermes kanban --board {BOARD} "
+            f"complete {card_id(state, title)}")
+    return "gate-held"
 
 def record_timing(state):
     """Append one JSONL line: per-card status snapshots for timing analysis.
@@ -262,58 +259,131 @@ def record_timing(state):
     with open(TIMING_PATH, "a") as f:
         f.write(json.dumps(entry) + "\n")
 
+_OPENED = set()
+
+
+def open_lane(state, lane):
+    """Resolve lane <lane> the moment its turn comes. Once per lane per run.
+
+    Returns "open" (lane may run) or "stopped" (no idea entered).
+    """
+    if lane in _OPENED:
+        return "open"
+    opts = lane_options(lane)
+    if opts is None:
+        log(f"LANE {lane}: no idea entered ({IDEAS_DIR}/lane-{lane}.md) — chain stops here")
+        return "stopped"
+    if not opts["integration_tests"]:
+        for code in lanes.IT_CODES:
+            title = lanes.card_title(code, lane)
+            card = state.get(title)
+            if card and card["status"] != "done":
+                kb("archive", card["id"])
+                log(f"LANE {lane}: integration-tests=no — archived {code}{lane}")
+        gc = state.get(lanes.card_title("Gc", lane))
+        rva = state.get(lanes.card_title("RVa", lane))
+        rvc = state.get(lanes.card_title("RVc", lane))
+        if gc and rvc:
+            # archiving RVc does NOT drop the RVc -> Gc dependency edge; left
+            # in place the gate waits forever on an archived parent.
+            try:
+                kb("unlink", rvc["id"], gc["id"])
+            except RuntimeError as e:
+                log(f"LANE {lane}: unlink RVc{lane}->Gc{lane} skipped ({e})")
+        if gc and rva:
+            # same reasoning as the unlink above: _OPENED is in-memory, so a
+            # crash mid-prune replays this on restart and the duplicate link
+            # must not abort the tick and leave the lane permanently unopened
+            try:
+                kb("link", rva["id"], gc["id"])
+                log(f"LANE {lane}: relinked RVa{lane} -> Gc{lane}")
+            except RuntimeError as e:
+                log(f"LANE {lane}: link RVa{lane}->Gc{lane} skipped ({e})")
+    # Snapshot BEFORE unblocking: the card bodies already point at this path,
+    # and workers must never read the mutable source (spec D8).
+    os.makedirs(SNAP_DIR, exist_ok=True)
+    snap = os.path.join(SNAP_DIR, f"lane-{lane}.md")
+    tmp = snap + ".tmp"
+    with open(tmp, "w") as f:
+        f.write(opts["idea"])
+    os.replace(tmp, snap)
+    idea_head = opts["idea"].splitlines()[0][:80] if opts["idea"] else ""
+    log(f"LANE {lane} open: its={opts['integration_tests']} "
+        f"auto_gates={opts['auto_gates']} snapshot={snap} idea={idea_head!r}")
+    # The idea text is NOT posted to the board: raw ideas stay off it, and a
+    # comment would be a second, mutable copy of the contract.
+    kb("comment", state[lanes.card_title("P", lane)]["id"],
+       f"lane {lane} opened: integration_tests={opts['integration_tests']} "
+       f"auto_gates={opts['auto_gates']}, idea snapshot: {snap}")
+    _OPENED.add(lane)
+    return "open"
+
+
 def tick():
     st = state = board()
     record_timing(st)
-    # 1. handoff promotion: blocked card with all parents done -> unblock
-    for title, parents, kind, task in CARDS:
+    graph = lane_graph(st)
+    # 1. handoff promotion: blocked card whose parents are all done -> unblock
+    for title, parents, kind, lane in graph:
         card = st.get(title)
-        if not card or card["status"] != "blocked" or not parents:
+        if not card or card["status"] != "blocked":
             continue
-        if parents_done(st, parents):
-            kb("unblock", card["id"])
-            log(f"unblocked {title.split(':')[0]} (parents done)")
+        if kind == "p":
+            # lane root: parents done (or lane 1) AND an idea entered
+            if parents and not parents_done(st, parents):
+                continue
+            if open_lane(st, lane) == "stopped":
+                continue
+            st = state = board()   # archive/link above changed the board
+        elif not parents or not parents_done(st, parents):
+            continue
+        kb("unblock", card["id"])
+        log(f"unblocked {title.split(':')[0]} (parents done)")
     st = state = board()
     # 2. rework loop on plan REJECT (gates go ready via unblock, so accept
     #    both blocked and ready — the REJECT verdict itself is the trigger)
-    for task in (1, 2):
-        n = "2" if task == 2 else "1"
-        t, c = title_of_prefix(st, f"Gp{n}:")
+    for lane in range(1, board_lane_count(st) + 1):
+        t, c = title_of_prefix(st, f"Gp{lane}:")
         if c and c["status"] in ("blocked", "ready", "todo"):
-            verdict = plan_review_pass(st, task)
-            if verdict.startswith("REJECT"):
+            v = plan_review_pass(st, lane)
+            if v.startswith("REJECT"):
                 # only file the NEXT round if the previous one finished:
-                # any live (non-done) P{n}-rev or RVp{n}-r card = rework in flight
+                # any live (non-done) P<lane>-rev or RVp<lane>-r card = rework in flight
                 live = [t for t in st
-                        if t.startswith(f"P{n}-rev") and st[t]["status"] not in ("done",)
-                        or t.startswith(f"RVp{n}-r") and st[t]["status"] not in ("done",)]
+                        if t.startswith(f"P{lane}-rev") and st[t]["status"] not in ("done",)
+                        or t.startswith(f"RVp{lane}-r") and st[t]["status"] not in ("done",)]
                 if live:
                     continue
-                m = verdict.split("REJECT:")[1][:1200]
-                rounds = len([t for t in st if t.startswith(f"P{n}-rev")])
+                m = v.split("REJECT:")[1][:1200]
+                rounds = len([t for t in st if t.startswith(f"P{lane}-rev")])
                 if rounds < 3:
-                    file_revision(st, task, rounds + 1, m)
+                    file_revision(st, lane, rounds + 1, m)
                 else:
                     kb("block", "--kind", "needs_input", c["id"],
                        "3 revision rounds exhausted — human escalation required")
                     log(f"ESCALATED: {c['title']} (3 REJECT rounds)")
     # 3. gates
-    for title, parents, kind, task in CARDS:
+    for title, parents, kind, lane in lane_graph(st):
         if kind not in ("gp", "gc"):
             continue
         card = st.get(title)
-        if not card or card["status"] in ("done", "blocked") and False:
-            continue
-        if card["status"] == "done":
+        if not card or card["status"] == "done":
             continue
         if not parents_done(st, parents):
             continue
-        msg = gate_action(st, title, kind, task)
+        msg = gate_action(st, title, kind, lane)
         if msg and msg not in ("gate-held", "skip"):
             log(f"{title.split(':')[0]}: {msg}")
-    # done?
-    _, gc2 = title_of_prefix(st, "Gc2:")
-    return gc2 and gc2["status"] == "done"
+    # done when every lane that HAS an idea reached its final gate
+    last = 0
+    for lane in range(1, board_lane_count(st) + 1):
+        if lane_options(lane) is None:
+            break
+        last = lane
+    if last == 0:
+        return False
+    _, gc = title_of_prefix(st, f"Gc{last}:")
+    return bool(gc and gc["status"] == "done")
 
 def block_reason(card):
     """Blocked-kind string from the card run summary, e.g. 'needs_input'."""
@@ -346,7 +416,7 @@ def preserve_artifacts(task):
     <runid>/ so per-task diffs live next to the code commit they produced."""
     import shutil, glob, datetime
     run_id = datetime.datetime.now().strftime("%Y%m%d-%H%M")
-    out_dir = os.path.join(REPO, "mission", "artifacts", run_id)
+    out_dir = os.path.join(RUN_DIR, "artifacts", run_id)
     os.makedirs(out_dir, exist_ok=True)
     st = board()
     for title, card in st.items():
@@ -361,7 +431,7 @@ def preserve_artifacts(task):
                 log(f"artifact kept: mission/artifacts/{run_id}/{os.path.basename(dst)}")
 
 def write_summary(state):
-    """One-shot per-run summary: commit SHAs, per-card agent minutes, budget
+    """One-shot per-run summary: gate verdicts, per-card agent minutes, budget
     events, overhead ratio — one jq-able file per completed run."""
     import collections
     rows = {}
@@ -405,14 +475,46 @@ def write_summary(state):
         "agent_work_min": round(total, 1),
         "overhead_min": round((time.time() - t0) / 60 - total, 1),
         "cards": rows,
-        "gate_commits": {t.split(":")[0]: (m.group(0) if (m := re.search(r"[0-9a-f]{7,40}", c.get("result") or "")) else None)
-                         for t, c in state.items() if t.startswith(("Gp", "Gc"))},
+        "gates": {t.split(":")[0]: (c.get("result") or "")[:200]
+                  for t, c in state.items() if re.match(r"^G[pc]\d+:", t)},
+        "lanes_with_ideas": [l for l in range(1, board_lane_count(state) + 1)
+                             if lane_options(l) is not None],
     }
-    with open(os.path.join(REPO, "mission", "run-summary.json"), "w") as f:
+    with open(os.path.join(RUN_DIR, "run-summary.json"), "w") as f:
         json.dump(summary, f, indent=2)
-    log(f"summary written: mission/run-summary.json ({total:.0f} min agent work)")
+    log(f"summary written: {os.path.join(RUN_DIR, 'run-summary.json')} ({total:.0f} min agent work)")
+
+def acquire_lock():
+    """One driver per board. A lockfile, not a state machine — recovery stays
+    'restart the driver and let its idempotent actions reconcile'."""
+    os.makedirs(RUN_DIR, exist_ok=True)
+    path = os.path.join(RUN_DIR, "driver.lock")
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except FileExistsError:
+        held = open(path).read().strip()
+        raise SystemExit(f"another driver holds {path} (pid {held}) — "
+                         f"kill it or remove the lockfile")
+    os.write(fd, str(os.getpid()).encode())
+    os.close(fd)
+    import atexit
+    atexit.register(lambda: os.path.exists(path) and os.unlink(path))
+
+
+def require_manifest():
+    """A driver with no manifest would silently run git in the template repo for
+    its whole life — the exact failure the template_root/workdir split exists to
+    prevent. Fail at startup instead. Import stays cheap so the tests can import
+    this module without a board."""
+    if not os.path.exists(BOARD_CFG):
+        raise SystemExit(
+            f"no manifest at {BOARD_CFG} — create the board first:\n"
+            f"  mission/create-board.sh --slug {BOARD} --title '<title>' --lanes <n>")
+
 
 def main():
+    require_manifest()
+    acquire_lock()
     t0 = time.time()
     timeout = 120 * 60
     for a in sys.argv:
@@ -431,10 +533,7 @@ def main():
         except Exception as e:
             import traceback
             log(f"ERROR: {e}\n{traceback.format_exc()}")
-            if AUTO:
-                pass  # keep driving; transient errors are expected during runs
-            else:
-                raise
+            # transient CLI/board errors are expected mid-run; keep driving
         # deadman: notify instead of silent stall after repeat gave-ups
         st_now = board()
         ni_count = sum(1 for t, c in st_now.items()

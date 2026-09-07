@@ -1,19 +1,7 @@
-HARD RULES — breaking any of these fails the card, whatever else you achieve:
-(1) Do NOT commit, and do NOT create, switch, rename or delete branches — stay on the branch you find.
-(2) Do NOT install packages or create virtualenvs. Toolchain is ready: javac/java 17 on PATH; JUnit console jar (only if you want it for your own runner) at /tmp/junit/junit-platform-console-standalone-1.10.2.jar.
-(3) Never run git restore, git checkout --, git stash, git reset or git clean — earlier cards' work is staged and uncommitted; those destroy it unrecoverably.
-(4) Stage ONLY files you touched (git add -- <paths>), never git add -A; never stage build/ output.
-(5) Do not write profile memories.
-(6) When done: git diff --cached -- <your paths> > /tmp/<YOUR-CARD-ID>.patch and attach it as a kanban_complete artifact. The human commits at the deployment gate — leaving work staged is the whole point.
+TESTER — lane <N>, RED-first. Write the failing tests for the plan at mission/plans/lane-<N>-plan.md before any implementation exists.
 
-TASK: Write BLACK-BOX acceptance tests for 'Java word-count console program', asserting observable behavior only. Do NOT write unit tests and do NOT assume internal structure: the coder picks the implementation and owns its unit tests. Each test must fail against the current code for the right reason — run them and paste the RED output; a test that cannot fail proves nothing. Complete with a task-to-test mapping.
+HARD RULES: (1) Do not commit, branch, stash, reset, clean. (2) Stage only the test files you create: git add -- <your test paths>. (3) Attach your patch: git diff --cached > /tmp/<YOUR-CARD-ID>.patch, then `hermes kanban --board <BOARD> attach <YOUR-CARD-ID> /tmp/<YOUR-CARD-ID>.patch`. (4) Do not write profile memories. (5) Do not implement anything — tests only.
 
-SPECIFICATION (the contract the coder must satisfy; tests assert only this):
-- Invocation from repo root: java -cp build WordCount <file>
-- Reads a UTF-8 text file, prints ONE line to stdout: the number of words (whitespace-separated tokens), exits 0.
-- Empty file: prints 0, exit 0. Whitespace-only file: prints 0, exit 0.
-- Missing file: message on stderr, exit 2.
+TASK: write the tests the plan specifies, exactly as the plan specifies them. Run them and confirm they FAIL for the right reason (missing implementation, not a typo or a broken harness). Record the RED output in your result.
 
-TEST HARNESS: tests/run_count_words.sh at repo root — plain bash, no pytest, no build tools. Each acceptance criterion = one check printing PASS/FAIL; final line 'N passed, M failed'; non-zero exit if any FAIL. Fixtures under tests/fixtures/ (empty.txt, whitespace.txt, three-words.txt, multi-line.txt). The script only invokes 'java -cp build WordCount <fixture>' and inspects stdout/stderr/exit code. RED phase: with no build/ directory every check fails for the right reason (class not found) — that is the expected RED output to paste.
-
-Do not implement or fix production code. Dispatch subagents for parallelizable or context-heavy work; keep only distilled results in your own context.
+Complete with --result "<n> tests staged, RED confirmed: <the failure message>".
