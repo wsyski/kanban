@@ -20,7 +20,9 @@
 
 - **The driver never commits, branches, stashes, resets, or pushes.** Work is staged on the current branch. Humans commit at gates, at their discretion. With gates skipped, nothing is committed. (Spec D9)
 - **No worktrees.** Everything executes in the current workspace on the current branch.
-- **Ideas are never shipped and never cards.** `mission/ideas/` is untracked; example ideas live in `docs/example-ideas/` as documentation. (Spec D5, D12)
+- **Ideas are never shipped, never cards, and never card comments.** `mission/ideas/<slug>/` is untracked; workers read an immutable snapshot at `mission/runs/<slug>/snapshots/lane-<k>.md`, whose absolute path is substituted into the card body as `<IDEA>`. Example ideas live in `docs/example-ideas/` as documentation. (Spec D5, D8, D12)
+- **Two roots.** `template_root` (this repo) owns the driver, bodies, manifests, ideas and run records. `workdir` (from the board manifest) is the tree workers stage into and the only tree the driver runs git in. They coincide by default; a board pointing elsewhere exposes the difference. (Spec D1)
+- **No generic suite command.** Gate evidence is the staged path list plus the reviewer verdict. Reviewers run the tests themselves. (Spec, "Resolved: no generic suite command")
 - **Lane graph is fixed:** `P → RVp → Gp → TW → C → RVa → TI → RVc → Gc`, with `TI`/`RVc` pruned and `RVa → Gc` relinked when integration tests are off. Identical for every lane. (Spec, Definitions)
 - **Flag defaults are all off:** manual start, human gates, integration tests included. `--lanes` defaults to `1`.
 - **Resolution order for every per-lane switch:** template default → board default (`mission/boards/<slug>.json`) → per-idea header. (Spec D7)
@@ -200,10 +202,10 @@ Do not commit. Report the staged diff for human review.
 **Interfaces:**
 - Consumes: nothing from Task 1 (same module, independent functions).
 - Produces:
-  - `HEADER_KEYS: frozenset[str]` — `{"integration-tests", "auto-gates", "suite"}`
+  - `HEADER_KEYS: frozenset[str]` — `{"integration-tests", "auto-gates"}`
   - `parse_idea(text: str) -> tuple[dict[str, str], str]` — returns `(headers, body)`. Raises `ValueError` on an unknown key.
   - `split_ideas(text: str) -> list[str]` — splits a markdown document at level-2 headings in document order; preamble before the first `## ` is dropped. Each returned string starts with its `## ` heading line.
-  - `resolve_lane_options(board_defaults: dict, headers: dict) -> dict` — returns `{"integration_tests": bool, "auto_gates": bool, "suite": str | None}`.
+  - `resolve_lane_options(board_defaults: dict, headers: dict) -> dict` — returns `{"integration_tests": bool, "auto_gates": bool}`.
   - `read_idea(path: str) -> tuple[dict, str] | None` — `None` when the file is missing or blank after stripping.
 
 - [ ] **Step 1: Write the failing test**
@@ -257,7 +259,7 @@ def test_resolve_prefers_header_over_board_default():
     defaults = {"integration_tests": True, "auto_gates": False}
     opts = lanes.resolve_lane_options(
         defaults, {"integration-tests": "no", "auto-gates": "true"})
-    assert opts == {"integration_tests": False, "auto_gates": True, "suite": None}
+    assert opts == {"integration_tests": False, "auto_gates": True}
 
 
 def test_resolve_falls_back_to_board_default():
@@ -267,9 +269,9 @@ def test_resolve_falls_back_to_board_default():
     assert opts["auto_gates"] is True
 
 
-def test_resolve_carries_suite_command():
-    opts = lanes.resolve_lane_options({}, {"suite": "mvn -q verify"})
-    assert opts["suite"] == "mvn -q verify"
+def test_resolve_rejects_a_suite_header():
+    with pytest.raises(ValueError, match="unknown idea header"):
+        lanes.parse_idea("## X\n<!-- suite: mvn -q verify -->\n\ntext\n")
 
 
 def test_read_idea_returns_none_for_missing_or_blank(tmp_path):
@@ -299,7 +301,7 @@ Expected: FAIL — `AttributeError: module 'lanes' has no attribute 'parse_idea'
 import os
 import re
 
-HEADER_KEYS = frozenset({"integration-tests", "auto-gates", "suite"})
+HEADER_KEYS = frozenset({"integration-tests", "auto-gates"})
 
 _HEADER_RE = re.compile(r"^<!--\s*([A-Za-z][A-Za-z0-9-]*)\s*:\s*(.*?)\s*-->\s*$")
 _TRUE = {"yes", "true", "on", "1"}
@@ -361,14 +363,11 @@ def resolve_lane_options(board_defaults, headers):
     """template default -> board default -> per-idea header."""
     it = board_defaults.get("integration_tests", True)
     ag = board_defaults.get("auto_gates", False)
-    suite = board_defaults.get("suite")
     if "integration-tests" in headers:
         it = _as_bool(headers["integration-tests"], it)
     if "auto-gates" in headers:
         ag = _as_bool(headers["auto-gates"], ag)
-    if "suite" in headers:
-        suite = headers["suite"] or None
-    return {"integration_tests": it, "auto_gates": ag, "suite": suite}
+    return {"integration_tests": it, "auto_gates": ag}
 
 
 def read_idea(path):
@@ -401,15 +400,15 @@ Do not commit. Report the staged diff for human review.
 **Files:**
 - Create: `mission/create-board.sh` (executable)
 - Create: `mission/file_lanes.py` (the Python half the script shells out to)
-- Modify: `.gitignore` (add `mission/ideas/`)
+- Modify: `.gitignore` (add `mission/ideas/` and `mission/runs/`)
 - Test: `mission/tests/test_file_lanes.py`
 
 **Interfaces:**
 - Consumes: `lanes.lane_cards`, `lanes.split_ideas` (Task 1, 2).
 - Produces:
-  - `mission/file_lanes.py` functions: `import_ideas(doc_path: str, ideas_dir: str, lane_count: int, force: bool = False) -> int` (returns number of lane files written; raises `ValueError` when sections exceed `lane_count` or a non-empty target exists without `force`), and `file_board(board: str, repo: str, lane_count: int) -> dict[str, str]` mapping lane-card id → hermes card id.
-  - `mission/boards/<slug>.json`: `{"integration_tests": bool, "auto_gates": bool}`.
-  - `mission/ideas/lane-<k>.md` — created empty for every lane.
+  - `mission/file_lanes.py` functions: `import_ideas(doc_path: str, ideas_dir: str, lane_count: int, force: bool = False) -> int` (`ideas_dir` is the board-scoped `mission/ideas/<slug>/`) (returns number of lane files written; raises `ValueError` when sections exceed `lane_count` or a non-empty target exists without `force`), and `file_board(board: str, repo: str, lane_count: int) -> dict[str, str]` mapping lane-card id → hermes card id.
+  - `mission/boards/<slug>.json`: `{"slug", "template_root", "workdir", "lane_count", "integration_tests", "auto_gates"}`.
+  - `mission/ideas/<slug>/lane-<k>.md` — created empty for every lane.
 
 - [ ] **Step 1: Write the failing test (idea import only — board filing is covered by the live run in Task 8)**
 
@@ -526,23 +525,29 @@ def kb(board, *args):
     return r.stdout
 
 
-def file_board(board, repo, lane_count, key_prefix):
+def file_board(board, repo, workdir, lane_count, key_prefix):
     """File lane_count full lanes, every card parked. Returns id map.
 
     Every lane is filed IT-complete; pruning happens at unblock time, when
     the lane's idea is known (spec D8). Lane k's root is parented to lane
     k-1's Gc so the board itself sequences the lanes.
+
+    <WORKDIR> is where workers edit and stage; <IDEA> is the absolute path
+    of the lane's immutable snapshot, which the driver writes before it
+    unblocks the root. The body points there, never at the mutable source.
     """
     made = {}
     prev_gate = None
     for lane in range(1, lane_count + 1):
         for card in lanes.lane_cards(lane, integration_tests=True):
+            snapshot = f"{repo}/mission/runs/{board}/snapshots/lane-{lane}.md"
             body = open(f"{repo}/mission/card-bodies/{card['body']}").read()
-            body = (body.replace("<REPO>", repo)
+            body = (body.replace("<WORKDIR>", workdir)
                         .replace("<BOARD>", board)
+                        .replace("<IDEA>", snapshot)
                         .replace("<N>", str(lane)))
             args = ["create", card["title"], "--body", body,
-                    "--assignee", card["assignee"], "--workspace", f"dir:{repo}",
+                    "--assignee", card["assignee"], "--workspace", f"dir:{workdir}",
                     "--max-runtime", "60m", "--max-retries", "1",
                     "--idempotency-key", f"{key_prefix}-{card['id']}",
                     "--created-by", "manager", "--json"]
@@ -559,11 +564,19 @@ def file_board(board, repo, lane_count, key_prefix):
     return made
 
 
-def write_board_config(repo, slug, integration_tests, auto_gates):
+def write_board_config(repo, slug, workdir, lane_count,
+                       integration_tests, auto_gates):
+    """The manifest. `template_root` owns control files; `workdir` is the
+    only tree the driver runs git in — they differ whenever a board points
+    somewhere other than this repo."""
     path = os.path.join(repo, "mission", "boards", f"{slug}.json")
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as f:
-        json.dump({"integration_tests": integration_tests,
+        json.dump({"slug": slug,
+                   "template_root": repo,
+                   "workdir": os.path.abspath(workdir),
+                   "lane_count": lane_count,
+                   "integration_tests": integration_tests,
                    "auto_gates": auto_gates}, f, indent=2)
     return path
 ```
@@ -601,12 +614,11 @@ mission/create-board.sh — create a generic kanban board instance
   -h, --help                 this text
 
 Lanes are capacity, ideas are demand. Lanes are filed parked; the human
-writes mission/ideas/lane-<k>.md and starts the board. The first lane with
-no idea stops the chain. Per-idea headers override the board defaults:
+writes mission/ideas/<slug>/lane-<k>.md and starts the board. The first lane
+with no idea stops the chain. Per-idea headers override the board defaults:
 
     <!-- integration-tests: no -->
     <!-- auto-gates: true -->
-    <!-- suite: mvn -q verify -->
 
 The driver NEVER commits. Work is staged; humans commit at gates.
 USAGE
@@ -643,8 +655,8 @@ fi
 hermes kanban boards create "$SLUG" --name "$TITLE" --default-workdir "$WORKDIR"   # flags verified: hermes kanban boards create --help
 echo "board '$SLUG' created (workdir $WORKDIR)"
 
-mkdir -p "$REPO/mission/ideas"
-for k in $(seq 1 "$LANES"); do : >> "$REPO/mission/ideas/lane-$k.md"; done
+mkdir -p "$REPO/mission/ideas/$SLUG" "$REPO/mission/runs/$SLUG/snapshots"
+for k in $(seq 1 "$LANES"); do : >> "$REPO/mission/ideas/$SLUG/lane-$k.md"; done
 
 cd "$REPO"
 python3 - "$SLUG" "$WORKDIR" "$LANES" "$IDEAS" "$AUTOSTART" "$AUTOGATES" "$SKIPIT" "$FORCE" <<'PY'
@@ -655,16 +667,16 @@ import file_lanes
 slug, workdir, lanes_n, ideas, autostart, autogates, skipit, force = sys.argv[1:9]
 lanes_n = int(lanes_n)
 repo = os.getcwd()
-ideas_dir = os.path.join(repo, "mission", "ideas")
+ideas_dir = os.path.join(repo, "mission", "ideas", slug)
 if ideas:
     n = file_lanes.import_ideas(ideas, ideas_dir, lanes_n, force=(force == "1"))
     print(f"imported {n} idea(s) from {ideas}")
-cfg = file_lanes.write_board_config(repo, slug,
+cfg = file_lanes.write_board_config(repo, slug, workdir, lanes_n,
                                     integration_tests=(skipit != "1"),
                                     auto_gates=(autogates == "1"))
 print("board config:", os.path.relpath(cfg, repo))
 key = f"{slug}-{datetime.datetime.now():%Y%m%d-%H%M}"
-made = file_lanes.file_board(slug, workdir, lanes_n, key)
+made = file_lanes.file_board(slug, repo, workdir, lanes_n, key)
 print(f"filed {len(made)} cards in {lanes_n} lane(s), all parked")
 if autostart == "1":
     file_lanes.kb(slug, "unblock", made["P1"])
@@ -674,7 +686,7 @@ PY
 cat <<EOF
 
 Next:
-  1. write your idea(s):  \$EDITOR mission/ideas/lane-1.md
+  1. write your idea(s):  \$EDITOR mission/ideas/$SLUG/lane-1.md
   2. start the board:     mission/start-board.sh --slug $SLUG
   3. watch:               hermes kanban --board $SLUG list
 EOF
@@ -693,7 +705,7 @@ Expected: help text prints and exits 0; both bad invocations exit 2 with the quo
 - [ ] **Step 7: Ignore the ideas directory**
 
 ```bash
-printf 'mission/ideas/\n' >> .gitignore
+printf 'mission/ideas/\nmission/runs/\n' >> .gitignore
 ```
 
 - [ ] **Step 8: Stage**
@@ -779,15 +791,26 @@ Delete `run.py:20-36` (the `CARDS` literal) and insert after the `POLL = 20` lin
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import lanes
 
-IDEAS_DIR = os.path.join(REPO, "mission", "ideas")
 BOARD_CFG = os.path.join(REPO, "mission", "boards", f"{BOARD}.json")
+IDEAS_DIR = os.path.join(REPO, "mission", "ideas", BOARD)
+RUN_DIR = os.path.join(REPO, "mission", "runs", BOARD)
+SNAP_DIR = os.path.join(RUN_DIR, "snapshots")
 
 
-def board_defaults():
+def manifest():
+    """Board manifest. REPO is template_root (control files); WORKDIR is the
+    only tree git ever runs in — they differ when a board points elsewhere."""
     try:
         return json.load(open(BOARD_CFG))
     except FileNotFoundError:
-        return {"integration_tests": True, "auto_gates": False}
+        return {"workdir": REPO, "integration_tests": True, "auto_gates": False}
+
+
+def board_defaults():
+    return manifest()
+
+
+WORKDIR = manifest().get("workdir", REPO)
 
 
 def board_lane_count(state):
@@ -834,6 +857,17 @@ def lane_options(lane):
     return opts
 ```
 
+Three module-level paths move with this edit, and missing any of them leaves two
+boards writing over each other or git running in the wrong tree:
+
+- `TIMING_PATH` (`run.py:14`) becomes `os.path.join(RUN_DIR, "timing.jsonl")`.
+- `write_summary`'s output path becomes `os.path.join(RUN_DIR, "run-summary.json")`.
+- `git()` (`run.py:70`) becomes `subprocess.run(["git", "-C", WORKDIR, *args], ...)`.
+  It is currently `-C REPO`; with `--workdir` defaulting to this repo the two are
+  equal, which is exactly why the bug would survive Task 8 and surface the first
+  time portfolio points elsewhere.
+- `preserve_artifacts`'s `out_dir` becomes `os.path.join(RUN_DIR, "artifacts", run_id)`.
+
 Note `lane_graph` builds `parents` from *surviving* cards, so a lane whose `TI`/`RVc`
 were archived yields `RVa → Gc` with no special case — the same property Task 1 relies on.
 
@@ -854,7 +888,7 @@ def open_lane(state, lane):
         return "open"
     opts = lane_options(lane)
     if opts is None:
-        log(f"LANE {lane}: no idea entered (mission/ideas/lane-{lane}.md) — chain stops here")
+        log(f"LANE {lane}: no idea entered ({IDEAS_DIR}/lane-{lane}.md) — chain stops here")
         return "stopped"
     if not opts["integration_tests"]:
         for code in lanes.IT_CODES:
@@ -876,12 +910,22 @@ def open_lane(state, lane):
         if gc and rva:
             kb("link", rva["id"], gc["id"])
             log(f"LANE {lane}: relinked RVa{lane} -> Gc{lane}")
+    # Snapshot BEFORE unblocking: the card bodies already point at this path,
+    # and workers must never read the mutable source (spec D8).
+    os.makedirs(SNAP_DIR, exist_ok=True)
+    snap = os.path.join(SNAP_DIR, f"lane-{lane}.md")
+    tmp = snap + ".tmp"
+    with open(tmp, "w") as f:
+        f.write(opts["idea"])
+    os.replace(tmp, snap)
     idea_head = opts["idea"].splitlines()[0][:80] if opts["idea"] else ""
     log(f"LANE {lane} open: its={opts['integration_tests']} "
-        f"auto_gates={opts['auto_gates']} suite={opts['suite']!r} idea={idea_head!r}")
+        f"auto_gates={opts['auto_gates']} snapshot={snap} idea={idea_head!r}")
+    # The idea text is NOT posted to the board: raw ideas stay off it, and a
+    # comment would be a second, mutable copy of the contract.
     kb("comment", state[lanes.card_title("P", lane)]["id"],
        f"lane {lane} opened: integration_tests={opts['integration_tests']} "
-       f"auto_gates={opts['auto_gates']}\n\n{opts['idea']}")
+       f"auto_gates={opts['auto_gates']}, idea snapshot: {snap}")
     _OPENED.add(lane)
     return "open"
 ```
@@ -912,7 +956,31 @@ def tick():
         log(f"unblocked {title.split(':')[0]} (parents done)")
 ```
 
-- [ ] **Step 5: Write `mission/start-board.sh`**
+- [ ] **Step 5: Add the single-driver lockfile**
+
+README §5's "single driver discipline" documents a failure that happened: duplicate
+drivers idle silently and interleave log output. Add to `run.py`, and call
+`acquire_lock()` as the first statement of `main()`:
+
+```python
+def acquire_lock():
+    """One driver per board. A lockfile, not a state machine — recovery stays
+    'restart the driver and let its idempotent actions reconcile'."""
+    os.makedirs(RUN_DIR, exist_ok=True)
+    path = os.path.join(RUN_DIR, "driver.lock")
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except FileExistsError:
+        held = open(path).read().strip()
+        raise SystemExit(f"another driver holds {path} (pid {held}) — "
+                         f"kill it or remove the lockfile")
+    os.write(fd, str(os.getpid()).encode())
+    os.close(fd)
+    import atexit
+    atexit.register(lambda: os.path.exists(path) and os.unlink(path))
+```
+
+- [ ] **Step 6: Write `mission/start-board.sh`**
 
 ```bash
 #!/usr/bin/env bash
@@ -929,8 +997,9 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$SLUG" ] || { echo "--slug required" >&2; exit 2; }
-[ -s "$REPO/mission/ideas/lane-1.md" ] || {
-  echo "refusing: mission/ideas/lane-1.md is empty — enter an idea first" >&2; exit 1; }
+[ -s "$REPO/mission/ideas/$SLUG/lane-1.md" ] || {
+  echo "refusing: mission/ideas/$SLUG/lane-1.md is empty — enter an idea first" >&2
+  exit 1; }
 
 cd "$REPO"
 P1=$(hermes kanban --board "$SLUG" list --json | python3 -c "
@@ -947,12 +1016,12 @@ echo "board '$SLUG' started; log: $RUNLOG"
 Note: no `--auto-gates` here. Gate behavior is per lane, resolved from the idea header
 and board config — the driver flag is gone (Task 5).
 
-- [ ] **Step 6: Run the whole suite**
+- [ ] **Step 7: Run the whole suite**
 
 Run: `cd /opt/projects/kanban/main/kanban && python3 -m pytest mission/tests/ -v && python3 -c "import sys; sys.path.insert(0,'mission'); import run"`
 Expected: all tests pass, including the ones added in this task.
 
-- [ ] **Step 7: Stage**
+- [ ] **Step 8: Stage**
 
 ```bash
 chmod +x mission/start-board.sh
@@ -970,7 +1039,7 @@ Do not commit. Report the staged diff for human review.
 
 **Interfaces:**
 - Consumes: `lane_options` (Task 4).
-- Produces: `gate_action(state, title, kind, lane) -> str`, `suite_line(lane) -> str`, `file_revision(state, lane, round_no, findings) -> None`, `plan_review_pass(state, lane) -> str`.
+- Produces: `gate_action(state, title, kind, lane) -> str`, `staged_files() -> list[str]`, `file_revision(state, lane, round_no, findings) -> None`, `plan_review_pass(state, lane) -> str`.
 
 - [ ] **Step 1: Delete every commit path**
 
@@ -999,29 +1068,19 @@ grep -n "commit_push\|recorded_sha\|\bAUTO\b" mission/run.py
 ```
 Expected: no output.
 
-- [ ] **Step 2: Replace `run_suite` and `suite_line` with the declared-suite version**
+- [ ] **Step 2: Delete the suite machinery, add staged-path evidence**
+
+Delete `run_suite(task)` and `suite_line(task)` entirely — both hardcoded
+`wordcount-cli` / `wordcount-service`, and a generic template owns no build system
+(spec, "Resolved: no generic suite command"). Gate evidence becomes the staged path
+list plus the reviewer verdict; the reviewer cards already run the tests themselves.
 
 ```python
-def suite_line(lane):
-    """Gate evidence. The suite command comes from the lane's idea header;
-    with none declared there is nothing objective to run, and the gate
-    records the reviewer verdict + staged files only."""
-    opts = lane_options(lane) or {}
-    cmd = opts.get("suite")
-    if not cmd:
-        return "suite: none declared"
-    r = subprocess.run(cmd, shell=True, cwd=REPO, capture_output=True, text=True)
-    tail = re.findall(r"Tests run: \d+, Failures: \d+, Errors: \d+", r.stdout)
-    detail = f"({cmd!r} rc={r.returncode}" + (f", last: {tail[-1]}" if tail else "") + ")"
-    return ("GREEN " if r.returncode == 0 else "FAIL ") + detail
-
-
 def staged_files():
+    """Paths staged in WORKDIR — the evidence a gate records in place of a SHA."""
     out = git("diff", "--cached", "--name-only")
     return [l for l in out.splitlines() if l.strip()]
 ```
-
-Delete the old `run_suite(task)` entirely (it hardcoded `wordcount-cli` / `wordcount-service`).
 
 - [ ] **Step 3: Rewrite `gate_action` — evidence always, waiting decided per lane**
 
@@ -1039,14 +1098,10 @@ def gate_action(state, title, kind, lane):
         verdict_txt = verdict(state, f"{final}{lane}")
         if not verdict_txt.startswith("PASS"):
             return f"waiting: final review verdict = {verdict_txt[:40]!r}"
-        suite = suite_line(lane)
-        log(f"GATE {title.split(':')[0]} suite evidence: {suite}")
-        if suite.startswith("FAIL") and auto:
-            kb("block", "--kind", "needs_input", card_id(state, title),
-               f"auto-gates halted: {suite}")
-            log(f"GATE {title.split(':')[0]}: FAIL suite — auto-gate HALTED for human")
-            return "gate-held"
-        evidence = f"{len(staged_files())} files staged, verdict PASS, {suite}"
+        staged = staged_files()
+        evidence = f"{len(staged)} files staged, verdict PASS"
+        log(f"GATE {title.split(':')[0]} evidence: {evidence}; "
+            f"staged: {', '.join(staged[:8])}"
     if auto:
         cid = card_id(state, title)
         if state[title]["status"] == "blocked":
@@ -1062,9 +1117,11 @@ def gate_action(state, title, kind, lane):
     return "gate-held"
 ```
 
-Note the FAIL rule: skipping a gate skips the *approval*, not the *check*. An auto-gate
-with a red suite blocks `needs_input` and lets the existing deadman notice fire, rather
-than advancing the chain onto a broken base.
+Note what an auto-gate now rests on: the reviewer verdict, and nothing else. With no
+generic suite command there is no independent check to halt on — the `RVa`/`RVc` cards
+are required to run the tests themselves (`rvc-body.txt`: "run it yourself, do not
+trust the previous card's claim"), so a PASS verdict is the objective signal. A manual
+gate is unchanged: the human runs whatever verification they want before deciding.
 
 - [ ] **Step 4: Generalize `plan_review_pass` and `file_revision` to any lane**
 
@@ -1147,15 +1204,16 @@ In `write_summary`, replace the `gate_commits` dict with:
 
 There are no commit SHAs to record — the driver never commits.
 
-- [ ] **Step 7: Verify the driver imports and the suite still passes**
+- [ ] **Step 7: Verify the driver imports and the tests still pass**
 
 ```bash
 cd /opt/projects/kanban/main/kanban
 python3 -m pytest mission/tests/ -v
 python3 -c "import sys; sys.path.insert(0,'mission'); import run; print('ok')"
-grep -n "wordcount\|commit_push\|recorded_sha\|--auto-gates" mission/run.py
+grep -n "wordcount\|commit_push\|recorded_sha\|--auto-gates\|suite_line\|run_suite" mission/run.py
+grep -n '"git", "-C", REPO' mission/run.py
 ```
-Expected: all tests pass; `ok`; the grep prints nothing (no scenario-specific names, no commit paths, no driver-level gate flag left).
+Expected: all tests pass; `ok`; both greps print nothing — no scenario-specific names, no commit paths, no driver-level gate flag, no suite machinery, and no git call still pointed at `REPO` instead of `WORKDIR`.
 
 - [ ] **Step 8: Stage**
 
@@ -1176,7 +1234,7 @@ Do not commit. Report the staged diff for human review.
 
 **Interfaces:**
 - Consumes: `lanes.LANE_CARDS` (Task 1) — every `body` filename it names must exist.
-- Produces: nine body files containing only the placeholders `<REPO>`, `<BOARD>`, `<N>`, substituted by `file_lanes.file_board` (Task 3).
+- Produces: nine body files containing only the placeholders `<WORKDIR>`, `<BOARD>`, `<N>`, `<IDEA>`, substituted by `file_lanes.file_board` (Task 3). `<IDEA>` resolves to the absolute path of the lane's immutable snapshot — it is the workers' only route to the idea text, since nothing puts that text on the board.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1188,7 +1246,7 @@ import lanes
 
 BODIES = os.path.join(os.path.dirname(__file__), "..", "card-bodies")
 BANNED = re.compile(r"wordcount|mvn |spring|maven|task 1|task 2", re.I)
-ALLOWED_PLACEHOLDERS = {"<REPO>", "<BOARD>", "<N>"}
+ALLOWED_PLACEHOLDERS = {"<WORKDIR>", "<BOARD>", "<N>", "<IDEA>"}
 
 
 def test_every_lane_card_has_a_body_file():
@@ -1216,6 +1274,13 @@ def test_gate_bodies_never_instruct_a_commit_as_a_requirement():
         assert "commit sha in the result" not in text
 
 
+def test_worker_bodies_point_at_the_snapshot_not_the_source():
+    for body in ("p-body.txt", "rvp-body.txt", "rva-body.txt"):
+        text = open(os.path.join(BODIES, body)).read()
+        assert "<IDEA>" in text, f"{body} must reference the idea snapshot"
+        assert "mission/ideas/" not in text, f"{body} points at the mutable source"
+
+
 def test_worker_bodies_forbid_committing():
     for body in ("p-body.txt", "tw-body.txt", "c-body.txt", "ti-body.txt"):
         text = open(os.path.join(BODIES, body)).read().lower()
@@ -1232,11 +1297,11 @@ Expected: FAIL — `tw-body.txt` etc. named by `LANE_CARDS` do not all exist, an
 ```
 You are the MANAGER writing the implementation plan for lane <N>, before any code exists.
 
-THE TASK: the raw idea for this lane is the first comment on this card (posted by the driver when the lane opened) and in <REPO>/mission/ideas/lane-<N>.md. That text is the contract. If it is ambiguous, state the ambiguity in the plan rather than inventing a requirement.
+THE TASK: the raw idea for this lane is at <IDEA> — an immutable snapshot the driver wrote before this lane opened. Read it. That text is the contract, and it will not change under you. If it is ambiguous, state the ambiguity in the plan rather than inventing a requirement.
 
-HARD RULES: (1) Do not commit, branch, stash, reset, restore, clean — the flow never commits; work ends staged. (2) Stage only your own file: mission/plans/lane-<N>-plan.md. (3) Attach it: git diff --cached -- mission/plans/lane-<N>-plan.md > /tmp/<YOUR-CARD-ID>.patch, then `hermes kanban --board <BOARD> attach <YOUR-CARD-ID> /tmp/<YOUR-CARD-ID>.patch`. (4) Do not write profile memories.
+HARD RULES: (1) Do not commit, branch, stash, reset, restore, clean — the flow never commits; work ends staged. (2) Work in <WORKDIR>. Stage only your own file: mission/plans/lane-<N>-plan.md. (3) Attach it: git diff --cached -- mission/plans/lane-<N>-plan.md > /tmp/<YOUR-CARD-ID>.patch, then `hermes kanban --board <BOARD> attach <YOUR-CARD-ID> /tmp/<YOUR-CARD-ID>.patch`. (4) Do not write profile memories.
 
-DELIVERABLE: the plan in superpowers writing-plans format — header (Goal, Architecture, Tech Stack, Spec: mission/ideas/lane-<N>.md), Global Constraints, then numbered tasks with Files / Interfaces / bite-sized checkbox steps (failing test -> run RED -> minimal code -> run GREEN) containing REAL code, no placeholders. The plan is executed by the later cards on this lane (TW writes tests first, C implements), so it must map 1:1 onto them.
+DELIVERABLE: the plan in superpowers writing-plans format — header (Goal, Architecture, Tech Stack, Spec: <IDEA>), Global Constraints, then numbered tasks with Files / Interfaces / bite-sized checkbox steps (failing test -> run RED -> minimal code -> run GREEN) containing REAL code, no placeholders. The plan is executed by the later cards on this lane (TW writes tests first, C implements), so it must map 1:1 onto them.
 
 Save to mission/plans/lane-<N>-plan.md, stage it, attach the patch, complete the card with the plan's one-line architecture summary in the result.
 
@@ -1253,7 +1318,7 @@ VERDICT CARD — plan review for lane <N>. You review a PLAN, not code. Never ed
 
 HARD RULES: (1) Read-only on the repo; write only /tmp/<YOUR-CARD-ID>.review. (2) Do not commit, branch, stash, reset, clean. (3) Do not write profile memories.
 
-TASK: the parent card delivered a staged plan at mission/plans/lane-<N>-plan.md (attachment: patch). Review it against the lane's raw idea (<REPO>/mission/ideas/lane-<N>.md):
+TASK: the parent card delivered a staged plan at mission/plans/lane-<N>-plan.md (attachment: patch). Review it against the lane's raw idea at <IDEA>:
 (a) Coverage: every requirement in the idea maps to a plan task — nothing extra (YAGNI), nothing missing.
 (b) Format: header + Global Constraints + numbered tasks with Files/Interfaces/checkbox steps; every code step has real code, no TBD/TODO/placeholder.
 (c) Testability: every plan task has a RED-then-GREEN step the later cards can execute verbatim.
@@ -1309,7 +1374,7 @@ VERDICT CARD — implementation review for lane <N>. Never edit anything; never 
 
 HARD RULES: (1) Read-only on the repo; write only /tmp/<YOUR-CARD-ID>.review. (2) Do not commit, branch, stash, reset, clean. (3) Do not write profile memories.
 
-TASK: review the STAGED diff (git diff --cached), not the worktree, against mission/plans/lane-<N>-plan.md and the lane's idea at <REPO>/mission/ideas/lane-<N>.md:
+TASK: review the STAGED diff in <WORKDIR> (git diff --cached), not the worktree, against mission/plans/lane-<N>-plan.md and the lane's idea at <IDEA>:
 (a) The plan's tasks are all implemented, and nothing beyond them is.
 (b) The tests actually exercise the behavior they claim to; run them yourself.
 (c) No commits, no branches, no files outside this lane's target paths.
@@ -1330,7 +1395,7 @@ TASK: write integration tests that exercise the lane's deliverable end to end, a
 
 Complete with --result "<n> integration tests, full suite: <totals>".
 
-This card exists only on lanes that run with integration tests. A lane whose idea declares `integration-tests: no` never files it.
+This card exists only on lanes that run with integration tests. A lane whose idea declares `integration-tests: no` has it archived before the lane opens.
 ```
 
 `rvc-body.txt`:
@@ -1344,14 +1409,14 @@ TASK: the last check before the gate. Against the full staged diff:
 (b) The staged index contains all of this lane's files and nothing else.
 (c) The integration tests exercise real behavior, not mocks of the thing under test.
 
-VERDICT: complete with --result "PASS: suite <totals>, <n> files staged" or "REJECT: <numbered findings>".
+VERDICT: complete with --result "PASS: full suite <totals>, <n> files staged" or "REJECT: <numbered findings>".
 ```
 
 `gc-body.txt`:
 ```
 CODE GATE — lane <N>. The driver never commits. Nothing is committed unless a human chooses to commit it.
 
-The driver completes this card only when the final review verdict is PASS. Before completing it, the driver runs the lane's declared suite (the `suite:` header in mission/ideas/lane-<N>.md, if any) and records GREEN/FAIL plus the staged file count in the result. A FAIL suite halts an auto-gate for human attention rather than advancing the chain.
+The driver completes this card only when the final review verdict is PASS, and records the staged path list in the result. It runs no build of its own — the reviewer cards ran the tests, and at a manual gate you run whatever verification you want.
 
 If this lane runs with human gates (the default), the driver pauses here. Your options as the gate-holder:
 1. Check the parent card's PASS verdict and the suite evidence in the driver log.
@@ -1467,7 +1532,6 @@ directly runnable:
 
 ## Idea 1: word-count CLI
 <!-- integration-tests: no -->
-<!-- suite: mvn -q test -->
 
 Build a command-line word counter in `wordcount-cli/`: a Maven module producing
 a fat jar that reads text from stdin and prints the number of words to stdout.
@@ -1475,7 +1539,6 @@ A word is a maximal run of non-whitespace characters. Empty input prints `0`.
 Java 17, JUnit 5, no runtime dependencies beyond the JDK.
 
 ## Idea 2: word-count REST service
-<!-- suite: mvn -q verify -->
 
 Build a spec-first Spring Boot REST API in `wordcount-service/`: `POST /count`
 takes `{"text": "..."}` and returns `{"words": <n>}`, using the same counting
@@ -1555,7 +1618,7 @@ Replace §3 (Replay), §5's `replay.sh`-specific rules, §6 (gate discipline) an
 ## 3. Creating and running a board
 
     mission/create-board.sh --slug <s> --title "<t>" --lanes <n> [flags]
-    $EDITOR mission/ideas/lane-1.md          # enter your raw idea
+    $EDITOR mission/ideas/<s>/lane-1.md      # enter your raw idea
     mission/start-board.sh --slug <s>
 
 Flags, all off by default: `--auto-start`, `--auto-gates`,
@@ -1568,7 +1631,11 @@ runs that one and stops. Per-idea headers override the board defaults:
 
     <!-- integration-tests: no -->
     <!-- auto-gates: true -->
-    <!-- suite: mvn -q verify -->
+
+Ideas, snapshots and run data are board-scoped and untracked:
+`mission/ideas/<slug>/`, `mission/runs/<slug>/`. Workers read the immutable
+snapshot the driver writes when the lane opens, never the file you are editing —
+so you can write lane 3's idea while lane 1 is still running.
 
 **The driver never commits.** All work is staged on the current branch. At a
 human gate the driver pauses and records the evidence; you commit at your
@@ -1642,10 +1709,11 @@ cd /opt/projects/kanban/main/kanban
 mission/create-board.sh --slug smoke-test --title "Kanban Smoke Test" \
     --lanes 2 --ideas docs/example-ideas/smoke-test.md
 hermes kanban --board smoke-test list
+cat mission/boards/smoke-test.json
 ```
-Expected: 18 cards (2 lanes × 9), every one `blocked`; `mission/ideas/lane-1.md` and
-`lane-2.md` hold the two ideas; `mission/boards/smoke-test.json` says
-`{"integration_tests": true, "auto_gates": false}`.
+Expected: 18 cards (2 lanes × 9), every one `blocked`; `mission/ideas/smoke-test/lane-1.md`
+and `lane-2.md` hold the two ideas; the manifest carries `template_root`, `workdir`,
+`lane_count: 2`, `integration_tests: true`, `auto_gates: false`.
 
 - [ ] **Step 4: Create the portfolio instance with 3 lanes and one idea**
 
@@ -1654,22 +1722,27 @@ mission/create-board.sh --slug portfolio --title "Portfolio Engineering" \
     --lanes 3 --skip-integration-tests --workdir <the repo portfolio works in> \
     --ideas docs/example-ideas/portfolio.md
 hermes kanban --board portfolio list
-ls -la mission/ideas/
+ls -la mission/ideas/portfolio/ mission/ideas/smoke-test/
 ```
-Expected: 27 cards, all blocked; `lane-1.md` non-empty, `lane-2.md` and `lane-3.md`
-empty; `mission/boards/portfolio.json` says `{"integration_tests": false, ...}`.
+Expected: 27 cards, all blocked; `mission/ideas/portfolio/lane-1.md` non-empty,
+`lane-2.md` and `lane-3.md` empty; the smoke-test ideas untouched in their own
+directory (the board-scoping check); `mission/boards/portfolio.json` says
+`integration_tests: false` and the workdir you passed.
 
-If the workdir is still undecided, create portfolio with the default (this repo) and
-change it later with `hermes kanban boards set-default-workdir portfolio <path>` —
-the board config file does not carry it.
+If the workdir is still undecided, create portfolio with the default (this repo). To
+change it later, edit `workdir` in `mission/boards/portfolio.json` **and** run
+`hermes kanban boards set-default-workdir portfolio <path>` — the manifest drives the
+driver's git calls, the hermes setting places worker workspaces, and they must agree.
 
 - [ ] **Step 5: Verify the empty-lane stop without spending agent time**
 
 ```bash
 BOARD=portfolio python3 mission/run.py --once
 ```
-Expected in the output: `LANE 1 open: its=False auto_gates=False ...` followed by
-`unblocked P1`, and **no** attempt to open lane 2. Then:
+Expected in the output: `LANE 1 open: its=False auto_gates=False snapshot=...` followed
+by `unblocked P1`, and **no** attempt to open lane 2. Confirm the snapshot exists and
+matches the source: `diff mission/runs/portfolio/snapshots/lane-1.md mission/ideas/portfolio/lane-1.md`
+(they differ only by the stripped header lines). Then:
 
 ```bash
 BOARD=portfolio python3 mission/run.py --once 2>&1 | grep -c "LANE 2"
@@ -1706,7 +1779,26 @@ Expected: lane 1 logs `its=False` (its idea header says `integration-tests: no`)
 has not opened yet and its idea declares no override. Reclaim and re-park `P1` as in
 Step 5 when done.
 
-- [ ] **Step 8: Full test suite and final report**
+- [ ] **Step 8: Verify the driver lock and the workdir binding**
+
+```bash
+cd /opt/projects/kanban/main/kanban
+BOARD=portfolio python3 mission/run.py --timeout-min 1 &
+sleep 2 && BOARD=portfolio python3 mission/run.py --once ; echo "exit=$?"
+```
+Expected: the second invocation exits non-zero with `another driver holds ... (pid N)`.
+Kill the first, confirm `mission/runs/portfolio/driver.lock` is gone. Then confirm the
+driver reads git from the manifest's `workdir`, not from the template repo:
+
+```bash
+python3 -c "
+import sys; sys.path.insert(0,'mission')
+import os; os.environ['BOARD']='portfolio'
+import run; print('WORKDIR =', run.WORKDIR)"
+```
+Expected: the path you passed to `--workdir`.
+
+- [ ] **Step 9: Full test suite and final report**
 
 ```bash
 cd /opt/projects/kanban/main/kanban
@@ -1737,7 +1829,11 @@ board. **Do not start either board** — starting is the human's call.
 | D10 parameters and their homes | 3 (`boards/<slug>.json`), 4 (`board_defaults`) |
 | D11 both boards deleted and recreated, backed up | 7 (backup), 8 |
 | D12 ideas preserved as documentation | 7 |
-| open assumption: `suite:` header | 2, 5, 6 (`gc-body.txt`) |
+| resolved: no generic suite command | 5 (deleted), 6 (`gc-body.txt`) |
+| two roots (`template_root` vs `workdir`) | 3 (manifest), 4 (git binding), 8 (verified) |
+| board-scoped ideas / runs | 3, 4, 7, 8 |
+| load-bearing idea snapshot, no idea text on the board | 4, 6 (`<IDEA>`) |
+| D13 single-driver lockfile | 4, 8 |
 
 **Placeholder scan:** one deliberate gap remains — Task 7 Step 5 cannot contain the
 final portfolio idea text, because it must be extracted from a board attachment that
