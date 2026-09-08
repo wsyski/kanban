@@ -94,10 +94,13 @@ IS one lane, so an array there has nothing to index. Each triage card prints
 the resolved options and where each came from, and says so loudly when the two
 disagree — the header is an HTML comment, invisible in any rendered view.
 
-Ideas, snapshots and run data are board-scoped and untracked:
-`mission/ideas/<slug>/`, `mission/runs/<slug>/`. Workers read the immutable
-snapshot the driver writes when the lane opens, never the file you are editing —
-so you can write lane 3's idea while lane 1 is still running.
+Ideas are board-scoped and **tracked**: `mission/ideas/<slug>/` holds the raw
+idea you wrote and the refined one the researcher stages, so a board ships as a
+runnable example and the `I` card can `git add` its deliverable like every other
+worker. Snapshots and run data are not: `mission/runs/<slug>/` is ignored.
+Workers read the immutable snapshot the driver writes when the lane opens, never
+the file you are editing — so you can write lane 3's idea while lane 1 is still
+running.
 
 **The driver never commits.** All work is staged on the current branch. At a
 human gate the driver pauses and records the evidence; you commit at your

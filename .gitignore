@@ -1,6 +1,9 @@
 build/
 target/
-mission/ideas/
+# mission/ideas/ IS tracked: the raw idea is the human's input and the shipped
+# boards are worth having as examples, and the refined idea the researcher card
+# stages (mission/ideas/<slug>/lane-<k>-refined.md) cannot be staged or attached
+# from an ignored path — the hand-off would fail at the first lane.
 mission/runs/
 __pycache__/
 *.pyc
