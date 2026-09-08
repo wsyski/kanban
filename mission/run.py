@@ -80,7 +80,7 @@ def lane_options(lane):
     if parsed is None:
         return None
     headers, body = parsed
-    opts = lanes.resolve_lane_options(board_defaults(), headers)
+    opts = lanes.resolve_lane_options(board_defaults(), headers, lane)
     opts["idea"] = body
     return opts
 
@@ -180,7 +180,16 @@ def verdict(state, prefix):
 def gate_action(state, title, kind, lane):
     opts = lane_options(lane) or {}
     auto = bool(opts.get("auto_gates"))
-    if kind == "gp":
+    if kind == "gi":
+        # No reviewer card precedes this gate — the refinement's check IS a
+        # person reading it, which is the whole point of putting a gate here.
+        # So the only evidence the driver can record is that the artifact
+        # exists; the judgement is the human's and is never inferred.
+        refined = os.path.join(IDEAS_DIR, f"lane-{lane}-refined.md")
+        if not os.path.exists(refined) or not open(refined).read().strip():
+            return f"waiting: no refined idea at {refined}"
+        evidence = f"refined idea present ({os.path.getsize(refined)} bytes)"
+    elif kind == "gp":
         verdict_txt = plan_review_pass(state, lane)
         if not verdict_txt.startswith("PASS"):
             return f"waiting: plan review verdict = {verdict_txt[:40]!r}"
@@ -312,7 +321,7 @@ def open_lane(state, lane):
         f"auto_gates={opts['auto_gates']} snapshot={snap} idea={idea_head!r}")
     # The idea text is NOT posted to the board: raw ideas stay off it, and a
     # comment would be a second, mutable copy of the contract.
-    kb("comment", state[lanes.card_title("P", lane)]["id"],
+    kb("comment", state[lanes.card_title("I", lane)]["id"],
        f"lane {lane} opened: integration_tests={opts['integration_tests']} "
        f"auto_gates={opts['auto_gates']}, idea snapshot: {snap}")
     _OPENED.add(lane)
@@ -328,8 +337,10 @@ def tick():
         card = st.get(title)
         if not card or card["status"] != "blocked":
             continue
-        if kind == "p":
-            # lane root: parents done (or lane 1) AND an idea entered
+        if kind == "i":
+            # lane root: parents done (or lane 1) AND an idea entered. The root
+            # is the RESEARCHER card — a raw idea is exactly what it is for, and
+            # the manager never sees one.
             if parents and not parents_done(st, parents):
                 continue
             if open_lane(st, lane) == "stopped":
@@ -364,7 +375,7 @@ def tick():
                     log(f"ESCALATED: {c['title']} (3 REJECT rounds)")
     # 3. gates
     for title, parents, kind, lane in lane_graph(st):
-        if kind not in ("gp", "gc"):
+        if kind not in ("gi", "gp", "gc"):
             continue
         card = st.get(title)
         if not card or card["status"] == "done":

@@ -60,10 +60,16 @@ def file_board(board, repo, workdir, lane_count, key_prefix):
         cards = lanes.lane_cards(lane, integration_tests=True)
         for card in cards:
             snapshot = f"{repo}/mission/runs/{board}/snapshots/lane-{lane}.md"
+            # The refined idea is a file for the same reason the raw one is:
+            # every hand-off in this flow is a staged artifact, never a comment.
+            # It lives in the repo (not under runs/) because a human edits it at
+            # the gate and may want it committed.
+            refined = f"mission/ideas/{board}/lane-{lane}-refined.md"
             body = open(f"{repo}/mission/card-bodies/{card['body']}").read()
             body = (body.replace("<WORKDIR>", workdir)
                         .replace("<BOARD>", board)
                         .replace("<IDEA>", snapshot)
+                        .replace("<REFINED>", refined)
                         .replace("<N>", str(lane)))
             args = ["create", card["title"], "--body", body,
                     "--assignee", card["assignee"], "--workspace", f"dir:{workdir}",
@@ -93,6 +99,46 @@ def idea_title(text, lane):
     return f"Idea {lane}"
 
 
+def _options_line(repo, board, lane, text):
+    """The lane's RESOLVED options, in prose, for the triage card.
+
+    The options themselves live in the idea as `<!-- integration-tests: false -->`,
+    which is an HTML COMMENT: correct for a file the driver parses, invisible in
+    every Markdown renderer — so the board showed no trace of the one setting that
+    decides whether a lane builds integration tests. State it in plain text, and
+    say where each value came from, so "why did this lane skip TI" is answerable
+    from the card instead of from two files.
+    """
+    try:
+        with open(os.path.join(repo, "mission", "boards", f"{board}.json")) as f:
+            defaults = json.load(f)
+        headers, _ = lanes.parse_idea(text)
+        opts = lanes.resolve_lane_options(defaults, headers, lane)
+    except Exception as exc:      # never let a display line stop a board filing
+        return f"Lane options: unavailable ({exc})"
+    def src(key):
+        cfg_key = key.replace("-", "_")
+        per_lane = isinstance(defaults.get(cfg_key), list)
+        if key not in headers:
+            return f"board default, lane {lane}" if per_lane else "board default"
+        # Both places may state the same fact — the idea for the reader, the board
+        # array for the overview. Redundancy is fine while they agree; the moment
+        # they do not, the header silently wins and the board file lies. So say it
+        # here, on the card the human actually reads.
+        try:
+            board_value = lanes._board_default(defaults, cfg_key, lane, None)
+        except Exception:
+            board_value = None
+        header_value = str(headers[key]).strip().lower() == "true"
+        if board_value is not None and board_value != header_value:
+            return (f"idea header — CONFLICTS with the board file, which says "
+                    f"{str(board_value).lower()} for lane {lane}; the header wins")
+        return "idea header"
+    return (f"Lane options: integration-tests="
+            f"{str(opts['integration_tests']).lower()} ({src('integration-tests')}), "
+            f"auto-gates={str(opts['auto_gates']).lower()} ({src('auto-gates')}).")
+
+
 def file_ideas(board, repo, ideas_dir, lane_count, key_prefix):
     """One TRIAGE card per entered idea — the board's "Raw ideas" column.
 
@@ -115,6 +161,7 @@ def file_ideas(board, repo, ideas_dir, lane_count, key_prefix):
             continue
         snapshot = f"{repo}/mission/runs/{board}/snapshots/lane-{lane}.md"
         body = (f"RAW IDEA for lane {lane} — human input, not a work card.\n\n"
+                f"{_options_line(repo, board, lane, text)}\n"
                 f"Source: {os.path.join(ideas_dir, f'lane-{lane}.md')}\n"
                 f"The driver snapshots this to {snapshot} when it activates lane "
                 f"{lane}; lane {lane}'s cards read the snapshot, never the source.\n"

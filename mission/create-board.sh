@@ -18,12 +18,23 @@ mission/create-board.sh — create a generic kanban board instance
                                                                 [default: off]
   --skip-integration-tests   board default: lanes run without TI/RVc
                                                                 [default: off]
+  --integration-tests <spec> board default, explicitly: `true`, `false`, or one
+                             value per lane, e.g. `false,true` — lane 1 without
+                             integration cards, lane 2 with. Overrides
+                             --skip-integration-tests. A per-idea
+                             `<!-- integration-tests: -->` header still wins.
   --force                    overwrite already-entered idea files
   -h, --help                 this text
 
 Lanes are capacity, ideas are demand. Lanes are filed parked; the human
 writes mission/ideas/<slug>/lane-<k>.md and starts the board. The first lane
-with no idea stops the chain. Per-idea headers override the board defaults:
+with no idea stops the chain. File as many lanes as you have ideas: an empty
+lane is 11 parked cards nobody reads, and the board is easier to see without
+them.
+
+Each lane starts at the RESEARCHER, who turns the raw idea into
+mission/ideas/<slug>/lane-<k>-refined.md, and at the idea gate a human accepts
+that refinement before the manager plans against it. Per-idea headers override the board defaults:
 
     <!-- integration-tests: false -->
     <!-- auto-gates: true -->
@@ -36,7 +47,7 @@ USAGE
 # not a raw bash "unbound variable" from set -u
 need() { [ "$#" -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }; }
 
-SLUG= TITLE= LANES=1 WORKDIR="$REPO" IDEAS= AUTOSTART=0 AUTOGATES=0 SKIPIT=0 FORCE=0
+SLUG= TITLE= LANES=1 WORKDIR="$REPO" IDEAS= AUTOSTART=0 AUTOGATES=0 SKIPIT=0 FORCE=0 ITSPEC=
 while [ $# -gt 0 ]; do
   case "$1" in
     --slug) need "$@"; SLUG=$2; shift 2 ;;
@@ -47,6 +58,7 @@ while [ $# -gt 0 ]; do
     --auto-start) AUTOSTART=1; shift ;;
     --auto-gates) AUTOGATES=1; shift ;;
     --skip-integration-tests) SKIPIT=1; shift ;;
+    --integration-tests) need "$@"; ITSPEC=$2; shift 2 ;;
     --force) FORCE=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown arg: $1" >&2; usage >&2; exit 2 ;;
@@ -57,7 +69,7 @@ case "$LANES" in ''|*[!0-9]*) echo "--lanes must be a positive integer" >&2; exi
 [ "$LANES" -ge 1 ] || { echo "--lanes must be >= 1" >&2; exit 2; }
 
 echo "== pre-flight =="
-for p in manager coder tester reviewer; do
+for p in researcher manager coder tester reviewer; do
   hermes profile list | grep -q " $p " || { echo "profile $p not available" >&2; exit 1; }
 done
 
@@ -77,20 +89,39 @@ mkdir -p "$REPO/mission/ideas/$SLUG" "$REPO/mission/runs/$SLUG/snapshots"
 for k in $(seq 1 "$LANES"); do : >> "$REPO/mission/ideas/$SLUG/lane-$k.md"; done
 
 cd "$REPO"
-python3 - "$SLUG" "$WORKDIR" "$LANES" "$IDEAS" "$AUTOSTART" "$AUTOGATES" "$SKIPIT" "$FORCE" <<'PY'
+python3 - "$SLUG" "$WORKDIR" "$LANES" "$IDEAS" "$AUTOSTART" "$AUTOGATES" "$SKIPIT" "$FORCE" "$ITSPEC" <<'PY'
 import datetime, os, sys
 sys.path.insert(0, os.path.join(os.getcwd(), "mission"))
 import file_lanes
 
-slug, workdir, lanes_n, ideas, autostart, autogates, skipit, force = sys.argv[1:9]
+slug, workdir, lanes_n, ideas, autostart, autogates, skipit, force, itspec = sys.argv[1:10]
 lanes_n = int(lanes_n)
 repo = os.getcwd()
 ideas_dir = os.path.join(repo, "mission", "ideas", slug)
 if ideas:
     n = file_lanes.import_ideas(ideas, ideas_dir, lanes_n, force=(force == "1"))
     print(f"imported {n} idea(s) from {ideas}")
+def parse_it(spec, skipit, lanes_n):
+    """`--integration-tests` beats `--skip-integration-tests`; empty means neither
+    was given. One value applies to every lane; a comma list is per-lane and must
+    have exactly one entry per lane, checked here so the error names the flag the
+    user typed rather than surfacing later from the driver."""
+    if not spec:
+        return skipit != "1"
+    def one(v):
+        v = v.strip().lower()
+        if v not in ("true", "false"):
+            raise SystemExit(f"--integration-tests: expected true/false, got {v!r}")
+        return v == "true"
+    parts = [one(v) for v in spec.split(",")]
+    if len(parts) == 1:
+        return parts[0]
+    if len(parts) != lanes_n:
+        raise SystemExit(f"--integration-tests: {len(parts)} values for {lanes_n} lane(s)")
+    return parts
+
 cfg = file_lanes.write_board_config(repo, slug, workdir, lanes_n,
-                                    integration_tests=(skipit != "1"),
+                                    integration_tests=parse_it(itspec, skipit, lanes_n),
                                     auto_gates=(autogates == "1"))
 print("board config:", os.path.relpath(cfg, repo))
 key = f"{slug}-{datetime.datetime.now():%Y%m%d-%H%M}"
@@ -102,7 +133,7 @@ if ideas_filed:
 else:
     print("no ideas entered yet — triage is empty, the board waits")
 if autostart == "1":
-    file_lanes.kb(slug, "unblock", made["P1"])
+    file_lanes.kb(slug, "unblock", made["I1"])
     print("lane 1 released (--auto-start)")
 PY
 

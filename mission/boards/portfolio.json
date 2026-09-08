@@ -2,7 +2,7 @@
   "slug": "portfolio",
   "template_root": "/opt/projects/kanban/main/kanban",
   "workdir": "/opt/projects/kanban/main/kanban",
-  "lane_count": 3,
+  "lane_count": 1,
   "integration_tests": false,
   "auto_gates": false
 }

@@ -2,11 +2,20 @@
 
 A LANE is one full instance of the card graph executing one human-entered
 idea. Lanes run sequentially: lane k's root is parented to lane k-1's Gc.
+
+The lane opens on a RAW idea and reaches the manager only through a human.
+`I` refines what the human wrote into something a plan can be built on, and
+`Gi` is where a person accepts that refinement — so the manager plans against
+a reviewed idea, never against whatever was typed into lane-<k>.md at 2am.
+The refined text is a FILE (`<REFINED>`), like every other hand-off here: a
+card comment would be a second, mutable copy of the contract.
 """
 
 # code, card-body file, assignee, parent code (None = lane root), skill
 LANE_CARDS = [
-    ("P",   "p-body.txt",   "manager",    None,  None),
+    ("I",   "i-body.txt",   "researcher", None,  "brainstorming"),
+    ("Gi",  "gi-body.txt",  "human-gate", "I",   None),
+    ("P",   "p-body.txt",   "manager",    "Gi",  "writing-plans"),
     ("RVp", "rvp-body.txt", "reviewer",   "P",   None),
     ("Gp",  "gp-body.txt",  "human-gate", "RVp", None),
     ("TW",  "tw-body.txt",  "tester",     "Gp",  "test-driven-development"),
@@ -18,6 +27,8 @@ LANE_CARDS = [
 ]
 
 LABELS = {
+    "I":   "idea refinement",
+    "Gi":  "idea gate",
     "P":   "implementation plan",
     "RVp": "plan review",
     "Gp":  "plan gate",
@@ -117,10 +128,36 @@ def _as_bool(value, fallback):
     return _BOOL[v]
 
 
-def resolve_lane_options(board_defaults, headers):
-    """template default -> board default -> per-idea header."""
-    it = board_defaults.get("integration_tests", True)
-    ag = board_defaults.get("auto_gates", False)
+def _board_default(board_defaults, key, lane, fallback):
+    """One board default for THIS lane.
+
+    A scalar applies to every lane. A LIST is per-lane, indexed from lane 1, so
+    `"integration_tests": [false, true]` reads as "lane 1 without, lane 2 with"
+    in the one file that describes the board. A list whose length does not match
+    the board's lanes is an error, not a shrug: a missing entry would otherwise
+    become a silent default, and the lane that quietly grew or lost its
+    integration cards is exactly the bug this shape exists to prevent.
+
+    It stays a DEFAULT. The idea's own header still wins, because the header
+    travels with the idea it describes while an index describes a slot.
+    """
+    value = board_defaults.get(key, fallback)
+    if not isinstance(value, list):
+        return value
+    count = board_defaults.get("lane_count", len(value))
+    if len(value) != count:
+        raise ValueError(
+            f"board {key!r} has {len(value)} entries for {count} lane(s) — "
+            f"give one per lane, or a single value for all of them")
+    if not 1 <= lane <= len(value):
+        raise ValueError(f"lane {lane} is outside board {key!r} ({len(value)} entries)")
+    return value[lane - 1]
+
+
+def resolve_lane_options(board_defaults, headers, lane=1):
+    """template default -> board default (scalar or per-lane list) -> idea header."""
+    it = _board_default(board_defaults, "integration_tests", lane, True)
+    ag = _board_default(board_defaults, "auto_gates", lane, False)
     if "integration-tests" in headers:
         it = _as_bool(headers["integration-tests"], it)
     if "auto-gates" in headers:

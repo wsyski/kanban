@@ -1,0 +1,12 @@
+IDEA GATE — lane <N>. The driver never commits. Nothing is committed unless a human chooses to commit it.
+
+This is the first gate: it exists so a raw idea reaches the manager only after a person agreed it is the right idea, refined the right way. Everything downstream — plan, tests, code — is built on what you accept here, and it is much cheaper to fix an idea now than a plan later.
+
+If this lane runs with human gates (the default), the driver pauses here and logs HUMAN GATE READY. Your options as the gate-holder:
+1. Read <REFINED> against the raw idea at <IDEA> — start with the Open questions section.
+2. Answer the open questions, or edit <REFINED> yourself. Editing it here is legitimate: you are the author of the idea, the researcher only sharpened it.
+3. Inspect what is staged: git diff --cached --stat
+4. Commit the refined idea if you want it in history — entirely at your discretion, with an explicit pathspec. The flow does not require it.
+5. Complete this card: hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "<what you decided>"
+
+Completing this card is what unblocks the lane's P card, and the manager will treat <REFINED> as the contract. If the refinement is wrong, fix it before opening the gate — there is no revision loop on the researcher card, because you are it.

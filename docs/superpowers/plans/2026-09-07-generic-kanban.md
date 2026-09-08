@@ -1,5 +1,14 @@
 # Generic Kanban Board Implementation Plan
 
+> **Superseded in part (2026-09-09).** The lane graph gained two cards before the
+> plan: `I` (researcher refines the raw idea into
+> `mission/ideas/<slug>/lane-<k>-refined.md`) and `Gi` (a human gate accepting
+> that refinement), so a lane now runs
+> `I → Gi → P → RVp → Gp → TW → C → RVa → [TI → RVc] → Gc` and `I` is the lane
+> root. The board file's `integration_tests` also accepts a per-lane array. This
+> plan was executed as written on 2026-09-07; `mission/lanes.py` and
+> README are the current definition.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: superpowers:subagent-driven-development — this plan is set up for subagent-driven execution: a fresh implementer subagent per task, a task review after each, and a broad review at the end. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
 > **Workspace:** `.superpowers/sdd/2026-09-07-generic-kanban/` (git-ignored). Ledger: `progress.md` in that directory — check it before dispatching anything; a task with a `Task <N>: complete` line is done and must not be re-dispatched.

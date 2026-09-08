@@ -3,6 +3,9 @@
   "template_root": "/opt/projects/kanban/main/kanban",
   "workdir": "/opt/projects/kanban/main/kanban",
   "lane_count": 2,
-  "integration_tests": true,
+  "integration_tests": [
+    false,
+    true
+  ],
   "auto_gates": false
 }

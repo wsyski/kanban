@@ -6,12 +6,27 @@
 > `mission/scenario.json` no longer exist, so every command below that invokes them
 > will fail. The board is now generic — one template, N lanes, ideas entered by a
 > human. For how to run one, see README §3 and `mission/create-board.sh --help`.
-> Kept for provenance: the timing data and the per-card records below are the
-> evidence behind README §4 and §8.
+> Kept for provenance: the per-card records below are the evidence behind
+> README §4 and §8. The raw timing data they came from (`timing.jsonl`,
+> `run-summary.json`) was cleared on 2026-09-09 — see the note in README §4.
+>
+> **The lane shape has changed since these runs.** Every card sequence in this
+> document starts at `P` (manager plans). A lane now starts two cards earlier:
+>
+>     I → Gi → P → RVp → Gp → TW → C → RVa → [TI → RVc] → Gc
+>
+> `I` is the researcher turning the raw idea into
+> `mission/ideas/<slug>/lane-<k>-refined.md`, and `Gi` is a human gate where you
+> accept that refinement — so the manager plans against a reviewed idea and never
+> against raw input. There is no rework loop on `I`; the gate is the loop. The
+> current shape is defined in `mission/lanes.py`, drawn in `mission/flow.drawio`
+> (generated from it), and described in README §1 and §3. Read every `P1 → …`
+> below as "what the chain looked like before the idea stage existed".
 
 **Scenario v2 (plan-first, stage-only, 2 sequential tasks) executed end-to-end
-2026-09-06 13:09→16:42** — full timing data in `timing.jsonl` (609 driver
-ticks), report generator `timing-report.py`. Gate commits: plan-1 `cfb1401`,
+2026-09-06 13:09→16:42** — timing came from `timing.jsonl` (609 driver ticks,
+cleared 2026-09-09) via `timing-report.py`, which still exists and will build a
+fresh baseline on the next run. Gate commits: plan-1 `cfb1401`,
 task 1 `8482b99`, plan-2 `0760d50` (after 2 REJECT rounds), task 2 `479f8e7`.
 
 | card | phase | work | note |
@@ -188,6 +203,9 @@ a gate is what unlocks the next mission's root.
 - Both tasks build with Maven (M3 converts M1's CLI; M2 was born Maven).
 
 ## Full lane variant
+
+*(v1 vocabulary, superseded — the generic template has one lane shape, and the
+integration cards are the only optional part. See the note at the top.)*
 
 The full lane adds `R1 → P1 → RV1 → G1` before TW and `RV2` after TI. Use it
 when the mission needs a reviewed plan first. The sequential trio above

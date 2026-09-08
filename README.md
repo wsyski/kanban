@@ -1,9 +1,15 @@
 # kanban-smoke-test
 
-**coding-team kanban**: multi-profile agents (manager plans, tester tests
-RED-first, coder implements, reviewer gates the verdict, human gate commits)
-building real work on a kanban board, from a generic lane template
-instantiated per board.
+**coding-team kanban**: multi-profile agents (researcher refines the idea,
+manager plans, tester tests RED-first, coder implements, reviewer gates the
+verdict, human gate commits) building real work on a kanban board, from a
+generic lane template instantiated per board.
+
+A lane opens on a RAW idea and reaches the manager only through a human: `I`
+refines what you typed into a stated problem, scope, open questions and success
+criteria; `Gi` is where you accept that refinement. Planning against a reviewed
+idea is the point — fixing an idea costs one card, fixing a plan built on a bad
+one costs the lane.
 
 A LANE is one full instance of the card graph executing one human-entered
 idea. Lanes are capacity, ideas are demand: file N lanes, enter ideas, and
@@ -31,18 +37,25 @@ the board runs them in order. See §3.
 | Nobody commits before the human gate — not even the driver | run.py `--auto-gates` completes gate cards with "HUMAN COMMIT REQUIRED" |
 | `git add`/`git diff` always allowed (provenance patches) | card bodies |
 | Lane N+1's root parented to lane N's gate card | `mission/lanes.py` — the board itself is the sequencer |
+| The manager never sees a raw idea | `mission/lanes.py` — `I` is the lane root, `Gi` stands between it and `P` |
+| Every hand-off is a staged file, never a card comment | refined idea `mission/ideas/<slug>/lane-<k>-refined.md`, plan, patches |
 | Every card's evidence | `git diff --cached` patch attached to the card |
 | Verdicts in the result field | reviewer card bodies mandate it |
 
-Lane shape task 1: `P → RVp → Gp → TW → C → RVa → Gc`.
-Task 2 adds `TI` (failsafe ITs) and a final `RVc` before the gate.
+Lane shape without integration tests:
+`I → Gi → P → RVp → Gp → TW → C → RVa → Gc`.
+With integration tests, `TI` (failsafe ITs) and a final `RVc` come before `Gc`.
+
+Three human gates per lane, in the order the cost of being wrong falls:
+`Gi` (is this the right idea?), `Gp` (is this the right plan?), `Gc` (is this
+the right code?).
 
 ---
 
 ## 2. Prerequisites
 
 ```
-hermes profile list        # manager/coder/tester/reviewer gateways running
+hermes profile list        # researcher/manager/coder/tester/reviewer gateways running
 hermes --profile <P> gateway install && hermes --profile <P> gateway start   # per profile
 javac -version && mvn -version    # JDK 17 + Maven 3.9
 # ~/.m2 pre-warmed (offline builds — workers have iteration budgets):
@@ -58,15 +71,28 @@ mvn -q dependency:get -Dartifact=org.apache.maven.plugins:maven-failsafe-plugin:
     mission/start-board.sh --slug <s>
 
 Flags, all off by default: `--auto-start`, `--auto-gates`,
-`--skip-integration-tests`. `--ideas <file>` preloads ideas from one markdown
-document, split at `## ` headings in document order. `mission/create-board.sh
---help` is the authoritative list.
+`--skip-integration-tests`. `--integration-tests <spec>` states it explicitly —
+`true`, `false`, or one value per lane (`false,true`). `--ideas <file>` preloads
+ideas from one markdown document, split at `## ` headings in document order.
+`mission/create-board.sh --help` is the authoritative list.
 
-Lanes are capacity, ideas are demand: file 3 lanes, enter 1 idea, and the board
-runs that one and stops. Per-idea headers override the board defaults:
+Lanes are capacity, ideas are demand: file as many lanes as you have ideas. An
+empty lane is 11 parked cards nobody reads, and the board is easier to see
+without them; a lane whose idea is missing stops the chain anyway.
 
-    <!-- integration-tests: false -->
+The board file takes a scalar or a per-lane array, and a per-idea header
+overrides it for that lane:
+
+    "integration_tests": [false, true]     # boards/<slug>.json — lane 1 without, lane 2 with
+    <!-- integration-tests: false -->      # ideas/<slug>/lane-<k>.md — this lane only
     <!-- auto-gates: true -->
+
+An array must have exactly one entry per lane — a missing entry would become a
+silent default, and a lane quietly gaining or losing its integration cards is
+the bug the array exists to prevent. A header is a single value: an idea file
+IS one lane, so an array there has nothing to index. Each triage card prints
+the resolved options and where each came from, and says so loudly when the two
+disagree — the header is an HTML comment, invisible in any rendered view.
 
 Ideas, snapshots and run data are board-scoped and untracked:
 `mission/ideas/<slug>/`, `mission/runs/<slug>/`. Workers read the immutable
@@ -84,6 +110,12 @@ products) and `portfolio.md` (one lane, board-default
 `create-board.sh` invocation to file it.
 
 ## 4. Timing statistics (historical: scenario v2, pre-generic; final run 2026-09-06)
+
+> The recorded measurements (`mission/timing.jsonl`, `mission/run-summary.json`)
+> were cleared on 2026-09-09: the lane graph gained `I` and `Gi`, so per-card
+> numbers from before are no longer comparable. The instrumentation below is
+> unchanged and the next run starts a fresh baseline. The table that follows is
+> kept as a record of what the pre-generic flow cost.
 
 **Totals: 175 min agent work / 213 min wall clock = 18% overhead.**
 
@@ -120,19 +152,75 @@ sequence the board ran it.
 
 ### How it flows (diagram)
 
-Interactive diagram: **`mission/flow.drawio`** — open in draw.io / diagrams.net;
-color keys per profile, thick borders = human gates. ASCII fallback:
+Both pictures below are GENERATED from `mission/lanes.py` by
+`mission/render-flow.py`, so they cannot drift from the card graph — run it
+after touching `LANE_CARDS`, and `--check` fails if anything is stale. The
+editable copy is `mission/flow.drawio` (draw.io / diagrams.net; colour per
+profile, thick borders = human gates).
+
+<!-- BEGIN generated: mission/render-flow.py -->
+
+```mermaid
+flowchart LR
+  subgraph L1["lane 1 — integration-tests: false"]
+    direction LR
+    I1["I1<br/>refine idea<br/><i>researcher</i>"]
+    Gi1{{"Gi1<br/>GATE — human accepts idea<br/><i>human</i>"}}
+    P1["P1<br/>plan<br/><i>manager</i>"]
+    RVp1["RVp1<br/>review<br/><i>reviewer</i>"]
+    Gp1{{"Gp1<br/>GATE — human commits plan<br/><i>human</i>"}}
+    TW1["TW1<br/>tests RED<br/><i>tester</i>"]
+    C1["C1<br/>implement<br/><i>coder</i>"]
+    RVa1["RVa1<br/>review<br/><i>reviewer</i>"]
+    Gc1{{"Gc1<br/>GATE — human commits code<br/><i>human</i>"}}
+    I1 --> Gi1 --> P1 --> RVp1 --> Gp1 --> TW1 --> C1 --> RVa1 --> Gc1
+  end
+  subgraph L2["lane 2 — integration-tests: true"]
+    direction LR
+    I2["I2<br/>refine idea<br/><i>researcher</i>"]
+    Gi2{{"Gi2<br/>GATE — human accepts idea<br/><i>human</i>"}}
+    P2["P2<br/>plan<br/><i>manager</i>"]
+    RVp2["RVp2<br/>review<br/><i>reviewer</i>"]
+    Gp2{{"Gp2<br/>GATE — human commits plan<br/><i>human</i>"}}
+    TW2["TW2<br/>tests RED<br/><i>tester</i>"]
+    C2["C2<br/>implement<br/><i>coder</i>"]
+    RVa2["RVa2<br/>review<br/><i>reviewer</i>"]
+    TI2["TI2<br/>failsafe ITs<br/><i>tester</i>"]
+    RVc2["RVc2<br/>final review<br/><i>reviewer</i>"]
+    Gc2{{"Gc2<br/>GATE — human commits code<br/><i>human</i>"}}
+    I2 --> Gi2 --> P2 --> RVp2 --> Gp2 --> TW2 --> C2 --> RVa2 --> TI2 --> RVc2 --> Gc2
+  end
+  Gc1 -. lane 2 starts .-> I2
+  classDef idea fill:#e1d5e7,stroke:#9673a6;
+  classDef plan fill:#dae8fc,stroke:#6c8ebf;
+  classDef review fill:#ffe6cc,stroke:#d79b00;
+  classDef build fill:#d5e8d4,stroke:#82b366;
+  classDef gate fill:#d5e8d4,stroke:#333,stroke-width:3px;
+  class I1,I2 idea;
+  class P1,P2 plan;
+  class RVp1,RVa1,RVp2,RVa2,RVc2 review;
+  class TW1,C1,TW2,C2,TI2 build;
+  class Gi1,Gp1,Gc1,Gi2,Gp2,Gc2 gate;
+```
+
+*Generated from `mission/lanes.py` by `mission/render-flow.py`; editable copy in `mission/flow.drawio`.*
+
+<!-- END generated -->
+
+ASCII fallback:
 
 ```
-        task 1                                   task 2
-  P1 → RVp1 → Gp1 ─────────────────────→  P2 → RVp2 → Gp2 ──────────────────┐
-                  │ commit plan            ↑      │                        ↓
-                  │ (reuse path possible)  PASS   │          TW2 → C2 → RVa2
-   Gp1 unlocks    ▼                        ↑      │                        │
-     TW1 → C1 → RVa1 → Gc1 ────────────────┘      │                        ▼
-     (0 agent min; human commit)                  └── Gp2 commit ──→ TI2 → RVc2 → Gc2
-                                                                        (0 agent min)
+  lane 1 (integration-tests: false)
+  I1 → Gi1 → P1 → RVp1 → Gp1 → TW1 → C1 → RVa1 → Gc1 ──┐
+   │     │                                             │
+   │     └─ human accepts the refined idea             │ lane 2 starts
+   └─ researcher: raw idea → lane-1-refined.md         ▼
+                                                  lane 2 (integration-tests: true)
+  I2 → Gi2 → P2 → RVp2 → Gp2 → TW2 → C2 → RVa2 → TI2 → RVc2 → Gc2
 ```
+
+There is no rework loop on `I`: the idea gate is the loop, and you are it —
+edit the refined file at `Gi` rather than sending the card back.
 
 Rework loop (driven by REJECT verdicts, all inside the plan phase):
 

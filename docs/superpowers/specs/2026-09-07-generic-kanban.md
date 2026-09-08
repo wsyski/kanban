@@ -1,5 +1,14 @@
 # Generic Kanban Board — Design Spec
 
+> **Superseded in part (2026-09-09).** The lane graph gained two cards before the
+> plan: `I` (researcher refines the raw idea into
+> `mission/ideas/<slug>/lane-<k>-refined.md`) and `Gi` (a human gate accepting
+> that refinement), so a lane now runs
+> `I → Gi → P → RVp → Gp → TW → C → RVa → [TI → RVc] → Gc` and `I` is the lane
+> root. The board file's `integration_tests` also accepts a per-lane array. This
+> document records the design as agreed on 2026-09-07; `mission/lanes.py` and
+> README are the current definition.
+
 **Date:** 2026-09-07
 **Status:** agreed (grilling session, 17 rounds); reviewed 2026-09-07 — five review fixes folded in, seven amendments rejected (see the last section)
 **Supersedes:** the hand-tailored `mission/scenario.json` + `mission/file-mission.sh` filing path

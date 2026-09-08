@@ -5,7 +5,10 @@ Documentation of the work the original hand-filed `portfolio` board produced
 research findings below are preserved as of 2026-09-05; verify before acting.
 
     mission/create-board.sh --slug portfolio --title "Portfolio Engineering" \
-        --lanes 3 --skip-integration-tests --ideas docs/example-ideas/portfolio.md
+        --lanes 1 --integration-tests false --ideas docs/example-ideas/portfolio.md
+
+One idea, one lane: file as many lanes as you have ideas, since an empty lane is
+a full card graph nobody reads.
 
 ## Idea 1: portfolio pipeline improvements
 

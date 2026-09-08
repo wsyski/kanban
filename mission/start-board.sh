@@ -17,12 +17,14 @@ done
   exit 1; }
 
 cd "$REPO"
-P1=$(hermes kanban --board "$SLUG" list --json | python3 -c "
+# The lane root is the RESEARCHER card, not the plan card: a raw idea goes to
+# refinement first, and the manager is reached only through the idea gate.
+ROOT=$(hermes kanban --board "$SLUG" list --json | python3 -c "
 import json,sys
 for t in json.load(sys.stdin):
-    if t['title'].startswith('P1:'): print(t['id']); break")
-[ -n "$P1" ] || { echo "no P1 card on board '$SLUG'" >&2; exit 1; }
-hermes kanban --board "$SLUG" unblock "$P1" 2>/dev/null || true
+    if t['title'].startswith('I1:'): print(t['id']); break")
+[ -n "$ROOT" ] || { echo "no I1 card on board '$SLUG'" >&2; exit 1; }
+hermes kanban --board "$SLUG" unblock "$ROOT" 2>/dev/null || true
 : > "$RUNLOG"
 BOARD="$SLUG" nohup python3 mission/run.py --timeout-min "$TIMEOUT" >> "$RUNLOG" 2>&1 &
 echo "board '$SLUG' started; log: $RUNLOG"
