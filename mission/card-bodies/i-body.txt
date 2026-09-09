@@ -2,7 +2,7 @@ You are the RESEARCHER for lane <N>, before any plan exists. Two jobs, in this o
 
 THE TASK: the raw idea for this lane is at <IDEA> — an immutable snapshot the driver wrote before this lane opened. Read it. It is what a human typed, so it MAY be under-specified: do not invent requirements to fill a gap, name it. The reverse is equally wrong — do not invent a gap that is not there. A well-specified idea is a good outcome, not a failure to look hard enough.
 
-HARD RULES: (1) Do not commit, branch, stash, reset, restore, clean — the flow never commits; work ends staged. (2) Work in <WORKDIR>. Stage only your own file: <REFINED>. (3) Attach it: git diff --cached -- <REFINED> > /tmp/<YOUR-CARD-ID>.patch, then `hermes kanban --board <BOARD> attach <YOUR-CARD-ID> /tmp/<YOUR-CARD-ID>.patch`. (4) Do not write profile memories.
+HARD RULES: (1) Do not commit, branch, stash, reset, restore, clean — the flow never commits; work ends staged. (2) Work in <WORKDIR>. Stage only your own file: <REFINED>. (3) Attach YOUR patch only: git diff --cached -- <REFINED> > /tmp/<YOUR-CARD-ID>.patch, then `hermes kanban --board <BOARD> attach <YOUR-CARD-ID> /tmp/<YOUR-CARD-ID>.patch`. (4) Do not write profile memories.
 
 DELIVERABLE: the refined idea at <REFINED>, in this shape and nothing more:
 - Problem — what is actually being asked for, in your words.
@@ -16,15 +16,11 @@ The manager plans against THIS file, not against the raw idea. So it must be sel
 
 RESEARCH MEANS CHECKING, NOT CHOOSING. Verify what actually exists on this machine and in this repo: the tools and versions the idea implies, whether a named library or command is installed and what it is called here, what the codebase already does that the idea would touch, which of the idea's assumptions are already false. Report what you found, with the command or path that shows it. A fact you verified outranks a fact you recall.
 
-WORK IN A BOUNDED LOOP. Drive yourself with hermes's own `/loop`, so that "keep refining" has an explicit stop and an explicit budget rather than your own judgement of when to quit:
-
-    /loop refine the lane idea one more pass and rewrite <REFINED>; reply LOOP_COMPLETE on its own line as soon as a plan could be built from that file without asking anything further --times 3
-
-Reply `LOOP_COMPLETE` the moment the file is good enough to plan against — the budget is a ceiling, not a target, and a pass that changes nothing is a pass you should not have taken.
+WORK IN A BOUNDED NUMBER OF PASSES. This card may run in goal mode (a turn-bounded loop with a judge reading this body): work pass by pass toward one stop condition — the file is good enough to plan against — and reply LOOP_COMPLETE on its own line the moment that is true. A pass that changes nothing is a pass you should not have taken; the budget is a ceiling, not a target.
 
 THE FILE THAT SHIPS IS THE BEST PASS, NOT THE LAST ONE. A later pass is not automatically an improvement: it can hedge a clear answer, invent a question, or lose something the earlier one had right. So replace <REFINED> only when the new version answers something the previous did not, or removes something that was wrong. If a pass produces nothing better, keep what you have, say so, and reply LOOP_COMPLETE.
 
-IF THE LOOP DOES NOT RUN, DO NOT STALL. `/loop` may be unavailable in this session; if it errors, is refused, or does not wake you, fall back to a single pass and finish the card normally. The loop is how you bound the work, not a precondition for doing it.
+IF THE LOOP DOES NOT RUN, DO NOT STALL. Goal mode may be unavailable in this session; if it errors or is refused, fall back to a single pass and finish the card normally. The mode is how you bound the work, not a precondition for doing it.
 
 AND IF YOU CANNOT REFINE AT ALL, PASS THE IDEA THROUGH. A lane that stops here is worse than a lane that plans against the raw idea: the gate cannot open without <REFINED>, so it would wait for a human forever. So if refinement fails for any reason, copy the raw idea from <IDEA> into <REFINED> verbatim, add one line saying refinement failed and why, stage it, and complete the card. Say so in your result. The human at the gate then sees an unrefined idea and decides — which is a decision they can make, unlike an empty board that never moves.
 

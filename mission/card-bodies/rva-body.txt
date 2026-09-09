@@ -8,6 +8,8 @@ TASK: review the STAGED diff in <WORKDIR> (git diff --cached), not the worktree,
 (c) No commits, no branches, no files outside this lane's target paths.
 (d) Error handling does not silently swallow failures.
 
+BLOCKING CARD, NOT DOING THE WORK: this card's success case is that work WAITS for a human, never that the flow moves on. If checks fail, REJECT — do not complete to make the board move, do not treat the absence of problems as permission to skip checking.
+
 Reproduce, do not skim. Every PASS must be earned by re-derivation; every REJECT must list concrete reproduction steps.
 
 VERDICT: complete with --result "PASS: <one line per (a)-(d)>" or "REJECT: <numbered findings with reproduction steps>".

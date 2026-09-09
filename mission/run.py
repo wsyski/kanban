@@ -23,6 +23,7 @@ POLL = 20
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import lanes
 import file_lanes
+import runs_util
 
 BOARD_DIR = os.path.join(REPO, "boards", BOARD)
 BOARD_CFG = os.path.join(BOARD_DIR, "board.json")
@@ -51,6 +52,7 @@ def board_defaults():
 WORKDIR = manifest().get("workdir") or os.path.join(BOARD_DIR, "work")
 
 TIMING_PATH = os.path.join(RUN_DIR, "timing.jsonl")
+CARDS_DIR = os.path.join(RUN_DIR, "cards")
 
 
 def board_lane_count(state):
@@ -132,8 +134,23 @@ def log(msg):
     print(f"[{datetime.datetime.now():%H:%M:%S}] {msg}", flush=True)
 
 def title_of_prefix(state, prefix):
+    """Card whose TITLE CODE equals the prefix.
+
+    'Gi1' matches 'Gi1: ...' but NOT 'Gi10: ...' — the lane number ends at a
+    boundary. 'RVp1-r' matches 'RVp1-r2: ...' (the round number continues the
+    code) because the prefix itself does not end in a digit. A prefix that
+    already ends in ':' or '-' carries its own boundary and matches plainly.
+    Every parent lookup goes through here.
+    """
+    ends_digit = prefix[-1:].isdigit()
+    ends_boundary = prefix[-1:] in (":", "-")
     for t, card in state.items():
-        if t.startswith(prefix):
+        if not t.startswith(prefix):
+            continue
+        if ends_boundary:
+            return t, card
+        nxt = t[len(prefix):len(prefix) + 1]
+        if nxt in (":", "-") or (nxt.isdigit() and not ends_digit):
             return t, card
     return None, None
 
@@ -161,33 +178,112 @@ def card_id(state, title):
     return c["id"]
 
 def plan_review_pass(state, lane):
-    best = ""
-    for pref in (f"RVp{lane}:", f"RVp{lane}-r2", f"RVp{lane}-r3"):
-        t, c = title_of_prefix(state, pref)
-        if c and c["status"] == "done" and (c.get("result") or c.get("summary")):
-            best = c.get("result") or c.get("summary")
-    return best
+    """Latest finished plan-review verdict — superseded by latest_verdict()."""
+    return latest_verdict(state, lane, "RVp", "Gp")
 
-def file_revision(state, lane, round_no, findings):
-    rev_title = f"P{lane}-rev-{round_no}: plan revision round {round_no} - lane {lane}"
-    rvp_title = f"RVp{lane}-r{round_no + 1}: plan review round {round_no + 1} - lane {lane}"
+def _goal_args(assignee, code):
+    """Delegates to lanes.goal_args — single source of the worker-only rule."""
+    return lanes.goal_args(code)
+
+
+def latest_verdict(state, lane, reviewer_prefix, gate_code, final_code=None):
+    """The gate-relevant verdict: the newest review round that has FINISHED
+    and carries a RESULT field.
+
+    Only the card's result field counts — the verdict contract lives there.
+    Falling back to run summaries (as this first did) read RVp1's parking
+    block summary ('parked: awaiting lane activation') as a verdict and held
+    Gp forever. `final_code` extends the scan (RVc is RVa's re-review).
+    """
+    del gate_code
+    cands = [reviewer_prefix, final_code] if final_code else [reviewer_prefix]
+    best_card, best_done = None, -1.0
+    for base in [b for b in cands if b]:
+        t, c = title_of_prefix(state, f"{base}{lane}")
+        if c and c["status"] == "done":
+            done = c.get("completed_at") or 0
+            if done > best_done:
+                best_card, best_done = c, done
+        for k in range(1, 10):
+            t, c = title_of_prefix(state, f"{base}{lane}-r{k + 1}")
+            if c and c["status"] == "done":
+                done = c.get("completed_at") or 0
+                if done > best_done:
+                    best_card, best_done = c, done
+    if not best_card:
+        return ""
+    if (best_card.get("result") or "").strip():
+        return best_card.get("result")
+    # The card is done but its result field is empty — the reviewer completed
+    # with --summary only (E2E-2 did exactly that; e2e-1 used --result). The
+    # verdict prose then lives in the CLOSING RUN's summary. Accept ONLY a
+    # completed run: the parking block is also a run here, and that is how
+    # 'parked: awaiting lane activation' once masqueraded as a verdict.
+    runs = runs_util.board_runs(BOARD, best_card.get("id"))
+    closed_ok = [r for r in runs if r.get("outcome") == "completed"]
+    if closed_ok:
+        last = max(closed_ok, key=lambda r: r.get("ended_at") or 0)
+        return (last.get("summary") or "").strip()
+    return ""
+
+
+def rework_hold(state, lane, base, gate_code):
+    """True while a revision/re-gate card of this loop is live (not done)."""
+    for t, c in state.items():
+        if (t.startswith(f"{base}{lane}-rev") or t.startswith(f"{gate_code}{lane}-r")) \
+                and c["status"] not in ("done", "archived"):
+            return True
+    return False
+
+
+def file_revision(state, lane, round_no, findings, base="P", reviewer_prefix="RVp",
+                  gate_code="Gp", max_rounds=3):
+    """File one rework round: a revision card + its re-gate, linked to the gate.
+
+    Serves BOTH loops (ERRORS.md O2): the plan loop (base P, reviewer RVp,
+    gate Gp) and the idea loop (base I, re-gate Gi itself). The idea loop's
+    'reviewer' is the re-gate — no separate reviewer sits before an idea
+    gate, by design.
+    """
+    kind = "plan" if base == "P" else "idea"
+    if kind == "plan":
+        rev_title = f"P{lane}-rev-{round_no}: plan revision round {round_no} - lane {lane}"
+        rev_body_file, rev_assignee = "p-body.txt", "manager"
+        rr_title = f"RVp{lane}-r{round_no + 1}: plan review round {round_no + 1} - lane {lane}"
+        rr_body_file, rr_assignee = "rvp-body.txt", "reviewer"
+    else:
+        rev_title = f"I{lane}-rev-{round_no}: idea refinement round {round_no} - lane {lane}"
+        rev_body_file, rev_assignee = "i-body.txt", "researcher"
+        rr_title = f"Gi{lane}-r{round_no + 1}: idea re-gate round {round_no + 1} - lane {lane}"
+        rr_body_file, rr_assignee = "gi-body.txt", "human-gate"
     if title_of_prefix(state, rev_title)[0]:
         return  # already filed
-    pbody = open(f"{REPO}/mission/card-bodies/p-body.txt").read()
-    pbody += f"\nREVISION ROUND {round_no} of 3 (max 3, then human escalation).\n\nYour plan was REJECTED. Findings to fix EXACTLY:\n{findings}\nFix ONLY these, re-verify every numeric expectation by computation, re-stage, re-attach, complete with a change summary.\n"
-    out = kb("create", rev_title, "--body", pbody, "--assignee", "manager",
-             "--workspace", f"dir:{REPO}", "--max-runtime", "60m", "--max-retries", "1",
-             "--idempotency-key", f"{BOARD}-rev-P{lane}-{round_no}", "--created-by", "manager", "--json")
-    rev_id = json.loads(out)["id"]
-    rvbody = open(f"{REPO}/mission/card-bodies/rvp-body.txt").read()
-    rvbody += f"\nREVIEW ROUND {round_no+1} of 3. Plan revised after REJECT. Re-verify the findings are fixed AND re-check (a)-(d). Verdict in result field.\n"
-    out = kb("create", rvp_title, "--body", rvbody, "--assignee", "reviewer",
-             "--parent", rev_id, "--workspace", f"dir:{REPO}", "--max-runtime", "45m",
-             "--max-retries", "1", "--idempotency-key", f"{BOARD}-rvp-P{lane}-r{round_no + 1}",
-             "--created-by", "manager", "--json")
-    rvp_id = json.loads(out)["id"]
-    kb("link", rvp_id, card_id(state, lanes.card_title("Gp", lane)))
-    log(f"filed revision round {round_no}: {rev_title} + {rvp_title}")
+    gate_id = card_id(state, lanes.card_title(gate_code, lane))
+
+    rbody = open(f"{REPO}/mission/card-bodies/{rev_body_file}").read()
+    rbody += (f"\nREVISION ROUND {round_no} of {max_rounds} (max {max_rounds}, then human "
+              f"escalation).\n\nThe gate sent this back. Address EXACTLY:\n{findings}\n"
+              f"Fix only these, re-stage, re-attach, complete with a change summary.\n")
+    args = ["create", rev_title, "--body", rbody, "--assignee", rev_assignee,
+            "--workspace", f"dir:{REPO}", "--max-runtime", "60m", "--max-retries", "1",
+            "--idempotency-key", f"{BOARD}-rev-{base}{lane}-{round_no}",
+            "--created-by", "manager", "--json"] + _goal_args(rev_assignee, base)
+    rev_id = json.loads(kb(*args))["id"]
+
+    rrbody = open(f"{REPO}/mission/card-bodies/{rr_body_file}").read()
+    rrbody += (f"\nRE-GATE ROUND {round_no + 1} of {max_rounds + 1}. A previous gate-holder "
+               f"sent the work back with the findings on the parent revision card. Verify "
+               f"they are addressed, then complete this card exactly as a gate-holder would.\n")
+    rr_args = ["create", rr_title, "--body", rrbody, "--assignee", rr_assignee,
+               "--parent", rev_id, "--workspace", f"dir:{REPO}", "--max-runtime", "45m",
+               "--max-retries", "1", "--idempotency-key",
+               f"{BOARD}-rr-{base}{lane}-r{round_no + 1}", "--created-by", "manager", "--json"]
+    rr_id = json.loads(kb(*rr_args))["id"]
+    kb("link", rr_id, gate_id)
+    # This gate now also guards the DOWNSTREAM card against starting while
+    # rework is in flight; the positional-parents check in tick() enforces it.
+    # _OPENED stays untouched: the lane's option state is settled.
+    log(f"filed {kind} rework round {round_no}: {rev_title} + {rr_title}")
 
 def staged_files():
     """Paths staged in WORKDIR — the evidence a gate records in place of a SHA.
@@ -217,6 +313,18 @@ def verdict(state, prefix):
         return ""
     return c.get("result") or c.get("summary") or (runs_result(c["id"]) if c.get("id") else "")
 
+def verdict_token(text):
+    """"PASS" or "REJECT" — the FIRST occurrences of the tokens, wherever
+    they sit in the prose. The bodies mandate the result BEGIN with the
+    verdict, but reviewers drift ("Lane-1 implementation review PASS: ...",
+    E2E-2's RVa), and a gate that requires startswith() stalls the lane
+    waiting for a verdict that is actually there. Whichever token appears
+    FIRST wins; REJECT before PASS reads as a rejection.
+    """
+    m = re.search(r"\b(REJECT|PASS)\b", text or "")
+    return m.group(1) if m else ""
+
+
 def gate_action(state, title, kind, lane):
     opts = lane_options(lane) or {}
     auto = bool(opts.get("auto_gates"))
@@ -230,14 +338,14 @@ def gate_action(state, title, kind, lane):
             return f"waiting: no refined idea at {refined}"
         evidence = f"refined idea present ({os.path.getsize(refined)} bytes)"
     elif kind == "gp":
-        verdict_txt = plan_review_pass(state, lane)
-        if not verdict_txt.startswith("PASS"):
+        verdict_txt = latest_verdict(state, lane, "RVp", "Gp")
+        if verdict_token(verdict_txt) != "PASS":
             return f"waiting: plan review verdict = {verdict_txt[:40]!r}"
         evidence = f"plan staged ({len(staged_files())} files), verdict PASS"
     else:  # gc
         final = "RVc" if state.get(lanes.card_title("RVc", lane)) else "RVa"
-        verdict_txt = verdict(state, f"{final}{lane}")
-        if not verdict_txt.startswith("PASS"):
+        verdict_txt = latest_verdict(state, lane, "RVa", "Gc", final_code="RVc")
+        if verdict_token(verdict_txt) != "PASS":
             return f"waiting: final review verdict = {verdict_txt[:40]!r}"
         staged = staged_files()
         evidence = f"{len(staged)} files staged, verdict PASS"
@@ -245,6 +353,7 @@ def gate_action(state, title, kind, lane):
             log(f"GATE {title.split(':')[0]} evidence: {evidence}; "
                 f"staged: {', '.join(staged[:8])}")
         write_timing_report(lane)
+        preserve_artifacts()
     if auto:
         cid = card_id(state, title)
         if state[title]["status"] == "blocked":
@@ -284,36 +393,63 @@ def record_timing(state):
         prev = cache.get(t)
         if prev is not None and prev.get("status") == c["status"]:
             continue
-        try:
-            out = kb("runs", c["id"])
-        except Exception:
-            continue
-        row = None
-        turns = None
-        for line in out.splitlines():
-            s = line.strip().split()
-            if len(s) > 3 and s[0].isdigit():
-                row = {"outcome": s[1], "elapsed_raw": s[3] if len(s) > 3 else "",
-                       "started": " ".join(s[-5:])}
-        if row:
-            c["last_run"] = row
-        try:
-            ev = json.loads(kb("show", c["id"], "--json"))
-            kinds = [e.get("kind") for e in ev.get("events", [])]
-            hb = sum(1 for e in ev.get("events", []) if e.get("kind") == "heartbeat")
-            for e in ev.get("events", []):
-                p = e.get("payload") or {}
-                if e.get("kind") == "gave_up" and isinstance(p, dict) and p.get("budget_used"):
-                    c["budget_used"] = p["budget_used"]
-            c["hb_count"] = hb
-        except Exception:
-            pass
+        runs = runs_util.board_runs(BOARD, c["id"])
+        closed = [r for r in runs
+                  if r.get("outcome") in ("completed", "gave_up")
+                  and r.get("ended_at") and r.get("started_at")]
+        if closed:
+            last = closed[-1]
+            c["last_run"] = {"outcome": last.get("outcome"),
+                             "elapsed_min": round(runs_util.elapsed_min(last), 2),
+                             "started": last.get("started_at")}
+        if any(r.get("outcome") == "gave_up" for r in runs):
+            c["gave_up"] = True
+        full = state.get(t) or c
+        if full is not c:
+            full.update(c)          # keep the enriched last_run/gave_up
+            full = {**state[t], **full}
+        card_log(full)
     record_timing._prev = {t: {"status": c["status"], "last_run": c.get("last_run")}
                            for t, c in snap.items()}
     entry = {"ts": datetime.datetime.now().isoformat(timespec="seconds"),
              "epoch": time.time(), "cards": snap}
     with open(TIMING_PATH, "a") as f:
         f.write(json.dumps(entry) + "\n")
+
+def _card_log_entry(card):
+    """Self-contained record for the project card log: the card's INPUT
+    (body as filed, assignee, skill) and its RESULT (result/summary, run
+    history, comments). Written on every status change, appended in full —
+    JSONL, one complete line per event."""
+    r = {"id": card["id"], "title": card.get("title"), "status": card.get("status"),
+         "assignee": card.get("assignee"), "result": card.get("result"),
+         "body": card.get("body"), "at": datetime.datetime.now().isoformat(timespec="seconds"),
+         "epoch": time.time()}
+    runs = runs_util.board_runs(BOARD, card["id"])
+    r["runs"] = [{"outcome": x.get("outcome"),
+                  "elapsed_min": round(runs_util.elapsed_min(x), 2),
+                  "summary": (x.get("summary") or "")[:400],
+                  "started": x.get("started_at")} for x in runs]
+    try:
+        att = kb("attachments", card["id"]).strip()
+        r["attachments"] = att.splitlines() if att else []
+    except Exception:
+        r["attachments"] = None
+    return r
+
+
+def card_log(card):
+    """Append the card's full record (input + result) to
+    boards/<slug>/runs/cards/<card-id>.jsonl — one line per status change,
+    so a card's whole history lives in the project, not in a mach DB."""
+    try:
+        os.makedirs(CARDS_DIR, exist_ok=True)
+        path = os.path.join(CARDS_DIR, f"{card['id']}.jsonl")
+        with open(path, "a") as f:
+            f.write(json.dumps(_card_log_entry(card)) + "\n")
+    except Exception as e:
+        log(f"WARNING: card log failed for {card.get('id')}: {e}")
+
 
 _OPENED = set()
 
@@ -384,10 +520,13 @@ def tick():
         card = st.get(title)
         if not card or card["status"] != "blocked":
             continue
-        if kind == "i":
-            # lane root: parents done (or lane 1) AND an idea entered. The root
-            # is the RESEARCHER card — a raw idea is exactly what it is for, and
-            # the manager never sees one.
+        code = title.split(":")[0]
+        root_code = lanes.lane_root_code(True)   # positional: first LANE_CARDS entry
+        is_root = code == f"{root_code}{lane}"
+        if is_root:
+            # lane root (whatever card LANE_CARDS puts first — positional per
+            # ERRORS.md O3, not hardcoded to the researcher): parents done (or
+            # lane 1) AND an idea entered.
             if parents and not parents_done(st, parents):
                 continue
             if not lane_is_armed(lane):
@@ -400,28 +539,60 @@ def tick():
         kb("unblock", card["id"])
         log(f"unblocked {title.split(':')[0]} (parents done)")
     st = state = board()
-    # 2. rework loop on plan REJECT (gates go ready via unblock, so accept
-    #    both blocked and ready — the REJECT verdict itself is the trigger)
+    # 2. rework loops — FILE FIRST, so the holds below exist before promotion
+    #    runs on the next card. Both loops are driven by the newest FINISHED
+    #    review/re-gate verdict; gates go ready via unblock, so accept blocked
+    #    and ready — the verdict itself is the trigger.
     for lane in range(1, board_lane_count(st) + 1):
-        t, c = title_of_prefix(st, f"Gp{lane}:")
-        if c and c["status"] in ("blocked", "ready", "todo"):
-            v = plan_review_pass(st, lane)
-            if v.startswith("REJECT"):
-                # only file the NEXT round if the previous one finished:
-                # any live (non-done) P<lane>-rev or RVp<lane>-r card = rework in flight
-                live = [t for t in st
-                        if t.startswith(f"P{lane}-rev") and st[t]["status"] not in ("done",)
-                        or t.startswith(f"RVp{lane}-r") and st[t]["status"] not in ("done",)]
-                if live:
-                    continue
-                m = v.split("REJECT:")[1][:1200]
+        # --- plan loop: Gp parked, latest plan-review verdict REJECT ---
+        _, gp_card = title_of_prefix(st, f"Gp{lane}:")
+        if gp_card and gp_card["status"] in ("blocked", "ready", "todo") \
+                and not rework_hold(st, lane, "P", "Gp"):
+            v = latest_verdict(st, lane, "RVp", "Gp")
+            if verdict_token(v) == "REJECT":
+                m = v.split("REJECT:", 1)[1][:1200]
                 rounds = len([t for t in st if t.startswith(f"P{lane}-rev")])
                 if rounds < 3:
-                    file_revision(st, lane, rounds + 1, m)
+                    file_revision(st, lane, rounds + 1, m, base="P",
+                                  reviewer_prefix="RVp", gate_code="Gp")
                 else:
-                    kb("block", "--kind", "needs_input", c["id"],
-                       "3 revision rounds exhausted — human escalation required")
-                    log(f"ESCALATED: {c['title']} (3 REJECT rounds)")
+                    escalate(gp_card["id"], f"Gp{lane}",
+                             "3 plan revision rounds exhausted — human escalation required")
+        # --- idea loop: P parked, latest idea-gate verdict REWORK ---
+        _, p_card = title_of_prefix(st, f"P{lane}:")
+        if p_card and p_card["status"] in ("blocked", "ready", "todo") \
+                and not rework_hold(st, lane, "I", "Gi"):
+            v = latest_verdict(st, lane, "Gi", "Gi")
+            if verdict_token(v) == "REJECT":
+                m = v.split("REJECT:", 1)[1] if "REJECT:" in v else v
+                m = m[:1200]
+                rounds = len([t for t in st if t.startswith(f"I{lane}-rev")])
+                if rounds < 2:      # 2 rounds: an idea needing three human
+                                    # round-trips is a wrong idea (ERRORS.md O2)
+                    file_revision(st, lane, rounds + 1, m, base="I",
+                                  reviewer_prefix="Gi", gate_code="Gi", max_rounds=2)
+                else:
+                    escalate(p_card["id"], f"P{lane}",
+                             "2 idea rework rounds exhausted — human escalation required")
+    st = state = board()
+    # 2b. rework holds: while an idea- or plan-rework round is live, the gate
+    # guards its DOWNSTREAM card too — P/TW must not start on work the gate
+    # has just sent back. Round cards were filed in step 2, so a hold exists
+    # the moment the verdict lands; this is also the recovery path after a
+    # driver restart mid-rework. Blocking needs ready/running; the downstream
+    # card is blocked-by-parents here in the normal flow, so a no-op failure
+    # is expected and harmless — skip it rather than spam the error log.
+    for lane in range(1, board_lane_count(st) + 1):
+        for base, gate, downstream in (("I", "Gi", "P"), ("P", "Gp", "TW")):
+            if not rework_hold(st, lane, base, gate):
+                continue
+            t, c = title_of_prefix(st, f"{downstream}{lane}:")
+            if c and c["status"] in ("ready", "todo"):
+                try:
+                    kb("block", "--kind", "dependency", c["id"],
+                       f"rework in flight: {gate}{lane} sent the work back")
+                except RuntimeError as e:
+                    log(f"LANE {lane}: hold on {downstream}{lane} skipped ({e})")
     # 3. gates
     for title, parents, kind, lane in lane_graph(st):
         if kind not in ("gi", "gp", "gc"):
@@ -445,16 +616,62 @@ def tick():
     _, gc = title_of_prefix(st, f"Gc{last}:")
     return bool(gc and gc["status"] == "done")
 
+
+_ESCALATED = set()   # gate codes already escalated this driver run
+
+
+def escalate(card_id, code, reason):
+    """Escalate a rework loop that exhausted its rounds — once per run.
+
+    The card is already blocked (parked is how it waits), and blocking a
+    blocked card is a no-op the CLI reports as failure: the old path raised,
+    main()'s catch-all logged it, and the next tick tried again — escalation
+    spam instead of escalation. A comment is readable where the human is
+    already looking; the in-memory set keeps it to one line per loop.
+    """
+    if code in _ESCALATED:
+        return
+    _ESCALATED.add(code)
+    kb("comment", card_id, f"ESCALATION: {reason}")
+    log(f"ESCALATED: {code} — {reason}")
+
+def _blocked_event_payload(card_id):
+    """Latest block event payload, or None.
+
+    block_task stores the reason and kind in the EVENT PAYLOAD, not in the
+    task's result field — and `list --json` has neither key. Reading result
+    text (as this used to) therefore matched nothing and the deadman never
+    saw a genuinely stuck board.
+    """
+    try:
+        ev = json.loads(kb("show", card_id, "--json"))
+    except Exception:
+        return None
+    for e in reversed(ev.get("events", [])):
+        if e.get("kind") in ("blocked", "block_loop_detected") and isinstance(e.get("payload"), dict):
+            return e["payload"]
+    return None
+
+
 def block_reason(card):
-    """Blocked-kind string from the card run summary, e.g. 'needs_input'."""
-    r = (card.get("result") or "") + " " + (card.get("summary") or "")
-    if "needs_input" in r:
+    """'needs_input' when the card's latest block event was kind needs_input."""
+    p = _blocked_event_payload(card["id"])
+    if p and p.get("kind") == "needs_input":
         return "needs_input"
     return "other"
 
+
+def is_parked(card):
+    """Parked, not stuck: the driver's own 'awaiting lane activation' block,
+    which is the parking brake on lanes not yet open — never human attention."""
+    p = _blocked_event_payload(card["id"])
+    return bool(p) and "awaiting lane activation" in str(p.get("reason") or "")
+
 def notify_deadman(state):
     stuck = [f"{t.split(':')[0]}" for t, c in state.items()
-             if c["status"] == "blocked" and block_reason(c).startswith("needs_input")]
+             if c["status"] == "blocked"
+             and block_reason(c) == "needs_input"
+             and not is_parked(c)]
     msg = f"kanban-smoke DEADMAN: {len(stuck)} cards awaiting human input: {', '.join(stuck[:6])}"
     log(msg)
     with open("/tmp/kanban-deadman.txt", "w") as f:
@@ -471,11 +688,17 @@ def notify_deadman(state):
     except Exception:
         pass
 
-def preserve_artifacts(task):
+def preserve_artifacts():
     """Copy every completed card's provenance patch into the board's own
     runs/artifacts/<runid>/ so per-task diffs live next to the code commit they
-    produced — and stay inside the board, like everything else it generates."""
-    import shutil, glob, datetime
+    produced — and stay inside the board, like everything else it generates.
+
+    Called at each lane's code gate: the lane is finished, its cards are about
+    to be archived by the next refile, and this is the last moment the patches
+    are still collectable. They were written for exactly this and were never
+    called (found reading, not running — the one finding of that kind here).
+    """
+    import shutil, glob
     run_id = datetime.datetime.now().strftime("%Y%m%d-%H%M")
     out_dir = os.path.join(RUN_DIR, "artifacts", run_id)
     os.makedirs(out_dir, exist_ok=True)
@@ -500,34 +723,18 @@ def write_summary(state):
     for title, c in state.items():
         if c["status"] != "done":
             continue
-        try:
-            out = kb("runs", c["id"])
-        except Exception:
-            continue
+        runs = runs_util.board_runs(BOARD, c["id"])
         mins = 0.0
         gave_up = None
-        for line in out.splitlines():
-            s = line.strip().split()
-            if len(s) > 4 and s[0].isdigit() and s[1] in ("completed", "gave_up"):
-                try:
-                    el = s[3].rstrip("ms")
-                    mins += float(int(el[:-1]) / 60 if el.endswith("s") else el[:-1])
-                except (ValueError, IndexError):
-                    pass
-                if s[1] == "gave_up":
+        for r in runs:
+            outcome = r.get("outcome")
+            if outcome in ("completed", "gave_up"):
+                mins += runs_util.elapsed_min(r)
+                if outcome == "gave_up":
                     gave_up = True
-        if c["result"] or True:
-            try:
-                ev = json.loads(kb("show", c["id"], "--json"))
-                for e in ev.get("events", []):
-                    p = e.get("payload") or {}
-                    if e.get("kind") == "gave_up" and isinstance(p, dict) and p.get("budget_used"):
-                        gave_up = p["budget_used"]
-            except Exception:
-                pass
-        rows[title] = {"card_id": c["id"], "agent_min": mins}
+        rows[title] = {"card_id": c["id"], "agent_min": round(mins, 2)}
         if gave_up:
-            rows[title]["gave_up_budget"] = gave_up
+            rows[title]["gave_up"] = True
         total += mins
     t0 = getattr(write_summary, "_t0", None) or time.time()
     summary = {
@@ -735,6 +942,7 @@ def main():
     require_manifest()
     acquire_lock()
     t0 = time.time()
+    write_summary._t0 = t0          # wall_min in the summary is measured from here
     # A serving driver is a standing process; a 2h cap would drop the board every
     # two hours and leave the next idea unattended until cron noticed.
     timeout = None if SERVE else 120 * 60
@@ -766,13 +974,17 @@ def main():
             import traceback
             log(f"ERROR: {e}\n{traceback.format_exc()}")
             # transient CLI/board errors are expected mid-run; keep driving
-        # deadman: notify instead of silent stall after repeat gave-ups
+        # deadman: notify instead of silent stall. 'parked: awaiting lane
+        # activation' is filed with kind needs_input on every NOT-yet-open
+        # lane card — it is the parking brake, not human attention. Exclude
+        # it, or the deadman fires on a healthy parked board every tick.
         st_now = board()
-        ni_count = sum(1 for t, c in st_now.items()
-                       if c["status"] == "blocked"
-                       and block_reason(c).startswith("needs_input"))
-        if ni_count >= 2:
-            log(f"DEADMAN: {ni_count} cards blocked needs_input — human attention required")
+        ni = [c for c in st_now.values()
+              if c["status"] == "blocked"
+              and block_reason(c) == "needs_input"
+              and not is_parked(c)]
+        if len(ni) >= 2:
+            log(f"DEADMAN: {len(ni)} cards blocked needs_input — human attention required")
             notify_deadman(st_now)
         if ONCE:
             return 0

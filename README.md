@@ -34,7 +34,8 @@ the board runs them in order. See §3.
 | rule | where it lives |
 |---|---|
 | Workers STAGE only (`git add -- own paths`), never commit/push | card bodies hard-rules block (first section); reviewed by reviewers |
-| Nobody commits before the human gate — not even the driver | run.py `--auto-gates` completes gate cards with "HUMAN COMMIT REQUIRED" |
+| Per-card patch = OWN paths only (`git diff --cached -- <own paths>`) | card bodies; a bare diff bundles every earlier card's staged files |
+| Nobody commits before the human gate — not even the driver | gate cards + auto_gates (board.json) complete gates with "NOTHING COMMITTED" |
 | `git add`/`git diff` always allowed (provenance patches) | card bodies |
 | Lane N+1's root parented to lane N's gate card | `mission/lanes.py` — the board itself is the sequencer |
 | The manager never sees a raw idea | `mission/lanes.py` — `I` is the lane root, `Gi` stands between it and `P` |
@@ -180,9 +181,10 @@ including what is still open:
 - **The index is board state.** Nothing here commits, so a previous run's
   staged files outlive its work directory unless `reset.sh` clears them —
   which it now does, for generated paths only.
-- **No lane has yet run end to end** under the current card graph: `TW`, `C`,
-  `RVa` and `Gc` are unexercised. `boards/test-board` exists to close that
-  cheaply. See `ERRORS.md` O4.
+- **A lane has run end to end** under the current card graph (test-board,
+  auto-gates, 2026-09-09): TW, C, RVa, Gc, timing report, run summary, and
+  preserved per-card patches all exercised. Lane chaining (`Gc1 → I2`) is the
+  one part still waiting for a two-lane run. See `ERRORS.md` O4.
 
 **The driver never commits.** All work is staged on the current branch. At a
 human gate the driver pauses and records the evidence; you commit at your
@@ -199,6 +201,17 @@ its tests, no build tool, no dependencies. Its purpose is to exercise the
 machinery — arm an idea, watch the researcher refine it, act on three gates,
 read the timing report — for almost nothing. Run it after any change to
 `mission/`, before trusting a real board.
+
+It proved itself on 2026-09-09: with `"auto_gates": true` it ran the whole
+lane unattended — researcher 3.0m, manager 8.1m, reviewer 13.5m + 8.8m,
+tester 2.5m, coder 2.8m, ~46 min wall — and produced the run summary, the
+timing report and the per-card patches. Reset and re-create it after engine
+changes:
+
+    mission/reset.sh --board boards/test-board --yes
+    mission/create-board.sh --board boards/test-board
+    mission/start-board.sh --slug test-board
+    # then drag the Triage card to Todo (or set status='todo' on the card row)
 
 `test-driven-development` is two small lanes building a word-count CLI and a
 spec-first REST service; it needs JDK 17 and Maven, and a warm `~/.m2`.
@@ -318,20 +331,32 @@ ASCII fallback:
   I2 → Gi2 → P2 → RVp2 → Gp2 → TW2 → C2 → RVa2 → TI2 → RVc2 → Gc2
 ```
 
-There is no rework loop on `I`: the idea gate is the loop, and you are it —
-edit the refined file at `Gi` rather than sending the card back.
+There is no rework loop on `I` by default: the idea gate is the loop, and you
+are it — edit the refined file at `Gi` rather than sending the card back. If
+you want the gate to drive a round instead, complete `Gi` with
+`REWORK: <answers>`; the driver files a researcher revision + a re-gate
+(max 2 rounds, then escalation), and `P` stays parked until the re-gate
+accepts.
 
-Rework loop (driven by REJECT verdicts, all inside the plan phase):
+Rework loops (driven by verdicts, both mirror each other):
 
 ```
 RVp(n) ──REJECT──→ P(n)-rev-N (fix) → RVp(n)-r(n+1) ──PASS──→ Gp(n) opens, up to 3 rounds
+Gi(n)  ──REWORK──→ I(n)-rev-N (fix) → Gi(n)-r(n+1)  ──ACCEPT─→ P(n) opens, up to 2 rounds
 ```
 
 Gates = 0 work because the driver completes them as "HUMAN COMMIT REQUIRED":
 they exist to be the single authorization point where the human's git write
 unlocks the rest of the chain (board-enforced sequencing, no orchestrator).
 
-### Where the 38 min of wall-vs-work overhead goes (estimates)
+### Where the wall-vs-work overhead goes
+
+The first E2E baseline (test-board, auto-gates, 2026-09-09): **38.6 min agent
+work / 46.5 min wall = 17% overhead**, of which ~7 min is dispatch gaps +
+worker spin-up (~1 min floor × 9 cards). Reviewer share was 58% (RVp 13.5m +
+RVa 8.8m) — by design: reviews reproduce the producer's claims instead of
+trusting them. The pre-generic v2 numbers that follow are kept as a record of
+what a bigger board cost:
 
 | component | est. | why |
 |---|---|---|
@@ -361,14 +386,19 @@ Notes on the work vs wall split:
   (ts, argv) is written at every driver start so the report covers only the
   latest run segment.
 - On each card status *change* the driver embeds the card's run evidence
-  into that tick's snapshot: `last_run` (outcome/elapsed), `hb_count`
-  (heartbeats ≈ wall-minutes worked), `budget_used` on gave_up.
-- At a code gate the driver runs the suite itself and logs
-  `GATE GcN suite evidence: GREEN/FAIL (…)` — verification is a log line,
-  the human still owns the commit.
-- On completion the driver writes `mission/run-summary.json` (one jq-able
-  file per run): per-card agent minutes, budget-exhaustion events, wall +
-  overhead totals, gate commit SHAs.
+  into that tick's snapshot: `last_run` (outcome + `elapsed_min`, from
+  `runs <id> --json` epoch fields) and `gave_up` when a run exhausted its
+  budget. The same transition also appends the card's FULL record —
+  input (title/body/assignee) + result (result field, run history,
+  attachments) — to `boards/<slug>/runs/cards/<card-id>.jsonl`, the
+  project-local card log: one complete JSONL line per status change, so a
+  card's whole history lives with the board that produced it.
+- At a code gate the driver logs the staged-evidence line
+  (`GATE GcN evidence: …; staged: …`) — verification was the reviewer's job,
+  and the human still owns the commit.
+- On completion the driver writes `boards/<slug>/runs/run-summary.json` (one
+  jq-able file per run): per-card agent minutes (real minutes, from runs
+  epoch fields), wall + overhead totals, gate results.
 - If ≥2 cards end up blocked/needs_input, a DEADMAN notice is logged and
   written to `/tmp/kanban-deadman.txt` (Telegram sent if env tokens set).
 - Per-card provenance patches are preserved to
@@ -412,14 +442,20 @@ Notes on the work vs wall split:
   calls when framed this way (vs budget death when framed as
   "re-verify everything").
 - **Rework loop live-guard:** run.py files a revision round only when the
-  previous round's cards are all done — REJECT as latest verdict alone
-  does NOT trigger another filing (that would file all 3 rounds instantly).
+  previous round's cards are all done (`rework_hold`) — REJECT/REWORK as
+  latest verdict alone does NOT trigger another filing (that would file all
+  rounds instantly). Idea loop: max 2 rounds; plan loop: max 3.
+- **Turn bounds are turn-based, not loop-based:** worker cards (I, P, TW, C
+  and their revision rounds) are filed with `--goal --goal-max-turns 20`;
+  reviewers and gates never are — a goal judge could complete a card whose
+  success case is blocking.
 - **Idempotent gates:** run.py gate actions use explicit pathspecs (never
-  `git status` parsing), skip when the gate card already records a SHA,
-  and treat "already terminal" as success. A stalled run recovers with a
-  single driver restart.
-- **Reviewers must reproduce, not skim:** every REJECT in this run listed
-  concrete reproduction steps; every PASS was earned by re-derivation.
+  `git status` parsing), skip when the gate card is already done, and treat
+  "already terminal" as success. A stalled run recovers with a single driver
+  restart.
+- **Reviewers must reproduce, not skim:** every REJECT in the runs so far
+  listed concrete reproduction steps; every PASS was earned by re-derivation
+  (the E2E RVa even mutation-tested the coder's function).
 
 ## 6. Gate discipline (stage-only flow)
 
@@ -439,9 +475,10 @@ board sees gate done → next lane's root unblocks
 
 Nothing the idea builds enters history except through a gate commit;
 `mission/` assets are committed freely by the operator between runs. With
-`--auto-gates`, the driver plays the gate-holder role itself: verifies,
-commits, records the SHA — useful for smoke-testing the machinery, not for
-real work.
+`auto_gates` on (board.json, or a `<!-- auto-gates: true -->` idea header),
+the driver plays the gate-holder role itself: verifies the evidence, records
+it in the gate result, completes the gate — and still commits nothing. Useful
+for smoke-testing the machinery, not for real work.
 
 ## 7. Filing a new idea (genericity)
 

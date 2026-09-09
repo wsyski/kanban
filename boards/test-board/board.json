@@ -3,5 +3,5 @@
   "title": "Test Board",
   "lanes": 1,
   "integration_tests": false,
-  "auto_gates": false
+  "auto_gates": true
 }

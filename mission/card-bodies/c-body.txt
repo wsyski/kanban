@@ -1,6 +1,6 @@
 CODER — lane <N>. Make the staged RED tests GREEN with the minimal implementation the plan at <PLAN> describes.
 
-HARD RULES: (1) Do not commit, branch, stash, reset, clean. (2) Stage only your own implementation files plus any unit tests you add: git add -- <your paths>. (3) Do not modify the tester's tests to make them pass — if a test is wrong, say so in your result and stop. (4) Attach your patch: git diff --cached > /tmp/<YOUR-CARD-ID>.patch, then `hermes kanban --board <BOARD> attach <YOUR-CARD-ID> /tmp/<YOUR-CARD-ID>.patch`. (5) Do not write profile memories.
+HARD RULES: (1) Do not commit, branch, stash, reset, clean. (2) Stage only your own implementation files plus any unit tests you add: git add -- <your paths>. (3) Do not modify the tester's tests to make them pass — if a test is wrong, say so in your result and stop. (4) Attach YOUR patch only: git diff --cached -- <your paths> > /tmp/<YOUR-CARD-ID>.patch, then `hermes kanban --board <BOARD> attach <YOUR-CARD-ID> /tmp/<YOUR-CARD-ID>.patch` — the bare `git diff --cached` would bundle everything earlier cards staged (this happened: the E2E coder patch carried the refined idea, the plan and the tester's tests). (5) Do not write profile memories.
 
 TASK: implement the plan's tasks in order. Run the tests after each one. Do not add configurability, abstraction, or features the plan does not call for.
 

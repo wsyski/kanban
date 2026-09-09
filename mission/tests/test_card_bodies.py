@@ -57,3 +57,26 @@ def test_worker_bodies_forbid_committing():
     for body in ("p-body.txt", "tw-body.txt", "c-body.txt", "ti-body.txt"):
         text = open(os.path.join(BODIES, body)).read().lower()
         assert "do not commit" in text
+
+
+def test_patch_attach_commands_carry_a_pathspec():
+    """A bare `git diff --cached > patch` bundles EVERYTHING earlier cards
+    staged — the E2E coder patch carried the refined idea, the plan and the
+    tester's tests. Every attach command must scope to the card's own paths."""
+    import os, re
+    for _, body, *_ in lanes.LANE_CARDS:
+        text = open(os.path.join(BODIES, body)).read()
+        if "attach" not in text.lower():
+            continue
+        for m in re.finditer(r"git diff --cached[^\n]*", text):
+            cmd = m.group(0)
+            assert "--" in cmd, f"{body}: attach command without a pathspec: {cmd!r}"
+
+
+def test_plan_body_requires_verified_claims():
+    """The planner-side twin of the reviewers' reproduce rule: three rounds of
+    one board were rejected over unverified environment claims (pytest error
+    count from memory, stale staged-state, wrong pathspec)."""
+    text = open(os.path.join(BODIES, "p-body.txt")).read()
+    assert "NO UNVERIFIED CLAIMS" in text
+    assert "VERIFIED" in text

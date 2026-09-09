@@ -81,6 +81,7 @@ def file_board(board, repo, workdir, lane_count, key_prefix):
                     "--created-by", "manager", "--json"]
             if card["skill"]:
                 args += ["--skill", card["skill"]]
+            args += lanes.goal_args(card["code"])
             cid = json.loads(kb(board, *args))["id"]
             made[card["id"]] = cid
             kb(board, "block", "--kind", "needs_input", cid,

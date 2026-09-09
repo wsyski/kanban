@@ -20,6 +20,7 @@ import json, re, subprocess, sys, os, collections, datetime
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "mission"))
 import lanes  # noqa: E402  — card code -> assignee, so roles are never hardcoded here
+import runs_util  # noqa: E402  — runs parsing shared with the driver
 
 ASSIGNEE = {row[0]: row[2] for row in lanes.LANE_CARDS}
 _CODE_RE = re.compile(r"^([A-Za-z]+)\d+:")
@@ -82,33 +83,24 @@ def transitions(snaps):
     return seen
 
 def runs_elapsed(card_id):
-    try:
-        out = subprocess.run(["hermes", "kanban", "--board", BOARD, "runs", card_id],
-                             capture_output=True, text=True, timeout=30).stdout
-    except Exception:
-        return []
-    rows = []
-    cur = None
-    for line in out.splitlines():
-        s = line.strip()
-        parts = s.split()
-        if parts and parts[0].isdigit() and len(parts) > 3:
-            if cur:
-                rows.append(cur)
-            outcome = parts[1]
-            elapsed = parts[-2] if parts[-1].isdigit() == False else parts[-1]
-            started = " ".join(parts[-5:])
-            cur = {"outcome": outcome, "elapsed_raw": parts[-2] if len(parts) > 4 else "",
-                   "started": " ".join(parts[-5:]) if len(parts) > 5 else ""}
-        elif s.startswith("→") and cur:
-            cur["note"] = s[1:].strip()[:80]
-        elif s.startswith("✖") and cur:
-            cur["note"] = (cur.get("note", "") + " " + s.strip()[:80]).strip()
-    if cur:
-        rows.append(cur)
-    return rows
+    """Closed runs for a card, via the shared runs --json parser.
+
+    The text table this used to parse formats elapsed as 9s/45m/1.2h and the
+    old column math misread `45m` as 4.0 minutes (parts[-2] grabs the PROFILE
+    column once a summary line shifts the row); the JSON fields are exact.
+    """
+    out = []
+    for r in runs_util.board_runs(BOARD, card_id):
+        if r.get("outcome") in ("completed", "gave_up") \
+                and r.get("ended_at") and r.get("started_at"):
+            out.append({"outcome": r["outcome"],
+                        "elapsed_min": runs_util.elapsed_min(r),
+                        "note": (r.get("summary") or r.get("error") or "")[:80]})
+    return out
 
 def parse_elapsed_minutes(el_raw):
+    """Legacy text-format parser, kept for rows already stored in old
+    timing.jsonl files; new snapshots carry `elapsed_min` directly."""
     if not el_raw:
         return None
     el_raw = el_raw.strip()
@@ -158,7 +150,7 @@ def main():
         cid = tr.get((title, "done", "id")) or tr.get((title, "running", "id")) or "?"
         # agent elapsed from board runs data
         rows = runs_elapsed(cid)
-        agent = sum(parse_elapsed_minutes(r.get("elapsed_raw", "")) or 0
+        agent = sum(r.get("elapsed_min") or 0
                     for r in rows if r.get("outcome") in ("completed", "gave_up"))
         work_total += agent
         fr = tr.get((title, "running"))

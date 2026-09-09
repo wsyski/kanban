@@ -4,12 +4,14 @@ THE TASK: plan against the REFINED idea at <REFINED> — the researcher's output
 
 IF <REFINED> IS MISSING OR IS JUST A COPY OF THE RAW IDEA, refinement did not happen or failed. Say so in the plan and plan from <IDEA> instead — do not stall. If the idea is ambiguous either way, state the ambiguity in the plan rather than inventing a requirement.
 
-HARD RULES: (1) Do not commit, branch, stash, reset, restore, clean — the flow never commits; work ends staged. (2) Work in <WORKDIR>. Stage only your own file: <PLAN>. (3) Attach it: git diff --cached -- <PLAN> > /tmp/<YOUR-CARD-ID>.patch, then `hermes kanban --board <BOARD> attach <YOUR-CARD-ID> /tmp/<YOUR-CARD-ID>.patch`. (4) Do not write profile memories.
+HARD RULES: (1) Do not commit, branch, stash, reset, restore, clean — the flow never commits; work ends staged. (2) Work in <WORKDIR>. Stage only your own file: <PLAN>. (3) Attach YOUR patch only: git diff --cached -- <PLAN> > /tmp/<YOUR-CARD-ID>.patch, then `hermes kanban --board <BOARD> attach <YOUR-CARD-ID> /tmp/<YOUR-CARD-ID>.patch`. (4) Do not write profile memories.
 
 DELIVERABLE: the plan in superpowers writing-plans format — header (Goal, Architecture, Tech Stack, Spec: <IDEA>), Global Constraints, then numbered tasks with Files / Interfaces / bite-sized checkbox steps (failing test -> run RED -> minimal code -> run GREEN) containing REAL code, no placeholders. The plan is executed by the later cards on this lane (TW writes tests first, C implements), so it must map 1:1 onto them.
 
+NO UNVERIFIED CLAIMS. Every statement in the plan about the environment, the current state, or a command's outcome is a claim you must have VERIFIED — by running it — before writing it, the planner-side twin of the reviewers' "reproduce, don't skim" rule. Three rounds of one board were rejected over claims a 30-second check would have settled: a pytest error count written from memory (actual RED is 1 collection error, not 4), a task that would stage an already-staged file, a wrong cd/pathspec. If you cannot run the check, say what you did not verify and how the executor finds out — never guess. The skill's self-review checklist is not enough on its own: shape-correct, factually-wrong plans cost a whole rework round each.
+
 Save to <PLAN>, stage it, attach the patch, complete the card with the plan's one-line architecture summary in the result.
 
-REJECT handling: if this card re-opens with reviewer findings, fix the plan against them, re-stage, re-attach (overwrite the patch), complete again. Max 3 revision rounds, then human escalation.
+REJECT handling: if this card re-opens with reviewer findings, fix the plan against them, re-stage, re-attach (overwrite the patch), complete again. Max 3 revision rounds, then human escalation. If the card body names an IDEA REWORK round instead: the idea gate sent the refined idea back, so plan from the UPDATED <REFINED> the revision card produced and say in the plan what changed in the idea.
 
 TURN BUDGET: edit by targeted patches to the existing plan file. Do NOT re-read the whole plan repeatedly; do NOT re-verify untouched sections. On a revision: fix ONLY the numbered findings and re-verify just the fixed lines. Empirical anchor: this card completed in 18 tool calls when work was reused vs 64+ when re-derived.

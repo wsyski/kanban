@@ -7,6 +7,11 @@ If this lane runs with human gates (the default), the driver pauses here and log
 2. Answer the open questions, or edit <REFINED> yourself. Editing it here is legitimate: you are the author of the idea, the researcher only sharpened it.
 3. Inspect what is staged: git diff --cached --stat
 4. Commit the refined idea if you want it in history — entirely at your discretion, with an explicit pathspec. The flow does not require it.
-5. Complete this card: hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "<what you decided>"
+5. Complete this card with a verdict in the result:
+   hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "..."
 
-Completing this card is what unblocks the lane's P card, and the manager will treat <REFINED> as the contract. If the refinement is wrong, fix it before opening the gate — there is no revision loop on the researcher card, because you are it.
+VERDICT (result field, first word decides):
+- ACCEPT: --result "ACCEPT: <what you decided>". This is the normal case — completing with anything that is not REWORK also counts as accept, so a plain description still opens the lane.
+- REWORK: --result "REWORK: <what is missing or wrong, with the answers if you have them>". The researcher gets one revision card per round (max 2 rounds), then the lane escalates to a human anyway — you are not saving a round-trip, you are choosing which round-trip happens.
+
+Completing this card is what unblocks the lane's P card, and the manager will treat <REFINED> as the contract. If the refinement is wrong, fix it before opening the gate — or send it back with REWORK above; do not open the gate on a refinement you do not believe.

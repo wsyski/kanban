@@ -48,8 +48,33 @@ LABELS = {
 IT_CODES = ("TI", "RVc")
 
 
+def lane_root_code(integration_tests=True):
+    """The card a lane starts from — the FIRST entry of LANE_CARDS.
+
+    Positional, not code-based: open_lane's activation work (snapshot,
+    pruning, linking) belongs to whatever card opens the lane, and hardcoding
+    "i" there breaks the day I/Gi are removed or reordered (ERRORS.md O3 — a
+    manual removal worked only because the lane had already been opened).
+    """
+    return lane_cards(1, integration_tests)[0]["code"]
+
+
 def card_title(code, lane):
     return f"{code}{lane}: {LABELS[code]} - lane {lane}"
+
+
+def goal_args(code):
+    """`--goal` flags for a WORKER card at filing time; [] for gates/reviewers.
+
+    Turn-based bounding for the cards that produce work (O5: /loop inside a
+    one-shot worker was never proven to wake). NEVER on a reviewer or gate
+    card: a goal-loop judge can push a card whose success case is BLOCKING
+    into completing, silently opening the gate it guards.
+    """
+    c = code.lower()
+    if c.startswith("g") or c.startswith("rv"):
+        return []
+    return ["--goal", "--goal-max-turns", "20"]
 
 
 def lane_cards(lane, integration_tests=True):

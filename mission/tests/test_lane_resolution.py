@@ -34,11 +34,36 @@ def test_lane_graph_skips_cards_absent_from_the_board():
 
 
 def test_lane_graph_gp_accepts_revision_rounds_as_parents():
-    """Filed rework cards gate the plan gate."""
+    """Filed rework cards gate the plan gate (real title shapes: the boundary
+    in title_of_prefix must accept a round digit after 'RVp1-r')."""
     titles = [c["title"] for c in lanes.lane_cards(1)]
-    rows = run.lane_graph(state_with(*titles, "P1-rev round 1", "RVp1-r round 1"))
+    rows = run.lane_graph(state_with(*titles,
+        "P1-rev-1: plan revision round 1 - lane 1",
+        "RVp1-r2: plan review round 2 - lane 1"))
     gp = {r[0]: r for r in rows}[lanes.card_title("Gp", 1)]
     assert gp[1] == ["RVp1", "P1-rev", "RVp1-r"]
+
+
+def test_title_prefix_does_not_cross_lane_numbers():
+    """Gi1 must not match Gi10; P1 must not match P12. Real titles."""
+    st = {
+        "Gi10: idea gate - lane 10": {"id": "t1", "status": "done",
+                                      "result": "ACCEPT", "completed_at": 1},
+    }
+    t, c = run.title_of_prefix(st, "Gi1")
+    assert c is None
+    st["Gi1: idea gate - lane 1"] = {"id": "t2", "status": "done",
+                                     "result": "ACCEPT", "completed_at": 2}
+    t, c = run.title_of_prefix(st, "Gi1")
+    assert c and c["id"] == "t2"
+    # round digit continues a code whose prefix ends non-digit
+    st["RVp1-r2: plan review round 2 - lane 1"] = {"id": "t3", "status": "done"}
+    t, c = run.title_of_prefix(st, "RVp1-r")
+    assert c and c["id"] == "t3"
+    # a prefix carrying its own boundary (the colon) matches plainly — this
+    # broke once and silently disabled the rework-loop scans (Gc1: -> None)
+    t, c = run.title_of_prefix(st, "Gi1:")
+    assert c and c["id"] == "t2"
 
 
 def test_lane_graph_ignores_rework_rounds_that_were_never_filed():
