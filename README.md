@@ -166,7 +166,8 @@ running.
 
 ### Known traps
 
-Found by running the flow, not by reading it:
+Found by running the flow, not by reading it. `ERRORS.md` has the full set,
+including what is still open:
 
 - **A worker that cannot complete its card is told the wrong reason.**
   `kanban_complete` refuses an unsatisfied-parent card with *"unknown id or
@@ -179,6 +180,9 @@ Found by running the flow, not by reading it:
 - **The index is board state.** Nothing here commits, so a previous run's
   staged files outlive its work directory unless `reset.sh` clears them —
   which it now does, for generated paths only.
+- **No lane has yet run end to end** under the current card graph: `TW`, `C`,
+  `RVa` and `Gc` are unexercised. `boards/test-board` exists to close that
+  cheaply. See `ERRORS.md` O4.
 
 **The driver never commits.** All work is staged on the current branch. At a
 human gate the driver pauses and records the evidence; you commit at your
