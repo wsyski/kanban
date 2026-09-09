@@ -49,7 +49,7 @@ def _esc(text):
 
 
 def drawio():
-    W, H, DX, DY, PER_ROW = 150, 46, 175, 92, 5
+    W, H, DX, DY, PER_ROW = 150, 60, 175, 106, 5   # H fits card + role on two lines
     cells, edges, y = [], [], 20
     for lane, title, its in LANES:
         cells.append(f'        <mxCell id="t{lane}" value="{_esc(title)}" '
@@ -65,7 +65,8 @@ def drawio():
             if c["code"] in GATES:
                 style += "strokeWidth=2;"
             cells.append(
-                f'        <mxCell id="{c["id"]}" value="{_esc(c["id"] + " " + SHORT[c["code"]])}" '
+                f'        <mxCell id="{c["id"]}" '
+                f'value="{_esc(c["id"] + " " + SHORT[c["code"]])}&#10;{_esc(WHO[c["code"]])}" '
                 f'style="{style}" vertex="1" parent="1">\n'
                 f'          <mxGeometry x="{40 + col * DX}" y="{y + row * DY}" '
                 f'width="{W}" height="{H}" as="geometry" />\n        </mxCell>')
@@ -90,8 +91,8 @@ def drawio():
                  'vertex="1" parent="1">\n'
                  '          <mxGeometry x="820" y="60" width="280" height="70" as="geometry" />\n'
                  '        </mxCell>')
-    cells.append('        <mxCell id="key" value="purple=idea (researcher) · blue=plan (manager) · '
-                 'orange=review (reviewer) · green=build/test · thick=HUMAN GATE (0 agent time)" '
+    cells.append('        <mxCell id="key" value="purple=idea · blue=plan · '
+                 'orange=review · green=build/test · thick=HUMAN GATE (0 agent time)" '
                  'style="text;fontSize=11;fontStyle=2" vertex="1" parent="1">\n'
                  f'          <mxGeometry x="40" y="{y}" width="900" height="20" as="geometry" />\n'
                  '        </mxCell>')

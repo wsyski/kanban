@@ -1,5 +1,9 @@
 """Generic lane graph + idea-file parsing for the kanban board template.
 
+Nothing here knows about any particular board. A board is a directory
+`boards/<slug>/` holding `board.json` and one `lane-<k>.md` per lane; this
+module only shapes the card graph and reads the options an idea may override.
+
 A LANE is one full instance of the card graph executing one human-entered
 idea. Lanes run sequentially: lane k's root is parented to lane k-1's Gc.
 
@@ -99,26 +103,6 @@ def parse_idea(text):
     return headers, "\n".join(body_lines).strip() + "\n"
 
 
-def split_ideas(text):
-    """Split a document at level-2 headings, in document order.
-
-    Position decides the lane. Text before the first `## ` is preamble and
-    is dropped, so a file can carry a title and notes without them leaking
-    into lane 1.
-    """
-    parts, current = [], None
-    for line in text.splitlines():
-        if line.startswith("## "):
-            if current is not None:
-                parts.append("\n".join(current).strip() + "\n")
-            current = [line]
-        elif current is not None:
-            current.append(line)
-    if current is not None:
-        parts.append("\n".join(current).strip() + "\n")
-    return parts
-
-
 def _as_bool(value, fallback):
     """Exactly `true` or `false`. One spelling, so a header always reads the
     same way in every idea file."""
@@ -144,7 +128,7 @@ def _board_default(board_defaults, key, lane, fallback):
     value = board_defaults.get(key, fallback)
     if not isinstance(value, list):
         return value
-    count = board_defaults.get("lane_count", len(value))
+    count = board_defaults.get("lanes", len(value))
     if len(value) != count:
         raise ValueError(
             f"board {key!r} has {len(value)} entries for {count} lane(s) — "

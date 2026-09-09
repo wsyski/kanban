@@ -1,24 +1,52 @@
 #!/usr/bin/env python3
-"""Timing report for the kanban smoke mission.
+"""Timing report for one kanban board.
 
-Reads mission/timing.jsonl (written by run.py's record_timing each tick) and
-merges per-card run records from `hermes kanban runs <id>` to produce:
+Reads the board's timing.jsonl (written by run.py's record_timing each tick)
+and merges per-card run records from `hermes kanban runs <id>` to produce:
 
   - per-card: agent elapsed (from runs data), dispatch gap (time triaged->ready
     ->running vs parent-done), first-running and done timestamps
   - phase totals: work time vs overhead (gaps), by task
   - budget-exhaustion events (failed runs)
 
-Usage: mission/timing-report.py [--jsonl mission/timing.jsonl]
+Usage: mission/timing-report.py --board <slug> [--jsonl <path>]
+
+The board is required and has no default: timing data is board-scoped, and a
+default slug would silently report on a board you did not ask about — or, once
+that board is gone, on nothing at all.
 """
 import json, subprocess, sys, os, collections, datetime
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BOARD = os.environ.get("BOARD", "smoke-test")
-JSONL = os.path.join(REPO, "mission", "timing.jsonl")
+
+
+def _args(argv):
+    board = os.environ.get("BOARD")
+    jsonl = None
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a in ("--board", "--jsonl"):
+            if i + 1 >= len(argv):
+                raise SystemExit(f"{a} needs a value")
+            if a == "--board":
+                board = argv[i + 1]
+            else:
+                jsonl = argv[i + 1]
+            i += 2
+            continue
+        raise SystemExit(f"unknown arg: {a}")
+    if not board:
+        raise SystemExit("--board <slug> is required (or set BOARD=<slug>)")
+    return board, jsonl or os.path.join(REPO, "boards", board, "runs", "timing.jsonl")
+
+
+BOARD, JSONL = _args(sys.argv[1:])
 
 def load_snaps():
     snaps = []
+    if not os.path.exists(JSONL):
+        raise SystemExit(f"no timing data at {JSONL} — has this board run yet?")
     with open(JSONL) as f:
         for line in f:
             line = line.strip()
@@ -86,7 +114,7 @@ def parse_elapsed_minutes(el_raw):
 def main():
     snaps = load_snaps()
     if not snaps:
-        print("no timing data — is mission/timing.jsonl empty?")
+        print(f"no timing data — is {JSONL} empty?")
         return 1
     # use only the LAST run segment (split on run_boundary markers)
     last_b = max((i for i, s in enumerate(snaps) if s.get("run_boundary")), default=None)

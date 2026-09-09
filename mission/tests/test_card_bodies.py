@@ -3,8 +3,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import lanes
 
 BODIES = os.path.join(os.path.dirname(__file__), "..", "card-bodies")
-BANNED = re.compile(r"wordcount|mvn |spring|maven|task 1|task 2", re.I)
-ALLOWED_PLACEHOLDERS = {"<WORKDIR>", "<BOARD>", "<N>", "<IDEA>"}
+BANNED = re.compile(r"wordcount|mvn |spring|maven|pom\.xml|task 1|task 2", re.I)
+ALLOWED_PLACEHOLDERS = {"<WORKDIR>", "<BOARD>", "<N>", "<IDEA>", "<REFINED>", "<PLAN>"}
 
 
 def test_every_lane_card_has_a_body_file():
@@ -36,7 +36,8 @@ def test_worker_bodies_point_at_the_snapshot_not_the_source():
     for body in ("p-body.txt", "rvp-body.txt", "rva-body.txt"):
         text = open(os.path.join(BODIES, body)).read()
         assert "<IDEA>" in text, f"{body} must reference the idea snapshot"
-        assert "mission/ideas/" not in text, f"{body} points at the mutable source"
+        assert not re.search(r"lane-(<N>|\d+)\.md", text), \
+            f"{body} points at the mutable source, not the snapshot"
 
 
 def test_worker_bodies_forbid_committing():

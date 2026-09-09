@@ -1,4 +1,9 @@
-"""Board filing: import ideas, file N parked lanes onto a hermes board."""
+"""Board filing: file N parked lanes onto a hermes board.
+
+A board is a DIRECTORY — `boards/<slug>/` — holding `board.json` and one
+`lane-<k>.md` per lane. There is no import step and no second copy: the file
+the human edits is the file the board reads.
+"""
 import json
 import os
 import subprocess
@@ -6,20 +11,13 @@ import subprocess
 import lanes
 
 
-def import_ideas(doc_path, ideas_dir, lane_count, force=False):
-    sections = lanes.split_ideas(open(doc_path).read())
-    if len(sections) > lane_count:
-        raise ValueError(
-            f"{doc_path}: {len(sections)} ideas but only {lane_count} lane(s) "
-            f"— raise --lanes or trim the file")
-    for i, text in enumerate(sections, start=1):
-        target = os.path.join(ideas_dir, f"lane-{i}.md")
-        if os.path.exists(target) and open(target).read().strip() and not force:
-            raise ValueError(
-                f"{target} already holds an entered idea — pass --force to overwrite")
-        with open(target, "w") as f:
-            f.write(text)
-    return len(sections)
+def read_board(board_dir):
+    """The board manifest, with `slug` defaulted from the directory name so the
+    directory and the file cannot disagree about which board this is."""
+    with open(os.path.join(board_dir, "board.json")) as f:
+        cfg = json.load(f)
+    cfg.setdefault("slug", os.path.basename(os.path.abspath(board_dir)))
+    return cfg
 
 
 def kb(board, *args):
@@ -59,17 +57,22 @@ def file_board(board, repo, workdir, lane_count, key_prefix):
     for lane in range(1, lane_count + 1):
         cards = lanes.lane_cards(lane, integration_tests=True)
         for card in cards:
-            snapshot = f"{repo}/mission/runs/{board}/snapshots/lane-{lane}.md"
+            snapshot = f"{repo}/boards/{board}/runs/snapshots/lane-{lane}.md"
             # The refined idea is a file for the same reason the raw one is:
             # every hand-off in this flow is a staged artifact, never a comment.
-            # It lives in the repo (not under runs/) because a human edits it at
-            # the gate and may want it committed.
-            refined = f"mission/ideas/{board}/lane-{lane}-refined.md"
+            # It sits beside the raw idea (not under runs/) because a human edits
+            # it at the gate and may want it committed.
+            refined = f"boards/{board}/lane-{lane}-refined.md"
+            # The plan lives in the WORKDIR, not under mission/: it is board
+            # output like the code it describes. A slugless mission/plans/ path
+            # collided — every board's lane 1 wrote the same file.
+            plan = os.path.join(workdir, "plans", f"lane-{lane}-plan.md")
             body = open(f"{repo}/mission/card-bodies/{card['body']}").read()
             body = (body.replace("<WORKDIR>", workdir)
                         .replace("<BOARD>", board)
                         .replace("<IDEA>", snapshot)
                         .replace("<REFINED>", refined)
+                        .replace("<PLAN>", plan)
                         .replace("<N>", str(lane)))
             args = ["create", card["title"], "--body", body,
                     "--assignee", card["assignee"], "--workspace", f"dir:{workdir}",
@@ -91,7 +94,7 @@ def file_board(board, repo, workdir, lane_count, key_prefix):
 
 def idea_title(text, lane):
     """The triage card's title: the idea's own `## ` heading, which already
-    names it (`Idea 2: wordcount service`). Only headingless text needs a
+    names it (`Idea 2: candidate screener`). Only headingless text needs a
     manufactured title."""
     for line in text.splitlines():
         if line.startswith("## "):
@@ -110,8 +113,7 @@ def _options_line(repo, board, lane, text):
     from the card instead of from two files.
     """
     try:
-        with open(os.path.join(repo, "mission", "boards", f"{board}.json")) as f:
-            defaults = json.load(f)
+        defaults = read_board(os.path.join(repo, "boards", board))
         headers, _ = lanes.parse_idea(text)
         opts = lanes.resolve_lane_options(defaults, headers, lane)
     except Exception as exc:      # never let a display line stop a board filing
@@ -159,7 +161,7 @@ def file_ideas(board, repo, ideas_dir, lane_count, key_prefix):
         text = open(path).read()
         if not text.strip():
             continue
-        snapshot = f"{repo}/mission/runs/{board}/snapshots/lane-{lane}.md"
+        snapshot = f"{repo}/boards/{board}/runs/snapshots/lane-{lane}.md"
         body = (f"RAW IDEA for lane {lane} — human input, not a work card.\n\n"
                 f"{_options_line(repo, board, lane, text)}\n"
                 f"Source: {os.path.join(ideas_dir, f'lane-{lane}.md')}\n"
@@ -172,20 +174,3 @@ def file_ideas(board, repo, ideas_dir, lane_count, key_prefix):
                  "--created-by", "human", "--json")
         made[lane] = json.loads(out)["id"]
     return made
-
-
-def write_board_config(repo, slug, workdir, lane_count,
-                       integration_tests, auto_gates):
-    """The manifest. `template_root` owns control files; `workdir` is the
-    only tree the driver runs git in — they differ whenever a board points
-    somewhere other than this repo."""
-    path = os.path.join(repo, "mission", "boards", f"{slug}.json")
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as f:
-        json.dump({"slug": slug,
-                   "template_root": repo,
-                   "workdir": os.path.abspath(workdir),
-                   "lane_count": lane_count,
-                   "integration_tests": integration_tests,
-                   "auto_gates": auto_gates}, f, indent=2)
-    return path

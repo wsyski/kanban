@@ -1,45 +1,99 @@
 #!/usr/bin/env bash
-# Reset a board's repo to its baseline and clear its live cards.
+# Reset ONE board: delete its work directory and archive its live cards.
 #
 # Usage:
-#   mission/reset.sh              # interactive: reset repo + archive board cards
-#   mission/reset.sh --yes        # unattended
+#   mission/reset.sh --board boards/<slug>        # interactive
+#   mission/reset.sh --board boards/<slug> --yes  # unattended
 #
-# Baseline is the git tag `mission-baseline` on the commit holding ONLY the
-# scenario input (mission/ docs, no task code). The tag survives force-pushes,
-# so the initial state is always addressable.
+# The blast radius is one board. Everything a board generates lives in
+# boards/<slug>/work, so removing that directory is the clean start — no
+# `git reset`, no `git clean`, and never a force-push. Other boards, the
+# engine and your other work are untouched.
+#
+# The board DEFINITION survives: board.json, the lane-<k>.md ideas and this
+# board's README are input, not output. Only work/ and the cards go.
 set -euo pipefail
 
+usage() {
+cat <<'USAGE'
+mission/reset.sh — reset ONE board: delete its work directory, archive its cards
+
+  --board <dir>   board directory (required)
+  --yes           do not ask
+  -h, --help      this text
+
+Everything a board generates lives in boards/<slug>/work, so removing that
+directory is the clean start — no `git reset`, no `git clean`, never a
+force-push. Other boards, the engine and your other work are untouched.
+
+The board DEFINITION survives: board.json, the lane-<k>.md ideas and the
+board's README are input, not output. Only work/, runs/ and the cards go.
+
+A board whose manifest sets an explicit workdir outside its own directory is
+refused — that path was chosen deliberately and may be another repository.
+USAGE
+}
+
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-BOARD=${BOARD:-smoke-test}
-TAG=mission-baseline
-YES=0
-for a in "$@"; do
-  case $a in
-    --yes) YES=1 ;;
-    *) echo "unknown arg: $a"; exit 2 ;;
+BOARD_DIR= YES=0
+need() { [ "$#" -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }; }
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --board) need "$@"; BOARD_DIR=$2; shift 2 ;;
+    --yes) YES=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
 
-[ -f "$REPO/mission/lanes.py" ] || { echo "refusing: no mission/lanes.py — wrong repo?"; exit 1; }
-git -C "$REPO" rev-parse -q --verify "$TAG" >/dev/null || { echo "refusing: tag $TAG missing — set it first: git tag $TAG <sha>"; exit 1; }
+[ -f "$REPO/mission/lanes.py" ] || { echo "refusing: no mission/lanes.py — wrong repo?" >&2; exit 1; }
+[ -n "$BOARD_DIR" ] || { echo "--board <dir> is required" >&2; exit 2; }
+[ -f "$BOARD_DIR/board.json" ] || { echo "no board.json in $BOARD_DIR" >&2; exit 2; }
+BOARD_DIR="$(cd "$BOARD_DIR" && pwd)"
 
-[ "$YES" = 1 ] || { read -rp "Reset $REPO to $TAG and archive ALL live cards on '$BOARD'? [y/N] " a; [ "$a" = y ] || exit 1; }
+{ read -r SLUG; read -r WORKDIR; } <<EOF
+$(python3 - "$REPO" "$BOARD_DIR" <<'PY'
+import json, os, sys
+repo, board_dir = sys.argv[1:3]
+cfg = json.load(open(os.path.join(board_dir, "board.json")))
+slug = cfg.get("slug") or os.path.basename(board_dir)
+print(slug)
+print(os.path.abspath(cfg.get("workdir") or os.path.join(board_dir, "work")))
+PY
+)
+EOF
 
-git -C "$REPO" reset --hard "$TAG"
-git -C "$REPO" clean -fdx -e .idea -e .classpath -e .project -e .settings
-git -C "$REPO" push --force origin main
-echo "repo reset to $TAG"
+# A workdir outside the board directory was set deliberately and may be a whole
+# other repository — deleting it is not this script's call.
+case "$WORKDIR" in
+  "$BOARD_DIR"/*) ;;
+  *) echo "refusing: $SLUG's workdir is $WORKDIR, outside $BOARD_DIR." >&2
+     echo "It was set explicitly in board.json — clean it yourself." >&2; exit 3 ;;
+esac
 
-# archive every non-archived card on the board
-ids=$(hermes kanban --board "$BOARD" list --json | python3 -c "
+echo "board:   $SLUG"
+echo "removing: $WORKDIR"
+echo "keeping:  $BOARD_DIR/board.json, lane-*.md, README.md"
+[ "$YES" = 1 ] || { read -rp "Delete that work directory and archive ALL live cards on '$SLUG'? [y/N] " a
+                    [ "$a" = y ] || exit 1; }
+
+rm -rf "$WORKDIR" "$BOARD_DIR/runs"
+echo "work directory removed"
+
+# archive every non-archived card on the board, if the board still exists
+if hermes kanban boards list 2>/dev/null | awk '{print $1; print $2}' | grep -qx "$SLUG"; then
+  ids=$(hermes kanban --board "$SLUG" list --json | python3 -c "
 import json,sys
 for t in json.load(sys.stdin):
     print(t['id'])")
-if [ -n "$ids" ]; then
-  # shellcheck disable=SC2086
-  hermes kanban --board "$BOARD" archive $ids
+  if [ -n "$ids" ]; then
+    # shellcheck disable=SC2086
+    hermes kanban --board "$SLUG" archive $ids
+  fi
+  echo "board '$SLUG' cleared"
+else
+  echo "board '$SLUG' is not in the registry — nothing to archive"
 fi
-echo "board '$BOARD' cleared. Re-create it with:"
-echo "  mission/create-board.sh --slug $BOARD --title '<title>' --lanes <n>"
-exit 0
+
+echo "Re-create it with:"
+echo "  mission/create-board.sh --board ${BOARD_DIR#$REPO/}"

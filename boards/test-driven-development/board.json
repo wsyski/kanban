@@ -1,0 +1,10 @@
+{
+  "slug": "test-driven-development",
+  "title": "Test-Driven Development",
+  "lanes": 2,
+  "integration_tests": [
+    false,
+    true
+  ],
+  "auto_gates": false
+}

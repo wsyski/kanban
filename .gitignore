@@ -1,10 +1,10 @@
 build/
 target/
-# mission/ideas/ IS tracked: the raw idea is the human's input and the shipped
-# boards are worth having as examples, and the refined idea the researcher card
-# stages (mission/ideas/<slug>/lane-<k>-refined.md) cannot be staged or attached
-# from an ignored path — the hand-off would fail at the first lane.
-mission/runs/
+# boards/<slug>/ IS tracked, work/ included: the board's deliverable is what the
+# humans commit at the gates, and an ignored path cannot be staged or attached —
+# the hand-off would fail at the first lane. Only the driver's own run state is
+# ignored. Build output under work/ is covered by target/ and build/ above.
+boards/*/runs/
 __pycache__/
 *.pyc
 

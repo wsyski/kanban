@@ -2,7 +2,7 @@ VERDICT CARD — plan review for lane <N>. You review a PLAN, not code. Never ed
 
 HARD RULES: (1) Read-only on the repo; write only /tmp/<YOUR-CARD-ID>.review. (2) Do not commit, branch, stash, reset, clean. (3) Do not write profile memories.
 
-TASK: the parent card delivered a staged plan at mission/plans/lane-<N>-plan.md (attachment: patch). Review it against the lane's raw idea at <IDEA>:
+TASK: the parent card delivered a staged plan at <PLAN> (attachment: patch). Review it against the lane's raw idea at <IDEA>:
 (a) Coverage: every requirement in the idea maps to a plan task — nothing extra (YAGNI), nothing missing.
 (b) Format: header + Global Constraints + numbered tasks with Files/Interfaces/checkbox steps; every code step has real code, no TBD/TODO/placeholder.
 (c) Testability: every plan task has a RED-then-GREEN step the later cards can execute verbatim.

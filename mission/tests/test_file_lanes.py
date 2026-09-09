@@ -3,69 +3,30 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import file_lanes
 
-DOC = """Example ideas for the smoke test.
-
-## Idea 1: CLI
-<!-- integration-tests: false -->
-
-Build the CLI.
-
-## Idea 2: service
-
-Build the service.
-"""
-
-
-def test_import_writes_one_file_per_section(tmp_path):
-    doc = tmp_path / "ideas.md"
-    doc.write_text(DOC)
-    ideas = tmp_path / "ideas"
-    ideas.mkdir()
-    n = file_lanes.import_ideas(str(doc), str(ideas), lane_count=3)
-    assert n == 2
-    assert (ideas / "lane-1.md").read_text().startswith("## Idea 1: CLI")
-    assert "integration-tests: false" in (ideas / "lane-1.md").read_text()
-    assert (ideas / "lane-2.md").read_text().startswith("## Idea 2: service")
-    assert not (ideas / "lane-3.md").exists()
+def test_read_board_defaults_slug_from_directory_name(tmp_path):
+    """The directory names the board. board.json may say so too, but it does not
+    have to — and a directory and a manifest that disagree is a bug waiting to
+    happen, so the directory wins by being the default."""
+    d = tmp_path / "my-board"
+    d.mkdir()
+    (d / "board.json").write_text('{"title": "My Board", "lanes": 2}\n')
+    cfg = file_lanes.read_board(str(d))
+    assert cfg["slug"] == "my-board"
+    assert cfg["lanes"] == 2
 
 
-def test_import_rejects_more_sections_than_lanes(tmp_path):
-    doc = tmp_path / "ideas.md"
-    doc.write_text(DOC)
-    ideas = tmp_path / "ideas"
-    ideas.mkdir()
-    with pytest.raises(ValueError, match="2 ideas but only 1 lane"):
-        file_lanes.import_ideas(str(doc), str(ideas), lane_count=1)
+def test_read_board_keeps_an_explicit_slug(tmp_path):
+    d = tmp_path / "dir-name"
+    d.mkdir()
+    (d / "board.json").write_text('{"slug": "explicit", "lanes": 1}\n')
+    assert file_lanes.read_board(str(d))["slug"] == "explicit"
 
 
-def test_import_refuses_to_clobber_entered_idea(tmp_path):
-    doc = tmp_path / "ideas.md"
-    doc.write_text(DOC)
-    ideas = tmp_path / "ideas"
-    ideas.mkdir()
-    (ideas / "lane-1.md").write_text("## my own typed idea\n")
-    with pytest.raises(ValueError, match="--force"):
-        file_lanes.import_ideas(str(doc), str(ideas), lane_count=3)
-
-
-def test_import_overwrites_with_force(tmp_path):
-    doc = tmp_path / "ideas.md"
-    doc.write_text(DOC)
-    ideas = tmp_path / "ideas"
-    ideas.mkdir()
-    (ideas / "lane-1.md").write_text("## my own typed idea\n")
-    file_lanes.import_ideas(str(doc), str(ideas), lane_count=3, force=True)
-    assert (ideas / "lane-1.md").read_text().startswith("## Idea 1: CLI")
-
-
-def test_import_ignores_empty_placeholder_files(tmp_path):
-    doc = tmp_path / "ideas.md"
-    doc.write_text(DOC)
-    ideas = tmp_path / "ideas"
-    ideas.mkdir()
-    (ideas / "lane-1.md").write_text("")
-    file_lanes.import_ideas(str(doc), str(ideas), lane_count=3)
-    assert (ideas / "lane-1.md").read_text().startswith("## Idea 1: CLI")
+def test_read_board_without_a_manifest_is_an_error(tmp_path):
+    d = tmp_path / "no-manifest"
+    d.mkdir()
+    with pytest.raises(FileNotFoundError):
+        file_lanes.read_board(str(d))
 
 
 class FakeKb:
@@ -153,8 +114,8 @@ def test_no_cross_lane_edge_is_filed(monkeypatch, tmp_path):
 
 def test_every_card_is_filed(monkeypatch, tmp_path):
     fake, made = file_two_lanes(monkeypatch, tmp_path)
-    assert len(fake.created()) == 18
-    assert len(made) == 18
+    assert len(fake.created()) == 22        # 11 cards x 2 lanes, IT-complete
+    assert len(made) == 22
 
 
 def test_file_ideas_creates_one_triage_card_per_entered_idea(monkeypatch, tmp_path):
@@ -188,7 +149,7 @@ def test_file_ideas_carries_the_raw_text_and_points_at_the_snapshot(monkeypatch,
     file_lanes.file_ideas("b", "/repo", str(tmp_path), 1, "k")
     body = fake.created()[0][fake.created()[0].index("--body") + 1]
     assert "Build the CLI." in body
-    assert "/repo/mission/runs/b/snapshots/lane-1.md" in body
+    assert "/repo/boards/b/runs/snapshots/lane-1.md" in body
 
 
 def test_file_ideas_files_nothing_on_an_empty_generic_board(monkeypatch, tmp_path):

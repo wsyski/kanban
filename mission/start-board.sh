@@ -12,8 +12,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$SLUG" ] || { echo "--slug required" >&2; exit 2; }
-[ -s "$REPO/mission/ideas/$SLUG/lane-1.md" ] || {
-  echo "refusing: mission/ideas/$SLUG/lane-1.md is empty — enter an idea first" >&2
+[ -s "$REPO/boards/$SLUG/lane-1.md" ] || {
+  echo "refusing: boards/$SLUG/lane-1.md is empty — enter an idea first" >&2
   exit 1; }
 
 cd "$REPO"

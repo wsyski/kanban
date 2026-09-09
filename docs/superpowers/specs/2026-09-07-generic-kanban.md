@@ -1,5 +1,12 @@
 # Generic Kanban Board — Design Spec
 
+> **Layout changed after this document was written (2026-09-09).** Per-board
+> state moved out of `mission/` into `boards/<slug>/` (`board.json` plus one
+> `lane-<k>.md` per lane), `create-board.sh` collapsed to a single `--board`
+> argument, and `--ideas`/`## `-splitting was removed. Paths and flags below
+> describe the layout as it was on this document's date. See `README.md` §3
+> for the current one.
+
 > **Superseded in part (2026-09-09).** The lane graph gained two cards before the
 > plan: `I` (researcher refines the raw idea into
 > `mission/ideas/<slug>/lane-<k>-refined.md`) and `Gi` (a human gate accepting
@@ -27,7 +34,7 @@ Two boards, two incompatible mechanisms, one of them undocumented.
 
 ## Goal
 
-One generic board template, instantiated N times with parameters. `smoke-test` and
+One generic board template, instantiated N times with parameters. `test-driven-development` and
 `portfolio` both become instances of it. Ideas are entered by the human — never
 shipped, never seeded, never cards on the board.
 
@@ -116,7 +123,7 @@ the previous lane's gate releases them.
 `mission/ideas/<slug>/lane-<k>.md`, created empty by the script, gitignored. The
 slug segment is load-bearing, not decoration: both boards are instantiated from
 this one repo, so a flat `mission/ideas/lane-1.md` would be shared by
-`smoke-test` and `portfolio` at once. Runtime data is scoped the same way —
+`test-driven-development` and `portfolio` at once. Runtime data is scoped the same way —
 `mission/runs/<slug>/timing.jsonl`, `run-summary.json`, and
 `snapshots/lane-<k>.md` — for the same reason: a fixed `mission/run-summary.json`
 is silently overwritten by whichever board finishes second.
@@ -202,7 +209,7 @@ completion therefore depends on its final gate card being completed — never on
 crash recovers the parameters without the operator remembering flags.
 
 ### D11 — Both existing boards are deleted and recreated
-`smoke-test` and `portfolio` are replaced by generic instances. Both board
+`test-driven-development` and `portfolio` are replaced by generic instances. Both board
 directories are copied to `/opt/backup/agents/<ts>-kanban-boards/` first.
 
 ### D12 — Existing ideas are preserved as documentation only

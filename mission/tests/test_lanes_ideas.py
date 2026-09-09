@@ -3,7 +3,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import lanes
 
-IDEA = """## Idea 1: wordcount CLI
+IDEA = """## Idea 1: a small thing
 <!-- integration-tests: false -->
 <!-- auto-gates: true -->
 
@@ -28,17 +28,22 @@ def test_parse_idea_ignores_ordinary_html_comments():
     assert headers == {}
 
 
-def test_split_ideas_is_positional_and_drops_preamble():
-    doc = "Title notes\nignored\n\n## One\na\n\n## Two\nb\n"
-    parts = lanes.split_ideas(doc)
-    assert len(parts) == 2
-    assert parts[0].startswith("## One")
-    assert "ignored" not in parts[0]
-    assert parts[1].startswith("## Two")
+def test_read_idea_reads_one_lane_file(tmp_path):
+    """One file per lane: position is the filename, never a heading's order in
+    some larger document."""
+    (tmp_path / "lane-2.md").write_text(
+        "## Two\n<!-- integration-tests: true -->\nbody\n")
+    headers, body = lanes.read_idea(str(tmp_path / "lane-2.md"))
+    assert headers == {"integration-tests": "true"}
+    assert body.strip() == "## Two\nbody"
 
 
-def test_split_ideas_empty_document_yields_nothing():
-    assert lanes.split_ideas("no headings here\n") == []
+def test_read_idea_treats_missing_and_empty_alike(tmp_path):
+    """A lane with no idea and a lane with an empty placeholder are the same
+    thing to the board: nothing to file, and the chain stops there."""
+    assert lanes.read_idea(str(tmp_path / "lane-1.md")) is None
+    (tmp_path / "lane-1.md").write_text("   \n")
+    assert lanes.read_idea(str(tmp_path / "lane-1.md")) is None
 
 
 def test_resolve_prefers_header_over_board_default():

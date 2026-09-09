@@ -17,9 +17,10 @@ POLL = 20
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import lanes
 
-BOARD_CFG = os.path.join(REPO, "mission", "boards", f"{BOARD}.json")
-IDEAS_DIR = os.path.join(REPO, "mission", "ideas", BOARD)
-RUN_DIR = os.path.join(REPO, "mission", "runs", BOARD)
+BOARD_DIR = os.path.join(REPO, "boards", BOARD)
+BOARD_CFG = os.path.join(BOARD_DIR, "board.json")
+IDEAS_DIR = BOARD_DIR
+RUN_DIR = os.path.join(BOARD_DIR, "runs")
 SNAP_DIR = os.path.join(RUN_DIR, "snapshots")
 
 
@@ -29,14 +30,18 @@ def manifest():
     try:
         return json.load(open(BOARD_CFG))
     except FileNotFoundError:
-        return {"workdir": REPO, "integration_tests": True, "auto_gates": False}
+        # Same defaults create-board.sh prints in --help, so a board that loses
+        # its manifest degrades to the documented shape rather than silently
+        # growing integration cards nobody asked for.
+        return {"workdir": os.path.join(BOARD_DIR, "work"), "lanes": 1,
+                "integration_tests": False, "auto_gates": False}
 
 
 def board_defaults():
     return manifest()
 
 
-WORKDIR = manifest().get("workdir", REPO)
+WORKDIR = manifest().get("workdir") or os.path.join(BOARD_DIR, "work")
 
 TIMING_PATH = os.path.join(RUN_DIR, "timing.jsonl")
 
@@ -157,8 +162,15 @@ def file_revision(state, lane, round_no, findings):
     log(f"filed revision round {round_no}: {rev_title} + {rvp_title}")
 
 def staged_files():
-    """Paths staged in WORKDIR — the evidence a gate records in place of a SHA."""
-    out = git("diff", "--cached", "--name-only")
+    """Paths staged in WORKDIR — the evidence a gate records in place of a SHA.
+
+    The pathspec is load-bearing. `git -C <dir> diff --cached` reports the whole
+    REPOSITORY, not the directory, so without it a gate would record another
+    board's staged work — or this board's refined idea, which lives beside the
+    work dir, not in it — as this lane's output. Plausible-looking wrong
+    evidence at the one place a human is asked to trust the driver.
+    """
+    out = git("diff", "--cached", "--name-only", "--", WORKDIR)
     return [l for l in out.splitlines() if l.strip()]
 
 def runs_result(card_id):
@@ -423,8 +435,9 @@ def notify_deadman(state):
         pass
 
 def preserve_artifacts(task):
-    """Copy every completed card's provenance patch into mission/artifacts/
-    <runid>/ so per-task diffs live next to the code commit they produced."""
+    """Copy every completed card's provenance patch into the board's own
+    runs/artifacts/<runid>/ so per-task diffs live next to the code commit they
+    produced — and stay inside the board, like everything else it generates."""
     import shutil, glob, datetime
     run_id = datetime.datetime.now().strftime("%Y%m%d-%H%M")
     out_dir = os.path.join(RUN_DIR, "artifacts", run_id)
@@ -439,7 +452,7 @@ def preserve_artifacts(task):
             dst = os.path.join(out_dir, f"{cid}.patch")
             if not os.path.exists(dst):
                 shutil.copy2(src, dst)
-                log(f"artifact kept: mission/artifacts/{run_id}/{os.path.basename(dst)}")
+                log(f"artifact kept: {os.path.relpath(dst, REPO)}")
 
 def write_summary(state):
     """One-shot per-run summary: gate verdicts, per-card agent minutes, budget

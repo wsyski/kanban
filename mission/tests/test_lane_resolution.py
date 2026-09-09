@@ -18,8 +18,9 @@ def test_lane_graph_chains_lane_two_root_to_lane_one_gate():
     titles = [c["title"] for l in (1, 2) for c in lanes.lane_cards(l)]
     rows = run.lane_graph(state_with(*titles))
     by_title = {r[0]: r for r in rows}
-    assert by_title[lanes.card_title("P", 1)][1] == []
-    assert by_title[lanes.card_title("P", 2)][1] == ["Gc1"]
+    assert by_title[lanes.card_title("I", 1)][1] == []
+    assert by_title[lanes.card_title("P", 1)][1] == ["Gi1"]
+    assert by_title[lanes.card_title("I", 2)][1] == ["Gc1"]
     assert by_title[lanes.card_title("RVp", 1)][2] == "rvp"
 
 

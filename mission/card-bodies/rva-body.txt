@@ -2,7 +2,7 @@ VERDICT CARD — implementation review for lane <N>. Never edit anything; never 
 
 HARD RULES: (1) Read-only on the repo; write only /tmp/<YOUR-CARD-ID>.review. (2) Do not commit, branch, stash, reset, clean. (3) Do not write profile memories.
 
-TASK: review the STAGED diff in <WORKDIR> (git diff --cached), not the worktree, against mission/plans/lane-<N>-plan.md and the lane's idea at <IDEA>:
+TASK: review the STAGED diff in <WORKDIR> (git diff --cached), not the worktree, against <PLAN> and the lane's idea at <IDEA>:
 (a) The plan's tasks are all implemented, and nothing beyond them is.
 (b) The tests actually exercise the behavior they claim to; run them yourself.
 (c) No commits, no branches, no files outside this lane's target paths.

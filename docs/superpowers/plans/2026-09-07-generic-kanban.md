@@ -1,5 +1,12 @@
 # Generic Kanban Board Implementation Plan
 
+> **Layout changed after this document was written (2026-09-09).** Per-board
+> state moved out of `mission/` into `boards/<slug>/` (`board.json` plus one
+> `lane-<k>.md` per lane), `create-board.sh` collapsed to a single `--board`
+> argument, and `--ideas`/`## `-splitting was removed. Paths and flags below
+> describe the layout as it was on this document's date. See `README.md` §3
+> for the current one.
+
 > **Superseded in part (2026-09-09).** The lane graph gained two cards before the
 > plan: `I` (researcher refines the raw idea into
 > `mission/ideas/<slug>/lane-<k>-refined.md`) and `Gi` (a human gate accepting
@@ -17,7 +24,7 @@
 >
 > **No commits.** Every task ends with `git add` of the files it names and a report. Implementers must not run `git commit`; the ledger records staged state instead of SHAs. This overrides the sub-skill's default commit-per-task step.
 
-**Goal:** Turn `mission/` into one generic, parameterized kanban board template with N sequential lanes whose ideas are entered by a human, and re-create both `smoke-test` and `portfolio` as instances of it.
+**Goal:** Turn `mission/` into one generic, parameterized kanban board template with N sequential lanes whose ideas are entered by a human, and re-create both `test-driven-development` and `portfolio` as instances of it.
 
 **Architecture:** A pure-Python module (`mission/lanes.py`) owns two things: generating the lane card graph from a lane number, and parsing an idea file into `(headers, body)`. A shell script (`mission/create-board.sh`) creates the hermes board and files N parked lanes using that module. The driver (`mission/run.py`) stops hardcoding a card list: it derives the graph from the board, and at each lane's unblock re-reads that lane's idea file to decide stop / prune integration tests / skip gates. Nothing in the driver ever commits.
 
@@ -1725,7 +1732,7 @@ mission/create-board.sh --slug smoke-test --title "Kanban Smoke Test" \
 hermes kanban --board smoke-test list
 cat mission/boards/smoke-test.json
 ```
-Expected: 18 cards (2 lanes × 9), every one `blocked`; `mission/ideas/smoke-test/lane-1.md`
+Expected: 18 cards (2 lanes × 9), every one `blocked`; `../../../mission/ideas/test-driven-development`
 and `lane-2.md` hold the two ideas; the manifest carries `template_root`, `workdir`,
 `lane_count: 2`, `integration_tests: true`, `auto_gates: false`.
 
@@ -1738,7 +1745,7 @@ mission/create-board.sh --slug portfolio --title "Portfolio Engineering" \
 hermes kanban --board portfolio list
 ls -la mission/ideas/portfolio/ mission/ideas/smoke-test/
 ```
-Expected: 27 cards, all blocked; `mission/ideas/portfolio/lane-1.md` non-empty,
+Expected: 27 cards, all blocked; `../../../mission/ideas/portfolio-engineering` non-empty,
 `lane-2.md` and `lane-3.md` empty; the smoke-test ideas untouched in their own
 directory (the board-scoping check); `mission/boards/portfolio.json` says
 `integration_tests: false` and the workdir you passed.

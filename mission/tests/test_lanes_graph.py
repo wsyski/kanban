@@ -3,17 +3,19 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import lanes
 
 
-def test_full_lane_has_nine_cards_in_order():
+def test_full_lane_has_eleven_cards_in_order():
     cards = lanes.lane_cards(1)
     assert [c["code"] for c in cards] == [
-        "P", "RVp", "Gp", "TW", "C", "RVa", "TI", "RVc", "Gc"]
+        "I", "Gi", "P", "RVp", "Gp", "TW", "C", "RVa", "TI", "RVc", "Gc"]
 
 
 def test_ids_and_parents_are_lane_scoped():
     cards = lanes.lane_cards(2)
     by_code = {c["code"]: c for c in cards}
+    assert by_code["I"]["id"] == "I2"
+    assert by_code["I"]["parent"] is None
     assert by_code["P"]["id"] == "P2"
-    assert by_code["P"]["parent"] is None
+    assert by_code["P"]["parent"] == "Gi2"
     assert by_code["RVp"]["parent"] == "P2"
     assert by_code["Gc"]["parent"] == "RVc2"
 
@@ -21,14 +23,14 @@ def test_ids_and_parents_are_lane_scoped():
 def test_pruned_lane_drops_ti_rvc_and_relinks():
     cards = lanes.lane_cards(1, integration_tests=False)
     assert [c["code"] for c in cards] == [
-        "P", "RVp", "Gp", "TW", "C", "RVa", "Gc"]
+        "I", "Gi", "P", "RVp", "Gp", "TW", "C", "RVa", "Gc"]
     by_code = {c["code"]: c for c in cards}
     assert by_code["Gc"]["parent"] == "RVa1"
 
 
 def test_titles_are_stable_and_prefixed_by_id():
     assert lanes.card_title("RVp", 3) == "RVp3: plan review - lane 3"
-    assert lanes.lane_cards(3)[0]["title"] == "P3: implementation plan - lane 3"
+    assert lanes.lane_cards(3)[0]["title"] == "I3: idea refinement - lane 3"
 
 
 def test_assignees_and_skills():
@@ -36,6 +38,9 @@ def test_assignees_and_skills():
     assert by_code["P"]["assignee"] == "manager"
     assert by_code["Gp"]["assignee"] == "human-gate"
     assert by_code["Gc"]["assignee"] == "human-gate"
+    assert by_code["I"]["assignee"] == "researcher"
+    assert by_code["Gi"]["assignee"] == "human-gate"
+    assert by_code["I"]["skill"] == "brainstorming"
     assert by_code["TW"]["skill"] == "test-driven-development"
     assert by_code["C"]["skill"] is None
 

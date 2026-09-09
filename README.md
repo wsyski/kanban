@@ -23,7 +23,7 @@ the board runs them in order. See §3.
   `wordcount-service/` (spec-first Spring Boot REST API).
 - Template: `mission/lanes.py` (card graph + idea parsing),
   `mission/create-board.sh` (board instantiation), `mission/start-board.sh`
-  (driver launch), example ideas in `docs/example-ideas/`.
+  (driver launch). Board instances live in `boards/<slug>/`.
 
 ---
 
@@ -38,7 +38,7 @@ the board runs them in order. See §3.
 | `git add`/`git diff` always allowed (provenance patches) | card bodies |
 | Lane N+1's root parented to lane N's gate card | `mission/lanes.py` — the board itself is the sequencer |
 | The manager never sees a raw idea | `mission/lanes.py` — `I` is the lane root, `Gi` stands between it and `P` |
-| Every hand-off is a staged file, never a card comment | refined idea `mission/ideas/<slug>/lane-<k>-refined.md`, plan, patches |
+| Every hand-off is a staged file, never a card comment | refined idea `boards/<slug>/lane-<k>-refined.md`, plan, patches |
 | Every card's evidence | `git diff --cached` patch attached to the card |
 | Verdicts in the result field | reviewer card bodies mandate it |
 
@@ -57,24 +57,47 @@ the right code?).
 ```
 hermes profile list        # researcher/manager/coder/tester/reviewer gateways running
 hermes --profile <P> gateway install && hermes --profile <P> gateway start   # per profile
-javac -version && mvn -version    # JDK 17 + Maven 3.9
-# ~/.m2 pre-warmed (offline builds — workers have iteration budgets):
-mvn -q dependency:get -Dartifact=org.springframework.boot:spring-boot-starter-web:3.3.4
-mvn -q dependency:get -Dartifact=org.openapitools:openapi-generator-maven-plugin:7.8.0
-mvn -q dependency:get -Dartifact=org.apache.maven.plugins:maven-failsafe-plugin:3.5.4
 ```
+
+That is all the template needs. **Toolchains belong to boards, not here** —
+the card graph never mentions a language or a build tool, and a board is as
+likely to be Python or Rust as Java. Each board's own `README.md` states what
+its ideas require, and its build descriptor (`pom.xml`, `pyproject.toml`,
+`Cargo.toml`, …) is board output like everything else it generates.
 
 ## 3. Creating and running a board
 
-    mission/create-board.sh --slug <s> --title "<t>" --lanes <n> [flags]
-    $EDITOR mission/ideas/<s>/lane-1.md      # enter your raw idea
+A board is a **directory**. Everything specific to one board lives in it, and
+nothing about it lives under `mission/`:
+
+    boards/<slug>/
+        README.md             this board's preconditions and toolchain
+        board.json            slug, title, workdir, lanes, integration_tests, auto_gates
+        lane-1.md             the idea for lane 1 — the one copy, edited in place
+        lane-<k>-refined.md   written by the researcher, edited by a human at Gi
+        work/                 EVERYTHING the board generates — code, tests,
+                              build files, work/plans/lane-<k>-plan.md
+        runs/snapshots/       driver-written, gitignored
+
+    $EDITOR boards/<s>/lane-1.md              # write your raw idea
+    mission/create-board.sh --board boards/<s>
     mission/start-board.sh --slug <s>
 
-Flags, all off by default: `--auto-start`, `--auto-gates`,
-`--skip-integration-tests`. `--integration-tests <spec>` states it explicitly —
-`true`, `false`, or one value per lane (`false,true`). `--ideas <file>` preloads
-ideas from one markdown document, split at `## ` headings in document order.
-`mission/create-board.sh --help` is the authoritative list.
+That is the whole interface — one argument. Without `--board` you get an empty
+board on the parser defaults (2 lanes, no integration cards, human gates) and
+`--slug`/`--title` are required instead. `mission/create-board.sh --help` is
+authoritative.
+
+There is no import step and no second copy of an idea. The file you edit is the
+file the board reads, and it stays editable until the driver activates that
+lane.
+
+**Nothing a board generates leaks outside `boards/<slug>/work/`.** That is the
+board's `workdir`: the only tree the driver runs git in, and where every card
+stages. So `rm -rf boards/<slug>/work` is a clean start, and the template repo
+never accumulates one board's build files, modules or plans. A board that must
+build somewhere else — another repository entirely — sets `workdir` in its
+manifest and the default is not used.
 
 Lanes are capacity, ideas are demand: file as many lanes as you have ideas. An
 empty lane is 11 parked cards nobody reads, and the board is easier to see
@@ -83,8 +106,8 @@ without them; a lane whose idea is missing stops the chain anyway.
 The board file takes a scalar or a per-lane array, and a per-idea header
 overrides it for that lane:
 
-    "integration_tests": [false, true]     # boards/<slug>.json — lane 1 without, lane 2 with
-    <!-- integration-tests: false -->      # ideas/<slug>/lane-<k>.md — this lane only
+    "integration_tests": [false, true]     # boards/<slug>/board.json — lane 1 without, lane 2 with
+    <!-- integration-tests: false -->      # boards/<slug>/lane-<k>.md — this lane only
     <!-- auto-gates: true -->
 
 An array must have exactly one entry per lane — a missing entry would become a
@@ -94,10 +117,10 @@ IS one lane, so an array there has nothing to index. Each triage card prints
 the resolved options and where each came from, and says so loudly when the two
 disagree — the header is an HTML comment, invisible in any rendered view.
 
-Ideas are board-scoped and **tracked**: `mission/ideas/<slug>/` holds the raw
+A board directory is **tracked**: `boards/<slug>/` holds the manifest, the raw
 idea you wrote and the refined one the researcher stages, so a board ships as a
 runnable example and the `I` card can `git add` its deliverable like every other
-worker. Snapshots and run data are not: `mission/runs/<slug>/` is ignored.
+worker. Only the driver's own run state is ignored: `boards/*/runs/`.
 Workers read the immutable snapshot the driver writes when the lane opens, never
 the file you are editing — so you can write lane 3's idea while lane 1 is still
 running.
@@ -106,17 +129,25 @@ running.
 human gate the driver pauses and records the evidence; you commit at your
 discretion, or not at all. With gates skipped, nothing is committed.
 
-Two ready-to-run examples live in `docs/example-ideas/`:
-`smoke-test.md` (two small lanes, reproduces the original run-1/run-2
-products) and `portfolio.md` (one lane, board-default
-`--skip-integration-tests`). Each file's own preamble carries the exact
-`create-board.sh` invocation to file it.
+Two ready-to-run examples ship as board directories:
+
+    mission/create-board.sh --board boards/test-driven-development
+    mission/create-board.sh --board boards/portfolio-engineering
+
+`test-driven-development` is two small lanes building a word-count CLI and a
+spec-first REST service. It has a precondition — the repo still holds those
+modules from an earlier run, and they must be deleted first or the lanes have
+nothing to build; see `boards/test-driven-development/README.md`.
+`portfolio-engineering` is one lane and a substantial idea: a GPW small-cap
+research pipeline built as a standalone module, never built before. Both are
+examples — read the idea before starting either.
 
 ## 4. Timing statistics (historical: scenario v2, pre-generic; final run 2026-09-06)
 
-> The recorded measurements (`mission/timing.jsonl`, `mission/run-summary.json`)
-> were cleared on 2026-09-09: the lane graph gained `I` and `Gi`, so per-card
-> numbers from before are no longer comparable. The instrumentation below is
+> The recorded measurements were cleared on 2026-09-09: the lane graph gained
+> `I` and `Gi`, so per-card numbers from before are no longer comparable. They
+> also moved — timing and run summaries are now per-board, under
+> `boards/<slug>/runs/`. The instrumentation below is
 > unchanged and the next run starts a fresh baseline. The table that follows is
 > kept as a record of what the pre-generic flow cost.
 
@@ -261,7 +292,7 @@ Notes on the work vs wall split:
 ### Timing instrumentation (on the board itself)
 
 - Driver tick every 20 s appends a status snapshot to
-  `mission/timing.jsonl` (one JSON line per tick); a run-boundary marker
+  `boards/<slug>/runs/timing.jsonl` (one JSON line per tick); a run-boundary marker
   (ts, argv) is written at every driver start so the report covers only the
   latest run segment.
 - On each card status *change* the driver embeds the card's run evidence
@@ -275,10 +306,11 @@ Notes on the work vs wall split:
   overhead totals, gate commit SHAs.
 - If ≥2 cards end up blocked/needs_input, a DEADMAN notice is logged and
   written to `/tmp/kanban-deadman.txt` (Telegram sent if env tokens set).
-- Per-card provenance patches are preserved to `mission/artifacts/<run>/`
-  so they survive board archiving.
-- After the run: `python3 mission/timing-report.py` builds the per-card
-  table + totals from the segment (report covers the latest segment only).
+- Per-card provenance patches are preserved to
+  `boards/<slug>/runs/artifacts/<run>/` so they survive board archiving.
+- After the run: `python3 mission/timing-report.py --board <slug>` builds the
+  per-card table + totals from that board's segment (latest segment only).
+  The board is required: timing data is per-board.
 - Gate cards are the chain checkpoints: gate completion timestamps delimit
   planning vs build vs review phases per task.
 
@@ -289,8 +321,9 @@ Notes on the work vs wall split:
 - **Single driver discipline:** exactly one `run.py` at a time; duplicates
   idle silently and interleave log output. Kill all, start one.
 - **Re-filing mid-run is forbidden:** `create-board.sh` refuses if the board
-  already exists. To start over, archive/reclaim every card first
-  (`mission/reset.sh` does this). Orphaned workers burn full budgets on
+  already exists. To start over: `mission/reset.sh --board boards/<slug>`,
+  which deletes that board's `work/` and `runs/` and archives its cards —
+  one board only, no `git reset`, no force-push. Orphaned workers burn full budgets on
   archived cards and can re-stage stale file content into the index.
 - **Turn budgets are global, not per-profile:** `agent.max_turns` (80) in
   `~/.hermes/config.yaml` governs every kanban worker. A profile-level
@@ -339,16 +372,15 @@ The card graph (`mission/lanes.py`) and card bodies (`mission/card-bodies/`)
 are shared across every board — nothing scenario-specific to write per idea.
 To run new work:
 
-1. Create or reuse a board (§3): `mission/create-board.sh --slug <s>
-   --title "<t>" --lanes <n>`.
-2. Write the idea into `mission/ideas/<s>/lane-<k>.md` — free text, plus the
+1. Write the idea into `boards/<s>/lane-<k>.md` — free text, plus the
    optional `<!-- integration-tests: false -->` / `<!-- auto-gates: true -->`
    headers to override the board's defaults for that lane only.
+2. Create the board (§3): `mission/create-board.sh --board boards/<s>`.
 3. `mission/start-board.sh --slug <s>` launches the driver.
 
 Only touch `mission/card-bodies/` or `mission/lanes.py` when the card graph
 itself needs to change (a new role, a new gate) — that changes every board,
-not just one idea. See `docs/example-ideas/` for two worked examples.
+not just one idea. See `boards/` for two worked examples.
 
 ## 8. Provenance — run 1 (2026-09-05, three missions)
 
@@ -356,4 +388,4 @@ Original verbatim run, 3 missions on one board: word-count CLI (simple lane),
 WordCountService Spring Boot (TW2→C12→RVa2→TI→G2b), mavenize CLI
 (C13→RVa3→G3). Commits `74274bb`, `6780be3`, `9ed3c83`. Board sequencing
 proved the core mechanism (mission roots parented to previous gates).
-Details: `mission/env-first-run.txt`, `mission/REPLAY.md` (v1 section).
+Details: `docs/history/env-first-run.txt`, `docs/history/REPLAY.md` (v1 section). Those, and `docs/history/input-spec.md`, are historical records of the original smoke-test runs — they moved out of `mission/` on 2026-09-09, when board-specific material was removed from the engine.
