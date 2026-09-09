@@ -236,6 +236,15 @@ def rework_hold(state, lane, base, gate_code):
     return False
 
 
+def code_rework_hold(state, lane):
+    """True while a CODER revision or RVa re-review round is live."""
+    for t, c in state.items():
+        if (t.startswith(f"C{lane}-rev") or t.startswith(f"RVa{lane}-r")) \
+                and c["status"] not in ("done", "archived"):
+            return True
+    return False
+
+
 def file_revision(state, lane, round_no, findings, base="P", reviewer_prefix="RVp",
                   gate_code="Gp", max_rounds=3):
     """File one rework round: a revision card + its re-gate, linked to the gate.
@@ -558,6 +567,22 @@ def tick():
                 else:
                     escalate(gp_card["id"], f"Gp{lane}",
                              "3 plan revision rounds exhausted — human escalation required")
+        # --- code loop: Gc parked, latest implementation-review verdict REJECT ---
+        # RVa REJECT had NO loop: the gate waited forever (found live 2026-09-09
+        # 23:19 — 'REJECT: tests not staged' after the index changed under the
+        # lane). Same mirror: file a coder revision + RVa re-review, max 2.
+        _, gc_card = title_of_prefix(st, f"Gc{lane}:")
+        if gc_card and gc_card["status"] in ("blocked", "ready", "todo") \
+                and not code_rework_hold(st, lane):
+            v = latest_verdict(st, lane, "RVa", "Gc", final_code="RVc")
+            if verdict_token(v) == "REJECT":
+                m = v.split("REJECT:", 1)[1][:1200]
+                rounds = len([t for t in st if t.startswith(f"C{lane}-rev")])
+                if rounds < 2:
+                    file_coder_revision(st, lane, rounds + 1, m, max_rounds=2)
+                else:
+                    escalate(gc_card["id"], f"Gc{lane}",
+                             "2 implementation rework rounds exhausted — human escalation required")
         # --- idea loop: P parked, latest idea-gate verdict REWORK ---
         _, p_card = title_of_prefix(st, f"P{lane}:")
         if p_card and p_card["status"] in ("blocked", "ready", "todo") \
@@ -582,6 +607,9 @@ def tick():
     # driver restart mid-rework. Blocking needs ready/running; the downstream
     # card is blocked-by-parents here in the normal flow, so a no-op failure
     # is expected and harmless — skip it rather than spam the error log.
+    # The code loop (RVa REJECT) is NOT here: its round cards (C{lane}-rev /
+    # RVa{lane}-r<r>) sit between RVa and Gc, so the gate's own parents do
+    # the holding while the round is live.
     for lane in range(1, board_lane_count(st) + 1):
         for base, gate, downstream in (("I", "Gi", "P"), ("P", "Gp", "TW")):
             if not rework_hold(st, lane, base, gate):
@@ -618,6 +646,37 @@ def tick():
 
 
 _ESCALATED = set()   # gate codes already escalated this driver run
+
+
+def file_coder_revision(state, lane, round_no, findings, max_rounds=2):
+    """File one implementation-rework round: coder revision + RVa re-review,
+    linked to Gc. Mirrors file_revision; findings text is phrased for the coder."""
+    rev_title = f"C{lane}-rev-{round_no}: implementation revision round {round_no} - lane {lane}"
+    rr_title = f"RVa{lane}-r{round_no + 1}: implementation re-review round {round_no + 1} - lane {lane}"
+    if title_of_prefix(state, rev_title)[0]:
+        return  # already filed
+    gate_id = card_id(state, lanes.card_title("Gc", lane))
+    rbody = open(f"{REPO}/mission/card-bodies/c-body.txt").read()
+    rbody += (f"\nREVISION ROUND {round_no} of {max_rounds} (max {max_rounds}, then human "
+              f"escalation).\n\nThe code gate returned the work. Address EXACTLY:\n{findings}\n"
+              f"Fix only these, re-stage your files, re-attach, complete with a change summary.\n")
+    args = ["create", rev_title, "--body", rbody, "--assignee", "coder",
+            "--workspace", f"dir:{REPO}", "--max-runtime", "60m", "--max-retries", "1",
+            "--idempotency-key", f"{BOARD}-rev-C{lane}-{round_no}",
+            "--created-by", "manager", "--json"] + _goal_args("coder", "C")
+    rev_id = json.loads(kb(*args))["id"]
+    rrbody = open(f"{REPO}/mission/card-bodies/rva-body.txt").read()
+    rrbody += (f"\nRE-REVIEW ROUND {round_no + 1} of {max_rounds + 1}. The round-1 REJECT "
+               f"left findings on the parent revision card. Re-derive every (a)-(d) check "
+               f"against the CURRENT staged index, run the suite yourself, verdict in the "
+               f"result field.\n")
+    rr_args = ["create", rr_title, "--body", rrbody, "--assignee", "reviewer",
+               "--parent", rev_id, "--workspace", f"dir:{REPO}", "--max-runtime", "45m",
+               "--max-retries", "1", "--idempotency-key",
+               f"{BOARD}-rr-C{lane}-r{round_no + 1}", "--created-by", "manager", "--json"]
+    rr_id = json.loads(kb(*rr_args))["id"]
+    kb("link", rr_id, gate_id)
+    log(f"filed code rework round {round_no}: {rev_title} + {rr_title}")
 
 
 def escalate(card_id, code, reason):
