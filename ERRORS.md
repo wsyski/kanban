@@ -11,6 +11,23 @@ Fixed items name the commit that fixed them. Open items are open.
 
 ## Fixed (2026-09-09, third round — the /loop sweep)
 
+### 15. A REJECT at the code gate deadlocked the lane — no rework loop at RVa
+
+The plan gate had a REJECT loop, the idea gate got one (O2) — the code gate
+had neither. Found live (run 3, 23:19): RVa1 rejected on a transient index
+state ("tests not staged") and Gc waited forever. `file_coder_revision()` +
+`code_rework_hold()` now mirror the plan loop: RVa REJECT files
+`C<n>-rev-<k>` (coder) + `RVa<n>-r<k+1>` (re-review), max 2 rounds, then
+escalation. Proved live the same hour: the lane closed unattended through
+one full code-rework round.
+
+Also closed: the plan is now accepted on the FIRST review. `p-body` gained
+**NO UNVERIFIED CLAIMS** — every environment/state claim must be run before
+it is written (the planner twin of the reviewers' "reproduce, don't skim");
+it removed the whole class of plan rework (run 3: PASS r1, previously REJECT
+×3 over a pytest count written from memory, a stale staged-state claim and a
+broken pathspec).
+
 ### 14. Cards leave no log in the project
 
 A card's input (body as filed) and result lived only in the kanban DB — once
