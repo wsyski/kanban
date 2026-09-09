@@ -351,12 +351,41 @@ unlocks the rest of the chain (board-enforced sequencing, no orchestrator).
 
 ### Where the wall-vs-work overhead goes
 
-The first E2E baseline (test-board, auto-gates, 2026-09-09): **38.6 min agent
-work / 46.5 min wall = 17% overhead**, of which ~7 min is dispatch gaps +
-worker spin-up (~1 min floor × 9 cards). Reviewer share was 58% (RVp 13.5m +
-RVa 8.8m) — by design: reviews reproduce the producer's claims instead of
-trusting them. The pre-generic v2 numbers that follow are kept as a record of
-what a bigger board cost:
+**Run 3, 2026-09-09 23:34 (current engine, auto-gates) — the clean baseline:**
+
+| card | role | agent minutes | note |
+|---|---|---|---|
+| I1 refine idea | researcher | 1.72 | verified the interpreter/pytest environment |
+| Gi1 idea gate | auto | 0.0 | evidence: refined idea present |
+| P1 plan | manager | 1.47 | **PASS first time** (NO UNVERIFIED CLAIMS clause) |
+| RVp1 plan review | reviewer | 1.53 | re-derived coverage/format/testability |
+| Gp1 plan gate | auto | 0.0 | verdict PASS |
+| TW1 tests RED | tester | 0.30 | 4 tests, RED confirmed |
+| C1 implement | coder | 0.38 | 4/4 GREEN |
+| RVa1 review | reviewer | 1.43 | REJECT — transient index state (external commit) |
+| C1-rev-1 revision | coder | 1.43 | code-rework loop round 1 (new) |
+| RVa1-r2 re-review | reviewer | 0.82 | PASS |
+| Gc1 code gate | auto | 0.0 | 4/4 GREEN + staged set |
+| **total** | | **9.1 min agent** | |
+
+Crossover points this run proves: plan accepted on the FIRST review (the
+`NO UNVERIFIED CLAIMS` clause); a REJECT at the code gate no longer deadlocks
+the lane — the new loop filed a coder revision + re-review automatically and
+the lane closed unattended.
+
+**Run history (test-board, one lane, auto-gates):**
+
+| run | finished | agent work | wall | plan RV | code RV |
+|---|---|---|---|---|---|
+| E2E-1 | 19:48 | 38.6 min | ~46 min | PASS r1 | PASS r1 |
+| rerun | 22:57 | ~14 min | ~28 min | REJECT ×3 → PASS r4 | PASS pre + RVa-r2 round |
+| run 3 | 23:34 | 9.1 min | ~26 min | **PASS r1** | REJECT ×1 → PASS r2 (auto loop) |
+
+Trend: agent work fell 38.6 → 14 → 9.1 min as the verdict plumbing and
+verified-first planning stabilised; reviewer share stayed ~40–55% by design.
+
+The pre-generic v2 numbers follow — kept as a record of what a bigger, Java
+board cost:
 
 | component | est. | why |
 |---|---|---|
