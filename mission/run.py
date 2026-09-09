@@ -9,7 +9,9 @@ Usage: mission/run.py [--once] [--timeout-min 120]
 """
 import json, subprocess, sys, time, os, re, datetime
 
-BOARD = os.environ.get("BOARD", "smoke-test")
+# No default: this repo has no one board, and a stale default would drive the
+# wrong one. Enforced in main(), not here — the test suite imports this module.
+BOARD = os.environ.get("BOARD", "")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ONCE = "--once" in sys.argv
 POLL = 20
@@ -215,6 +217,7 @@ def gate_action(state, title, kind, lane):
         evidence = f"{len(staged)} files staged, verdict PASS"
         log(f"GATE {title.split(':')[0]} evidence: {evidence}; "
             f"staged: {', '.join(staged[:8])}")
+        write_timing_report(lane)
     if auto:
         cid = card_id(state, title)
         if state[title]["status"] == "blocked":
@@ -500,13 +503,46 @@ def write_summary(state):
         "overhead_min": round((time.time() - t0) / 60 - total, 1),
         "cards": rows,
         "gates": {t.split(":")[0]: (c.get("result") or "")[:200]
-                  for t, c in state.items() if re.match(r"^G[pc]\d+:", t)},
+                  for t, c in state.items() if re.match(r"^G[ipc]\d+:", t)},
         "lanes_with_ideas": [l for l in range(1, board_lane_count(state) + 1)
                              if lane_options(l) is not None],
     }
     with open(os.path.join(RUN_DIR, "run-summary.json"), "w") as f:
         json.dump(summary, f, indent=2)
     log(f"summary written: {os.path.join(RUN_DIR, 'run-summary.json')} ({total:.0f} min agent work)")
+
+
+_TIMED = set()
+
+
+def write_timing_report(lane):
+    """Render the human-readable timing report when lane <lane> reaches its code
+    gate — the end of the lane.
+
+    Written BEFORE the gate is announced, because that gate is where a person
+    decides whether to commit, and a report produced afterwards is evidence
+    nobody used. run-summary.json is for machines; this is the table a person
+    reads, and at the code gate it answers "what did this lane actually cost"
+    while the answer can still change the decision.
+
+    Once per lane per driver run: gate_action runs every tick while a gate is
+    held, and rewriting the report under the reader is worse than not having it.
+    """
+    if lane in _TIMED:
+        return
+    _TIMED.add(lane)
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M")
+    dst = os.path.join(RUN_DIR, f"timing-report-lane-{lane}-{stamp}.txt")
+    r = subprocess.run([sys.executable,
+                        os.path.join(REPO, "mission", "timing-report.py"),
+                        "--board", BOARD],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        log(f"WARNING: timing report failed (non-fatal): {r.stderr.strip()[:200]}")
+        return
+    with open(dst, "w") as f:
+        f.write(r.stdout)
+    log(f"timing report written: {os.path.relpath(dst, REPO)}")
 
 def acquire_lock():
     """One driver per board. A lockfile, not a state machine — recovery stays
@@ -533,10 +569,13 @@ def require_manifest():
     if not os.path.exists(BOARD_CFG):
         raise SystemExit(
             f"no manifest at {BOARD_CFG} — create the board first:\n"
-            f"  mission/create-board.sh --slug {BOARD} --title '<title>' --lanes <n>")
+            f"  mission/create-board.sh --board boards/{BOARD}")
 
 
 def main():
+    if not BOARD:
+        raise SystemExit("BOARD=<slug> is required — mission/start-board.sh sets it; "
+                         "there is no default board")
     require_manifest()
     acquire_lock()
     t0 = time.time()

@@ -308,9 +308,16 @@ Notes on the work vs wall split:
   written to `/tmp/kanban-deadman.txt` (Telegram sent if env tokens set).
 - Per-card provenance patches are preserved to
   `boards/<slug>/runs/artifacts/<run>/` so they survive board archiving.
-- After the run: `python3 mission/timing-report.py --board <slug>` builds the
-  per-card table + totals from that board's segment (latest segment only).
-  The board is required: timing data is per-board.
+- **At each lane's code gate** the driver writes
+  `boards/<slug>/runs/timing-report-lane-<k>-<YYYYmmdd-HHMM>.txt` — the
+  per-card table and totals — *before* announcing the gate. That gate is
+  where you decide whether to commit, so the cost of the lane has to be
+  readable while the answer can still change the decision. Once per lane per
+  driver run, and timestamped, so a re-run keeps the previous report.
+- At the end of the run: `boards/<slug>/runs/run-summary.json`
+  (machine-readable — gate verdicts, per-card agent minutes, overhead).
+- On demand, the same report: `python3 mission/timing-report.py --board <slug>`
+  (latest run segment only). The board is required — timing data is per-board.
 - Gate cards are the chain checkpoints: gate completion timestamps delimit
   planning vs build vs review phases per task.
 
