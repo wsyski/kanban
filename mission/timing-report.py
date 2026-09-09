@@ -15,9 +15,25 @@ The board is required and has no default: timing data is board-scoped, and a
 default slug would silently report on a board you did not ask about — or, once
 that board is gone, on nothing at all.
 """
-import json, subprocess, sys, os, collections, datetime
+import json, re, subprocess, sys, os, collections, datetime
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(REPO, "mission"))
+import lanes  # noqa: E402  — card code -> assignee, so roles are never hardcoded here
+
+ASSIGNEE = {row[0]: row[2] for row in lanes.LANE_CARDS}
+_CODE_RE = re.compile(r"^([A-Za-z]+)\d+:")
+_LANE_RE = re.compile(r"- lane (\d+)$")
+
+
+def card_code(title):
+    m = _CODE_RE.match(title)
+    return m.group(1) if m else None
+
+
+def card_lane(title):
+    m = _LANE_RE.search(title.strip())
+    return int(m.group(1)) if m else None
 
 
 def _args(argv):
@@ -137,6 +153,7 @@ def main():
     order = sorted({k[0] for k in tr if len(k) == 2},
                    key=lambda t: tr.get((t, "running"), t1) or t1)
     work_total = 0.0
+    per_card = {}
     for title in order:
         cid = tr.get((title, "done", "id")) or tr.get((title, "running", "id")) or "?"
         # agent elapsed from board runs data
@@ -154,7 +171,40 @@ def main():
         fmt = lambda e: f"{datetime.datetime.fromtimestamp(e):%H:%M}" if e else "-"
         print(f"{title[:50]:<50} {fmt(fr):>13} {fmt(dn):>13} {last_status:>8}"
               + (f"   agent={agent:.1f}m" if agent else ""))
+        per_card[title] = {"agent": agent, "first_running": fr, "done": dn}
     print()
+
+    # Per lane. A board runs its lanes sequentially, so "which lane cost what"
+    # is the question a multi-lane board actually raises, and the flat list
+    # above cannot answer it.
+    by_lane = collections.defaultdict(list)
+    for title, d in per_card.items():
+        by_lane[card_lane(title)].append(d)
+    if len([l for l in by_lane if l is not None]) > 1:
+        print(f"{'lane':<8} {'cards':>6} {'agent':>9} {'wall':>9}")
+        print("-" * 36)
+        for lane in sorted(l for l in by_lane if l is not None):
+            ds = by_lane[lane]
+            starts = [d["first_running"] for d in ds if d["first_running"]]
+            ends = [d["done"] for d in ds if d["done"]]
+            wall = (max(ends) - min(starts)) / 60 if starts and ends else 0.0
+            print(f"{lane:<8} {len(ds):>6} {sum(d['agent'] for d in ds):>8.1f}m "
+                  f"{wall:>8.1f}m")
+        print()
+
+    # Per role. Which profile is actually burning the budget — invisible above,
+    # where reviewer time is spread over three separate cards per lane.
+    by_role = collections.defaultdict(float)
+    for title, d in per_card.items():
+        by_role[ASSIGNEE.get(card_code(title), "?")] += d["agent"]
+    if any(by_role.values()):
+        print(f"{'role':<14} {'agent':>9}   share")
+        print("-" * 36)
+        tot = sum(by_role.values()) or 1.0
+        for role, mins in sorted(by_role.items(), key=lambda kv: -kv[1]):
+            if mins:
+                print(f"{role:<14} {mins:>8.1f}m   {100*mins/tot:>3.0f}%")
+        print()
     print(f"total agent work time: {work_total:.1f} min")
     print(f"total wall time: {(t1-t0)/60:.1f} min")
     print(f"overhead ratio: {(t1-t0)/60 - work_total:.1f} min non-agent time "

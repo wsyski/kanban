@@ -32,6 +32,19 @@ def test_gate_bodies_never_instruct_a_commit_as_a_requirement():
         assert "commit sha in the result" not in text
 
 
+def test_plan_card_reads_the_refined_idea():
+    """The researcher's output must actually reach the planner.
+
+    It did not until 2026-09-09: i-body told the researcher "the manager plans
+    against THIS file" while p-body read only the raw snapshot, so every
+    refinement was read once by a human at the gate and then dropped.
+    """
+    plan = open(os.path.join(BODIES, "p-body.txt")).read()
+    assert "<REFINED>" in plan, "the plan card must read the refined idea"
+    refine = open(os.path.join(BODIES, "i-body.txt")).read()
+    assert "<REFINED>" in refine, "the researcher must write the refined idea"
+
+
 def test_worker_bodies_point_at_the_snapshot_not_the_source():
     for body in ("p-body.txt", "rvp-body.txt", "rva-body.txt"):
         text = open(os.path.join(BODIES, body)).read()

@@ -140,6 +140,25 @@ for p in researcher manager coder tester reviewer; do
   hermes profile list | grep -q " $p " || { echo "profile $p not available" >&2; exit 1; }
 done
 
+# A profile EXISTING is not the same as anything being willing to dispatch its
+# cards. Without a dispatcher the board files perfectly and then sits forever —
+# indistinguishable from a slow board, and the failure is silent for hours.
+# Note this is deliberately NOT a per-profile gateway check: workers are spawned
+# as `hermes -p <assignee> --cli` subprocesses, so a stopped gateway still works
+# a card. Only notification delivery needs one.
+DISPATCH_LOCK="${HERMES_HOME:-$HOME/.hermes}/kanban/.dispatcher.lock"
+if command -v lsof >/dev/null 2>&1; then
+  if ! lsof "$DISPATCH_LOCK" >/dev/null 2>&1; then
+    echo "no gateway holds $DISPATCH_LOCK — nothing would dispatch this board." >&2
+    echo "Start one (e.g. hermes --profile manager gateway start), then re-run." >&2
+    echo "The lock FILE existing proves nothing; it must be held." >&2
+    exit 5
+  fi
+  echo "dispatcher: held"
+else
+  echo "dispatcher: unchecked (no lsof) — confirm a gateway is running" >&2
+fi
+
 # NB: probe the registry, never `hermes kanban --board <slug> list` — that
 # initialises the board's DB on demand, so it would create the very board it
 # is checking for.
@@ -181,11 +200,12 @@ PY
 cat <<EOF
 
 Next:
-  1. start the board:  mission/start-board.sh --slug $SLUG
-  2. watch:            hermes kanban --board $SLUG list
+  1. serve it:  mission/start-board.sh --slug $SLUG
+  2. drive it:  http://127.0.0.1:9119/kanban
 
-An idea written now is NOT in triage — write \$EDITOR $BOARD_DIR/lane-<k>.md
-first, then re-file (mission/reset.sh --board ${BOARD_DIR#$REPO/}, then create
-again). Lanes read their idea at activation, so a lane that has not started yet
-still picks up edits.
+Serving releases nothing. In the dashboard, edit the Triage card if you want a
+different idea, then DRAG IT FROM TRIAGE TO TODO — that is the go signal. The
+driver adopts the card's text into $BOARD_DIR/lane-<k>.md,
+files a fresh lane and drives it. A prefilled board is an initial value, not a
+running one.
 EOF

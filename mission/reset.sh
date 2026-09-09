@@ -80,6 +80,27 @@ echo "keeping:  $BOARD_DIR/board.json, lane-*.md, README.md"
 rm -rf "$WORKDIR" "$BOARD_DIR/runs"
 echo "work directory removed"
 
+# The index is board state too. Nothing in this flow commits, so a previous
+# run's staged files outlive the work directory: the next lane inherits them,
+# `git diff --cached` gate evidence lists them, and a worker can waste its
+# budget working out where a blob it never wrote came from. Unstage only this
+# board's own paths — never a blanket reset, which would throw away work the
+# human staged elsewhere.
+if git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1; then
+  REL="${BOARD_DIR#$REPO/}"
+  # GENERATED paths only. board.json, lane-<k>.md and README.md are the board's
+  # definition — this script keeps them, so it must not unstage them either.
+  # Restore exactly the paths that HAVE staged entries. Passing a pathspec git
+  # knows nothing about (runs/ is gitignored, so it never has one) fails the
+  # WHOLE restore with "pathspec did not match" — silently, under `|| true`.
+  staged=$(git -C "$REPO" diff --cached --name-only \
+             -- "$REL/work" "$REL/lane-*-refined.md" 2>/dev/null)
+  if [ -n "$staged" ]; then
+    printf '%s\n' "$staged" | xargs -r -d '\n' git -C "$REPO" restore --staged --
+    echo "unstaged $(printf '%s\n' "$staged" | wc -l) generated path(s) under $REL"
+  fi
+fi
+
 # archive every non-archived card on the board, if the board still exists
 if hermes kanban boards list 2>/dev/null | awk '{print $1; print $2}' | grep -qx "$SLUG"; then
   ids=$(hermes kanban --board "$SLUG" list --json | python3 -c "

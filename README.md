@@ -55,9 +55,21 @@ the right code?).
 ## 2. Prerequisites
 
 ```
-hermes profile list        # researcher/manager/coder/tester/reviewer gateways running
-hermes --profile <P> gateway install && hermes --profile <P> gateway start   # per profile
+hermes profile list                            # researcher/manager/coder/tester/reviewer exist
+lsof ~/.hermes/kanban/.dispatcher.lock         # SOMETHING owns dispatch
 ```
+
+**A worker does not need its own profile's gateway.** The dispatcher spawns
+each one as `hermes -p <assignee> --cli …`, a subprocess
+(`hermes_cli/kanban_db_dispatch.py:_worker_argv`), so a profile whose gateway
+is stopped still works a card. What needs a running gateway is *notification*
+delivery — the notifier filters by `notifier_profile`, so that profile's
+gateway must be up with its platform connected.
+
+What does have to be true is that **one** gateway holds
+`~/.hermes/kanban/.dispatcher.lock`. Without it a board files perfectly and
+then sits forever, which looks exactly like a slow one. `create-board.sh`
+checks this and refuses.
 
 That is all the template needs. **Toolchains belong to boards, not here** —
 the card graph never mentions a language or a build tool, and a board is as
@@ -79,18 +91,45 @@ nothing about it lives under `mission/`:
                               build files, work/plans/lane-<k>-plan.md
         runs/snapshots/       driver-written, gitignored
 
-    $EDITOR boards/<s>/lane-1.md              # write your raw idea
+    $EDITOR boards/<s>/lane-1.md              # optional: prefill the idea
     mission/create-board.sh --board boards/<s>
-    mission/start-board.sh --slug <s>
+    mission/start-board.sh --slug <s>         # serves; releases nothing yet
 
 That is the whole interface — one argument. Without `--board` you get an empty
 board on the parser defaults (2 lanes, no integration cards, human gates) and
 `--slug`/`--title` are required instead. `mission/create-board.sh --help` is
 authoritative.
 
-There is no import step and no second copy of an idea. The file you edit is the
-file the board reads, and it stays editable until the driver activates that
-lane.
+There is no import step and no second copy of an idea.
+
+### The main loop is the dashboard
+
+`start-board.sh` serves: the driver stays up and **releases nothing**. You drive
+the board from `http://127.0.0.1:9119/kanban`:
+
+1. Write the idea into the board's Triage card — edit it right there.
+2. **Drag it from Triage to Todo.** That is the go signal, and the only one.
+3. The driver adopts the card's text into `boards/<slug>/lane-<k>.md`, archives
+   the previous run's cards, files a fresh lane set, and drives it.
+4. Act on the three gates as they open. When the last closes the driver goes
+   idle and waits for the next idea.
+
+So a board is reusable: a new idea in the card starts a new run, and the file
+keeps the history. A board created with idea files is **prefilled, not
+running** — the seeded text is an initial value you can rewrite before arming.
+
+Do **not** use the dashboard's `specify` button to promote the card. It promotes
+triage → todo by rewriting the card with an auxiliary LLM, which would rewrite
+your idea before the researcher ever read it. Drag it.
+
+`start-board.sh` is idempotent — a second call sees the driver's lock and exits
+0 — so it is safe as a cron entry that keeps a board up across reboots:
+
+    hermes --profile <p> cron add --name kanban-<slug> --schedule '* * * * *' \
+        --script mission/start-board.sh --args '--slug <slug>'
+
+`--once` is the legacy one-shot: release lane 1 now, exit when the gates close.
+For tests and recovery, not for daily use.
 
 **Nothing a board generates leaks outside `boards/<slug>/work/`.** That is the
 board's `workdir`: the only tree the driver runs git in, and where every card
@@ -125,22 +164,44 @@ Workers read the immutable snapshot the driver writes when the lane opens, never
 the file you are editing — so you can write lane 3's idea while lane 1 is still
 running.
 
+### Known traps
+
+Found by running the flow, not by reading it:
+
+- **A worker that cannot complete its card is told the wrong reason.**
+  `kanban_complete` refuses an unsatisfied-parent card with *"unknown id or
+  already terminal"* — neither of which is true. A worker hitting that will
+  reliably burn several minutes hunting `--force` flags that do not exist.
+  Check the card's parents first.
+- **Never unlink, archive or re-parent a card while the dispatcher is claiming
+  it.** The worker spawns holding the pre-change view and then fights a board
+  that has moved. Board surgery is safe on a parked lane.
+- **The index is board state.** Nothing here commits, so a previous run's
+  staged files outlive its work directory unless `reset.sh` clears them —
+  which it now does, for generated paths only.
+
 **The driver never commits.** All work is staged on the current branch. At a
 human gate the driver pauses and records the evidence; you commit at your
 discretion, or not at all. With gates skipped, nothing is committed.
 
-Two ready-to-run examples ship as board directories:
+Three ready-to-run examples ship as board directories:
 
+    mission/create-board.sh --board boards/test-board
     mission/create-board.sh --board boards/test-driven-development
     mission/create-board.sh --board boards/portfolio-engineering
 
+`test-board` is the cheap one and the place to start: a single Python function and
+its tests, no build tool, no dependencies. Its purpose is to exercise the
+machinery — arm an idea, watch the researcher refine it, act on three gates,
+read the timing report — for almost nothing. Run it after any change to
+`mission/`, before trusting a real board.
+
 `test-driven-development` is two small lanes building a word-count CLI and a
-spec-first REST service. It has a precondition — the repo still holds those
-modules from an earlier run, and they must be deleted first or the lanes have
-nothing to build; see `boards/test-driven-development/README.md`.
+spec-first REST service; it needs JDK 17 and Maven, and a warm `~/.m2`.
 `portfolio-engineering` is one lane and a substantial idea: a GPW small-cap
-research pipeline built as a standalone module, never built before. Both are
-examples — read the idea before starting either.
+research pipeline installed into the Hermes `trader` profile. All three are
+examples — read the idea before starting one, and each board's own `README.md`
+for its preconditions.
 
 ## 4. Timing statistics (historical: scenario v2, pre-generic; final run 2026-09-06)
 
@@ -318,6 +379,11 @@ Notes on the work vs wall split:
   (machine-readable — gate verdicts, per-card agent minutes, overhead).
 - On demand, the same report: `python3 mission/timing-report.py --board <slug>`
   (latest run segment only). The board is required — timing data is per-board.
+- The report carries three views: the per-card table, a per-lane breakdown
+  (cards, agent minutes, wall time — shown only when the board has more than
+  one lane), and a per-role share, which is where you see that reviewers cost
+  40% of the budget across three cards a lane. Roles come from
+  `lanes.LANE_CARDS`, so the report cannot disagree with the card graph.
 - Gate cards are the chain checkpoints: gate completion timestamps delimit
   planning vs build vs review phases per task.
 

@@ -34,7 +34,21 @@ def test_lane_graph_skips_cards_absent_from_the_board():
 
 
 def test_lane_graph_gp_accepts_revision_rounds_as_parents():
+    """Filed rework cards gate the plan gate."""
     titles = [c["title"] for c in lanes.lane_cards(1)]
-    rows = run.lane_graph(state_with(*titles))
+    rows = run.lane_graph(state_with(*titles, "P1-rev round 1", "RVp1-r round 1"))
     gp = {r[0]: r for r in rows}[lanes.card_title("Gp", 1)]
     assert gp[1] == ["RVp1", "P1-rev", "RVp1-r"]
+
+
+def test_lane_graph_ignores_rework_rounds_that_were_never_filed():
+    """The stall this guards against: listing P<k>-rev unconditionally made
+    parents_done() false forever on every lane whose plan passed first time,
+    so RVp never unblocked and the board died at the plan review."""
+    titles = [c["title"] for c in lanes.lane_cards(1)]
+    st = state_with(*titles)
+    rows = {r[0]: r for r in run.lane_graph(st)}
+    assert rows[lanes.card_title("RVp", 1)][1] == ["P1"]
+    assert rows[lanes.card_title("Gp", 1)][1] == ["RVp1"]
+    st[lanes.card_title("P", 1)]["status"] = "done"
+    assert run.parents_done(st, rows[lanes.card_title("RVp", 1)][1])

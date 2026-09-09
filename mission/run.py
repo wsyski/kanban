@@ -5,7 +5,7 @@ The driver never commits. Gates wait for a human unless the lane's idea (or
 the board default) sets auto-gates, in which case the gate auto-completes on
 a PASS verdict with staged-file evidence — still no commit.
 
-Usage: mission/run.py [--once] [--timeout-min 120]
+Usage: mission/run.py [--serve] [--once] [--timeout-min 120]
 """
 import json, subprocess, sys, time, os, re, datetime
 
@@ -14,10 +14,15 @@ import json, subprocess, sys, time, os, re, datetime
 BOARD = os.environ.get("BOARD", "")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ONCE = "--once" in sys.argv
+# The main scenario is a board that stays up: you type an idea into the
+# dashboard, promote it out of Triage, and the run starts. Exiting when the
+# gates close would make every new idea a terminal command again.
+SERVE = "--serve" in sys.argv
 POLL = 20
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import lanes
+import file_lanes
 
 BOARD_DIR = os.path.join(REPO, "boards", BOARD)
 BOARD_CFG = os.path.join(BOARD_DIR, "board.json")
@@ -73,10 +78,16 @@ def lane_graph(state):
         prev = None
         for c in present:
             parents = [prev] if prev else ([f"Gc{lane - 1}"] if lane > 1 else [])
+            # Rework cards gate the review ONLY once a round has been filed.
+            # Listing them unconditionally stalled every lane that passed plan
+            # review first time: parents_done() treats a missing parent as
+            # not-done, so RVp waited forever on a P<k>-rev that never existed.
+            rework = [pfx for pfx in (f"P{lane}-rev", f"RVp{lane}-r")
+                      if title_of_prefix(state, pfx)[1] is not None]
             if c["code"] == "RVp":
-                parents += [f"P{lane}-rev", f"RVp{lane}-r"]
+                parents += rework
             if c["code"] == "Gp":
-                parents = [f"RVp{lane}", f"P{lane}-rev", f"RVp{lane}-r"]
+                parents = [f"RVp{lane}"] + rework
             rows.append((c["title"], parents, c["code"].lower(), lane))
             prev = c["id"]
     return rows
@@ -99,8 +110,23 @@ def kb(*args, capture=True):
     return r.stdout
 
 def board():
+    """Live cards, keyed by title.
+
+    Titles are unique by construction (card_title embeds code + lane), so the
+    keying is safe — but a refile that fails to archive an old card leaves two
+    rows sharing a title, and the dict would silently keep only one. That is
+    how a card the refile missed stayed invisible for a whole run, so say it
+    out loud rather than dropping it.
+    """
     out = json.loads(kb("list", "--json"))
-    return {t["title"]: t for t in out}
+    state = {}
+    for card in out:
+        if card["title"] in state:
+            log(f"WARNING: two live cards titled {card['title']!r} "
+                f"({state[card['title']]['id']}, {card['id']}) — one is stale; "
+                f"archive it, or the board will disagree with itself")
+        state[card["title"]] = card
+    return state
 
 def log(msg):
     print(f"[{datetime.datetime.now():%H:%M:%S}] {msg}", flush=True)
@@ -215,8 +241,9 @@ def gate_action(state, title, kind, lane):
             return f"waiting: final review verdict = {verdict_txt[:40]!r}"
         staged = staged_files()
         evidence = f"{len(staged)} files staged, verdict PASS"
-        log(f"GATE {title.split(':')[0]} evidence: {evidence}; "
-            f"staged: {', '.join(staged[:8])}")
+        if title not in _ANNOUNCED:
+            log(f"GATE {title.split(':')[0]} evidence: {evidence}; "
+                f"staged: {', '.join(staged[:8])}")
         write_timing_report(lane)
     if auto:
         cid = card_id(state, title)
@@ -226,10 +253,15 @@ def gate_action(state, title, kind, lane):
            "--result", f"auto-gate (lane {lane}): {evidence}. NOTHING COMMITTED.",
            "--summary", f"auto-gate {title.split(':')[0]} — no commit")
         log(f"GATE {title.split(':')[0]}: auto-completed — nothing committed")
-    else:
+    elif title not in _ANNOUNCED:
+        # Once per gate, not once per tick. gate_action runs every pass while a
+        # gate is held, so announcing unconditionally produced one identical
+        # line every 21 seconds for as long as a human took to look — which is
+        # exactly long enough to bury anything real in the log.
         log(f"HUMAN GATE READY: {title} — {evidence}. "
             f"Commit at your discretion, then: hermes kanban --board {BOARD} "
             f"complete {card_id(state, title)}")
+    _ANNOUNCED.add(title)
     return "gate-held"
 
 def record_timing(state):
@@ -358,6 +390,8 @@ def tick():
             # the manager never sees one.
             if parents and not parents_done(st, parents):
                 continue
+            if not lane_is_armed(lane):
+                continue        # prefilled, not running: waiting to be armed
             if open_lane(st, lane) == "stopped":
                 continue
             st = state = board()   # archive/link above changed the board
@@ -513,6 +547,128 @@ def write_summary(state):
 
 
 _TIMED = set()
+# Gates already announced this run — see gate_action.
+_ANNOUNCED = set()
+
+# The triage card body file_ideas writes always opens with this line, so a card
+# the human typed from scratch in the dashboard is distinguishable from one the
+# driver seeded — and the lane it belongs to is stated rather than guessed.
+_RAW_RE = re.compile(r"^RAW IDEA for lane (\d+)")
+
+# Serve mode holds every lane until a human arms an idea. Set by adopt_and_refile.
+_ARMED = False
+
+
+def lane_is_armed(lane):
+    """May serve mode open this lane?
+
+    Armed this session, or already opened by an earlier driver: the lane's
+    snapshot is written by open_lane before it unblocks anything, so its
+    existence is the durable record that this lane is under way. Without that
+    second test a cron restart mid-run would refuse to promote the lane it was
+    already driving, and the board would stall with no explanation.
+    """
+    if not SERVE or _ARMED:
+        return True
+    return os.path.exists(os.path.join(SNAP_DIR, f"lane-{lane}.md"))
+
+
+def armed_ideas(state):
+    """Triage cards the human has promoted out of Triage — the 'go' signal.
+
+    An idea is typed over minutes; a daemon that acted the moment a card
+    appeared would launch half a sentence. Moving the card out of Triage is a
+    deliberate gesture, and the dashboard offers two: the card panel's
+    `→ ready` button, or a drag into the Todo column. Both count — the button
+    is the discoverable one (there is no `→ todo` button) and the drag is what
+    a kanban habit reaches for.
+
+    Being unassigned is what makes that safe. Every lane card carries an
+    assignee and passes through `ready` on its way to a worker; an idea card
+    has none, which is also why the dispatcher cannot claim one however it is
+    moved. Without that test a lane card sitting in `ready` would be misread as
+    a new idea and would refile the board out from under its own run.
+
+    NB: the panel's `✨ Specify` and `⚗ Decompose` buttons also move a triage
+    card on, but both rewrite it with an auxiliary LLM first. Never use them
+    for an idea: they would rewrite the human's text before the researcher read
+    it.
+
+    Returns [(lane, idea_text, card_id)], lane order.
+    """
+    out, unnumbered = [], []
+    for title, c in state.items():
+        if c.get("status") not in ("todo", "ready") or not c.get("id"):
+            continue
+        if c.get("assignee"):
+            continue
+        body = c.get("body") or ""
+        if not body.strip():
+            continue
+        m = _RAW_RE.match(body.strip())
+        text = body.split("\n---\n", 1)[-1].strip() if m else body.strip()
+        if not text:
+            continue
+        (out if m else unnumbered).append(
+            (int(m.group(1)) if m else None, text, c["id"]))
+    out.sort(key=lambda r: r[0])
+    # A card typed from scratch carries no lane number; it takes the next free
+    # slot in the order the board lists it, rather than being silently dropped.
+    used = {lane for lane, _, _ in out}
+    nxt = 1
+    for _, text, cid in unnumbered:
+        while nxt in used:
+            nxt += 1
+        used.add(nxt)
+        out.append((nxt, text, cid))
+    return sorted(out, key=lambda r: r[0])
+
+
+def adopt_and_refile(state):
+    """Write armed ideas back to their files, archive the old run, file a fresh
+    lane set. Returns True when the board was refiled.
+
+    The card is the live idea and the file is the record: writing back keeps git
+    history, the researcher's refined-idea hand-off and the snapshot exactly as
+    they were when the file was the source of truth.
+    """
+    armed = armed_ideas(state)
+    if not armed:
+        return False
+    cfg = file_lanes.read_board(BOARD_DIR)
+    lanes_n = cfg.get("lanes", 1)
+    over = [l for l, _, _ in armed if l > lanes_n]
+    if over:
+        log(f"REFUSING refile: idea(s) for lane(s) {over} but board.json says "
+            f"lanes={lanes_n} — raise it, or move those cards back to Triage")
+        return False
+    for lane, text, _cid in armed:
+        dst = os.path.join(BOARD_DIR, f"lane-{lane}.md")
+        with open(dst, "w") as f:
+            f.write(text.rstrip() + "\n")
+        log(f"adopted idea for lane {lane} -> {os.path.relpath(dst, REPO)}")
+    # Archive everything, including the armed cards: file_ideas re-creates the
+    # triage cards from the files we just wrote, so the loop closes on itself.
+    ids = [c["id"] for c in state.values() if c.get("id")]
+    if ids:
+        kb("archive", *ids)
+        # Verify rather than assume: a survivor of this archive is a card that
+        # will be re-read as a new idea next tick and refile the board again.
+        left = [c["id"] for c in board().values()
+                if c["id"] in set(ids) and c.get("status") != "archived"]
+        log(f"archived {len(ids) - len(left)}/{len(ids)} card(s) from the previous run")
+        if left:
+            log(f"WARNING: {len(left)} card(s) survived the archive: {', '.join(left)} "
+                f"— archive them by hand before arming another idea")
+    key = f"{BOARD}-{datetime.datetime.now():%Y%m%d-%H%M%S}"
+    made = file_lanes.file_board(BOARD, REPO, WORKDIR, lanes_n, key)
+    file_lanes.file_ideas(BOARD, REPO, BOARD_DIR, lanes_n, key)
+    global _ARMED
+    _ARMED = True
+    _OPENED.clear()
+    _TIMED.clear()
+    log(f"refiled {len(made)} cards in {lanes_n} lane(s) — board ready")
+    return True
 
 
 def write_timing_report(lane):
@@ -579,20 +735,33 @@ def main():
     require_manifest()
     acquire_lock()
     t0 = time.time()
-    timeout = 120 * 60
+    # A serving driver is a standing process; a 2h cap would drop the board every
+    # two hours and leave the next idea unattended until cron noticed.
+    timeout = None if SERVE else 120 * 60
     for a in sys.argv:
         if a.startswith("--timeout-min"):
             timeout = float(sys.argv[sys.argv.index(a) + 1]) * 60
+    idle = False
     while True:
         try:
+            # A new idea outranks the current tick: adopt it, refile, and let the
+            # next pass drive the fresh cards.
+            if SERVE and adopt_and_refile(board()):
+                idle = False
+                continue
             if tick():
-                log("ALL GATES COMPLETE — scenario finished")
-                try:
-                    st = board()
-                    write_summary(st)
-                except Exception:
-                    log("WARNING: summary generation failed (non-fatal)")
-                return 0
+                if not idle:
+                    log("ALL GATES COMPLETE — scenario finished")
+                    try:
+                        st = board()
+                        write_summary(st)
+                    except Exception:
+                        log("WARNING: summary generation failed (non-fatal)")
+                if not SERVE:
+                    return 0
+                if not idle:
+                    log("IDLE — waiting for a new idea (promote a Triage card to start)")
+                    idle = True
         except Exception as e:
             import traceback
             log(f"ERROR: {e}\n{traceback.format_exc()}")
@@ -607,7 +776,7 @@ def main():
             notify_deadman(st_now)
         if ONCE:
             return 0
-        if time.time() - t0 > timeout:
+        if timeout is not None and time.time() - t0 > timeout:
             log("timeout — stopping driver")
             return 1
         time.sleep(POLL)
