@@ -1208,12 +1208,50 @@ def require_manifest():
             f"  mission/create-board.sh --board boards/{BOARD}")
 
 
+def reset_attempt_budgets():
+    """A manual driver restart (re)opens every card's attempt budget.
+
+    The dispatcher breaker persists consecutive_failures on the task row, so a
+    card that exhausted max_retries stays over its limit FOREVER after a
+    human restarts the driver — the human's restart IS the "try again"
+    decision, so the budget must reset with the process. The timing side
+    needs no reset: max_runtime is measured per run from its claim time, and
+    every restart opens a fresh claim (dangling runs are reclaimed at
+    connect). Only the two failure fields move; history stays.
+    """
+    import sqlite3
+    hermes_home = os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
+    candidates = [os.path.join(hermes_home, "kanban", "boards", BOARD, "kanban.db")]
+    leaked = os.environ.get("HERMES_HOME")
+    for extra in ([os.path.expanduser("~/.hermes")] if leaked else []):
+        alt = os.path.join(extra, "kanban", "boards", BOARD, "kanban.db")
+        if alt not in candidates:
+            candidates.append(alt)
+    for path in candidates:
+        if not os.path.exists(path):
+            continue
+        try:
+            conn = sqlite3.connect(path, timeout=30)
+            with conn:
+                cur = conn.execute(
+                    "UPDATE tasks SET consecutive_failures = 0, "
+                    "last_failure_error = NULL WHERE status != 'archived' "
+                    "AND (consecutive_failures != 0 OR last_failure_error IS NOT NULL)")
+            conn.close()
+            if cur.rowcount:
+                log(f"attempt budgets reset for {cur.rowcount} card(s)")
+            return
+        except sqlite3.OperationalError as e:
+            log(f"WARNING: attempt-budget reset failed on {path}: {e}")
+
+
 def main():
     if not BOARD:
         raise SystemExit("BOARD=<slug> is required — mission/start-board.sh sets it; "
                          "there is no default board")
     require_manifest()
     acquire_lock()
+    reset_attempt_budgets()
     t0 = time.time()
     write_summary._t0 = t0          # wall_min in the summary is measured from here
     # A serving driver is a standing process; a 2h cap would drop the board every
