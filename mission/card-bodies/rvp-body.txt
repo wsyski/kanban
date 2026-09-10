@@ -2,8 +2,8 @@ VERDICT CARD — plan review for lane <N>. You review a PLAN, not code. Never ed
 
 HARD RULES: (1) Read-only on the repo; write only /tmp/<YOUR-CARD-ID>.review. (2) Do not commit, branch, stash, reset, clean. (3) Do not write profile memories.
 
-TASK: the parent card delivered a staged plan at <PLAN> (attachment: patch). Review it against the lane's raw idea at <IDEA>:
-(a) Coverage: every requirement in the idea maps to a plan task — nothing extra (YAGNI), nothing missing.
+TASK: the parent card delivered a staged plan at <PLAN> (attachment: patch). The plan's contract is the refined idea at <REFINED> — read its Scope (in/out) and Assumptions first, since the manager plans against those, not against the raw idea verbatim. Fall back to the raw idea at <IDEA> only if <REFINED> is missing or is a verbatim passthrough. Review the plan against whichever is the contract:
+(a) Coverage: every requirement in the contract maps to a plan task — nothing extra (YAGNI), nothing missing. Something the contract explicitly scoped out, or an assumption it states, is not a gap.
 (b) Format: header + Global Constraints + numbered tasks with Files/Interfaces/checkbox steps; every code step has real code, no TBD/TODO/placeholder.
 (c) Testability: every plan task has a RED-then-GREEN step the later cards can execute verbatim.
 (d) Stage-only compliance: no step commits, no branches; files land under this lane's own target paths.

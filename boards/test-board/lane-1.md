@@ -1,25 +1,41 @@
-## Idea 1: is_even
+## Idea 1: roman-evaluator
 
-Write `is_even.py` containing exactly one function:
+Create one file, `boards/test-board/work/roman-evaluator.html`: a standalone
+HTML page (no build step, no external dependencies, no server) implementing a
+roman number evaluator. It contains:
 
-    def is_even(n: int) -> bool
+- a text input field for a roman number,
+- two buttons in one row below the input: **Evaluate** and **Reset**,
+- a display area below the button row.
 
-It returns `True` when `n` is even and `False` otherwise. Negative numbers
-follow the same rule: `-2` is even, `-3` is not. Zero is even.
+Behaviour:
 
-Write `test_is_even.py` covering exactly four cases: `0`, `4`, `7`, `-3`.
+- Clicking **Evaluate** reads the input as a roman number and appends a new
+  row to the display area in the form `ROMAN = ARABIC` (for example
+  `XIV = 14`). Each evaluation adds a new row; previous rows are kept.
+- An invalid roman number produces an `alert()` containing an error message
+  and appends no row. Invalid means: empty input, characters outside
+  `MDCLXVI` (case-insensitive), or a malformed numeral (for example `IIII`,
+  `VX`, `IXX`). Subtractive notation (`IV`, `IX`, `XL`, `XC`, `CD`, `CM`)
+  must be handled; `MMMCMXCIX` (3999) is a valid upper bound.
+- Clicking **Reset** clears both the input field and the display area.
+- Pressing Enter in the input field triggers Evaluate (optional but
+  preferred).
 
-Nothing else. No CLI, no package, no `__init__.py`, no configuration file, no
-docstrings beyond one line, no type-checking setup, no extra edge cases, no
-error handling for non-integers. Python 3 and pytest only.
+Nothing else. No styling framework, no JavaScript libraries, no persistence,
+no history beyond the current display rows, no arithmetic input, no
+arabic-to-roman direction. Plain HTML, CSS and vanilla JavaScript in the one
+file.
 
-This idea is deliberately complete and unambiguous: it exists to exercise the
-board end to end in the least possible time, not to pose a problem. If a card
-finds itself with a decision to make, the answer is the smallest thing that
-satisfies the line above.
+This idea is deliberately complete and unambiguous: it exercises the board
+end to end with a small self-contained artefact. If a card finds itself with
+a decision to make, the answer is the smallest thing that satisfies the lines
+above.
 
 ### Done means
 
-- `is_even(0)`, `is_even(4)` are `True`; `is_even(7)`, `is_even(-3)` are `False`.
-- `python3 -m pytest` is green in the board's work directory.
-- Two files exist, and no others.
+- `boards/test-board/work/roman-evaluator.html` exists and is the only file
+  created for this idea.
+- Opening the file directly in a browser (`file://`) works without a server.
+- Evaluating `XIV` appends exactly one row `XIV = 14`; evaluating `IIII`
+  shows an alert and appends nothing; Reset clears input and display.
