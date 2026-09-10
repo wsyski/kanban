@@ -348,7 +348,23 @@ def gate_action(state, title, kind, lane):
         refined = os.path.join(RUN_DIR, "artifacts", f"lane-{lane}", "refined.md")
         if not os.path.exists(refined) or not open(refined).read().strip():
             return f"waiting: no refined idea at {refined}"
-        evidence = f"refined idea present ({os.path.getsize(refined)} bytes)"
+        # Structural evidence: the researcher is the lane's sole factual
+        # authority, so the gate checks the hand-off's REQUIRED sections exist,
+        # not just that the file is non-empty. Missing sections = the researcher
+        # skipped its job; the gate holds and says what is missing.
+        text = open(refined).read()
+        missing = [s for s in ("## Problem", "## Scope", "## Open questions",
+                               "## Assumptions", "## Findings")
+                   if not re.search(rf"^#+\s*{s[3:]}\b", text, re.IGNORECASE | re.MULTILINE)]
+        if missing:
+            return f"waiting: refined idea missing section(s): {', '.join(missing)}"
+        ev = re.search(r"^#+\s*Findings\b(.*)", text, re.IGNORECASE | re.DOTALL | re.MULTILINE)
+        findings = ev.group(1) if ev else ""
+        n_findings = len(re.findall(r"^[-*]\s+\S", findings or "", re.MULTILINE))
+        if n_findings == 0:
+            return "waiting: refined idea Findings section is empty — no environment facts to plan against"
+        evidence = (f"refined idea present, all sections, "
+                    f"{n_findings} finding(s) with evidence ({os.path.getsize(refined)} bytes)")
     elif kind == "gp":
         verdict_txt = latest_verdict(state, lane, "RVp", "Gp")
         if verdict_token(verdict_txt) != "PASS":
@@ -750,6 +766,20 @@ def halt_if_exhausted(st):
         else:
             return None
     _HALTED["reason"] = f"{title}: {reason_txt or 'exhausted (see board)'}"
+    # Distinguish machine-slow from provider-starved: a card whose worker log
+    # shows upstream 4xx/5xx storms timed out because of the provider, not the
+    # task's size — the restart decision changes.
+    provider_hits = 0
+    try:
+        log_path = os.path.join(os.environ.get("HERMES_KANBAN_LOGS_DIR",
+                os.path.join(hermes_kanban_dir(), "boards", BOARD, "logs")),
+                f"{c['id']}.log")
+        if os.path.exists(log_path):
+            provider_hits = open(log_path, errors="replace").read().count("HTTP 4")                 + open(log_path, errors="replace").read().count("HTTP 5")
+    except OSError:
+        pass
+    if provider_hits >= 3:
+        _HALTED["reason"] += f" — provider-starved ({provider_hits} upstream 4xx/5xx in worker log)"
     log(f"BOARD HALTED: {_HALTED['reason']}")
     # The reason must be readable where the human looks first: on the card
     # itself, not only in runs/halt.txt or the driver log.
@@ -896,12 +926,22 @@ def write_summary(state):
             rows[title]["gave_up"] = True
         total += mins
     t0 = getattr(write_summary, "_t0", None) or time.time()
+    wall = (time.time() - t0) / 60
+    # agent_work_min sums EVERY closed run per card, including attempts made by
+    # EARLIER driver processes (post-halt restarts reset budgets but history
+    # stays). wall_min measures only the current process, so summing across
+    # restarts can exceed wall (observed: overhead -2.3). Report both truths:
+    # the unclamped sum (real labor across the run's lifetime) and a clamped
+    # overhead at >= 0 (never negative — that reads as a bug to a human).
+    agent_total = total
+    overhead = max(0.0, wall - agent_total)
     summary = {
         "finished_at": datetime.datetime.now().isoformat(timespec="seconds"),
-        "wall_min": round((time.time() - t0) / 60, 1),
-        "agent_work_min": round(total, 1),
-        "overhead_min": round((time.time() - t0) / 60 - total, 1),
+        "wall_min": round(wall, 1),
+        "agent_work_min": round(agent_total, 1),
+        "overhead_min": round(overhead, 1),
         "cards": rows,
+        "restarts_observed": agent_total > wall,
         "gates": {t.split(":")[0]: (c.get("result") or "")[:200]
                   for t, c in state.items() if re.match(r"^G[ipc]\d+:", t)},
         "lanes_with_ideas": [l for l in range(1, board_lane_count(state) + 1)
@@ -989,6 +1029,16 @@ def armed_ideas(state):
         out.append((nxt, text, cid))
     return sorted(out, key=lambda r: r[0])
 
+
+def hermes_kanban_dir():
+    """The dispatcher's kanban dir (boards/logs/db root), leak-safe like the
+    DB-path probe: a profiled shell leaks HERMES_HOME, so probe both."""
+    home = os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
+    if not os.path.isdir(os.path.join(home, "kanban", "boards")):
+        alt = os.path.expanduser("~/.hermes")
+        if os.path.isdir(os.path.join(alt, "kanban", "boards")):
+            return os.path.join(alt, "kanban")
+    return os.path.join(home, "kanban")
 
 def snapshot_run_evidence(lanes_n):
     """Preserve the finishing run's intermediates + DB snapshot under runs/.

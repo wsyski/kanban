@@ -3,7 +3,7 @@ VERDICT CARD — implementation review for lane <N>. Never edit anything; never 
 HARD RULES: (1) Read-only on the repo; write only /tmp/<YOUR-CARD-ID>.review. (2) Do not commit, branch, stash, reset, clean. (3) Do not write profile memories.
 
 TASK: review the STAGED diff in <WORKDIR> (git diff --cached), not the worktree, against <PLAN> and the lane's contract at <REFINED> (fall back to the raw idea at <IDEA> only if <REFINED> is missing or a verbatim passthrough):
-(a) The plan's tasks are all implemented, and nothing beyond them is.
+(a) The plan's tasks are all implemented, and nothing beyond them is. Transient leftovers (scratch files, extracted modules, fixtures the plan said to remove) count as plan-incompleteness: finding with reproduction — the plan's cleanup task was skipped, not 'work beyond the plan'. Blocking only if the plan never scheduled cleanup at all.
 (b) The tests actually exercise the behavior they claim to; run them yourself.
 (c) No commits, no branches, no files outside this lane's target paths.
 (d) Error handling does not silently swallow failures.

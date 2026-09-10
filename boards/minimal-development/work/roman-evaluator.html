@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Roman Numeral Evaluator</title></head>
+<body>
+  <h1>Roman Numeral Evaluator</h1>
+  <input id="roman-input" type="text" autocomplete="off">
+  <button id="evaluate-btn">Evaluate</button>
+  <button id="reset-btn">Reset</button>
+  <div id="results"></div>
+<script>
+function evaluateRoman(text) {
+  const raw = String(text ?? '');
+  if (raw.length === 0) return { ok: false, reason: 'empty' };
+  if (!/^[MDCLXVI]+$/i.test(raw)) return { ok: false, reason: 'characters' };
+  const s = raw.toUpperCase();
+  // classic full roman grammar, 1-3999: M{0,3}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})
+  if (!/^M{0,3}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})$/.test(s)) {
+    return { ok: false, reason: 'invalid' };
+  }
+  const vals = { I: 1, V: 5, X: 10, L: 50, C: 100, D: 500, M: 1000 };
+  let total = 0;
+  for (let i = 0; i < s.length; i++) {
+    const cur = vals[s[i]], nxt = i + 1 < s.length ? vals[s[i + 1]] : 0;
+    total += cur < nxt ? -cur : cur;
+  }
+  return { ok: true, arabic: total };
+}
+
+const input = document.getElementById('roman-input');
+const results = document.getElementById('results');
+
+function evaluate() {
+  const res = evaluateRoman(input.value);
+  if (!res.ok) { alert('Invalid roman numeral'); return; }
+  const row = document.createElement('div');
+  row.textContent = input.value + ' = ' + res.arabic;
+  results.appendChild(row);
+  input.value = '';
+}
+function reset() { input.value = ''; results.textContent = ''; }
+
+document.getElementById('evaluate-btn').addEventListener('click', evaluate);
+document.getElementById('reset-btn').addEventListener('click', reset);
+input.addEventListener('keydown', (e) => { if (e.key === 'Enter') evaluate(); });
+</script>
+</body>
+</html>

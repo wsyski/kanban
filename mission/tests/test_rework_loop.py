@@ -96,10 +96,10 @@ def test_escalate_comments_once_per_code(monkeypatch):
 # --- _goal_args: workers only, never reviewers or gates ----------------------
 
 def test_goal_args_on_worker_cards_only():
-    assert lanes.goal_args("P") == ["--goal", "--goal-max-turns", "20"]
-    assert lanes.goal_args("I") == ["--goal", "--goal-max-turns", "20"]
-    assert lanes.goal_args("TW") == ["--goal", "--goal-max-turns", "20"]
-    assert lanes.goal_args("C") == ["--goal", "--goal-max-turns", "20"]
+    assert lanes.goal_args("P") == ["--goal", "--goal-max-turns", "40"]
+    assert lanes.goal_args("I") == ["--goal", "--goal-max-turns", "40"]
+    assert lanes.goal_args("TW") == ["--goal", "--goal-max-turns", "40"]
+    assert lanes.goal_args("C") == ["--goal", "--goal-max-turns", "40"]
 
 
 def test_goal_args_never_on_reviewers_or_gates():

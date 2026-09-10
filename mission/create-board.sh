@@ -121,7 +121,8 @@ for k, v in (("integration_tests", cfg.get("integration_tests", False)),
 # A typo in a key is a typo in the board's shape — the value you meant to set
 # silently keeps its default, and you find out from the cards. Same reasoning as
 # lanes.parse_idea rejecting an unknown idea header.
-KNOWN = {"slug", "title", "workdir", "lanes", "integration_tests", "auto_gates"}
+KNOWN = {"slug", "title", "workdir", "lanes", "integration_tests", "auto_gates",
+         "max_runtime", "max_retries"}
 unknown = sorted(set(cfg) - KNOWN)
 if unknown:
     sys.exit(f"board.json: unknown key(s) {unknown} (known: {sorted(KNOWN)})")

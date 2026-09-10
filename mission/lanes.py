@@ -70,11 +70,17 @@ def goal_args(code):
     one-shot worker was never proven to wake). NEVER on a reviewer or gate
     card: a goal-loop judge can push a card whose success case is BLOCKING
     into completing, silently opening the gate it guards.
+
+    40, not the global goal-loop default 20: a verifier-heavy plan/implementation
+    card legitimately needs more turns than a /goal chat loop (observed: a P1
+    attempt died at 20/20 healthy, then finished in 51s with a fresh attempt).
+    agent.max_turns (80) is untouched — goal-mode workers measure against the
+    goal ceiling, not the agent one.
     """
     c = code.lower()
     if c.startswith("g") or c.startswith("rv"):
         return []
-    return ["--goal", "--goal-max-turns", "20"]
+    return ["--goal", "--goal-max-turns", "40"]
 
 
 def lane_cards(lane, integration_tests=True):
