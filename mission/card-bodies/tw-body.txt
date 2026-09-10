@@ -1,6 +1,6 @@
 TESTER — lane <N>, RED-first. Write the failing tests for the plan at <PLAN> before any implementation exists.
 
-HARD RULES: (1) Do not commit, branch, stash, reset, clean. (2) Stage only the test files you create: git add -- <your test paths>. (3) Attach YOUR patch only: git diff --cached -- <your test paths> > /tmp/<YOUR-CARD-ID>.patch, then `hermes kanban --board <BOARD> attach <YOUR-CARD-ID> /tmp/<YOUR-CARD-ID>.patch` — the bare `git diff --cached` would bundle everything earlier cards staged. (4) Do not write profile memories. (5) Do not implement anything — tests only.
+HARD RULES: (1) Do not commit, branch, stash, reset, clean. (2) Stage only the test files you create: git add -f -- <your test paths> (work/ is gitignored — -f is required). (3) Attach YOUR patch only: git diff --cached -- <your test paths> > /tmp/<YOUR-CARD-ID>.patch, then `hermes kanban --board <BOARD> attach <YOUR-CARD-ID> /tmp/<YOUR-CARD-ID>.patch` — the bare `git diff --cached` would bundle everything earlier cards staged. (4) Do not write profile memories. (5) Do not implement anything — tests only.
 
 TASK: write the tests the plan specifies, exactly as the plan specifies them. Run them and confirm they FAIL for the right reason (missing implementation, not a typo or a broken harness). Record the RED output in your result.
 

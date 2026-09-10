@@ -1,6 +1,6 @@
 TESTER — lane <N>, integration tests. The unit level is already GREEN and reviewed.
 
-HARD RULES: (1) Do not commit, branch, stash, reset, clean. (2) Stage only the integration test files you create. (3) Attach YOUR patch only: git diff --cached -- <your integration test paths> > /tmp/<YOUR-CARD-ID>.patch, then `hermes kanban --board <BOARD> attach <YOUR-CARD-ID> /tmp/<YOUR-CARD-ID>.patch` — the bare `git diff --cached` would bundle everything earlier cards staged. (4) Do not write profile memories.
+HARD RULES: (1) Do not commit, branch, stash, reset, clean. (2) Stage only the integration test files you create: git add -f -- <your integration test paths> (work/ is gitignored — -f is required). (3) Attach YOUR patch only: git diff --cached -- <your integration test paths> > /tmp/<YOUR-CARD-ID>.patch, then `hermes kanban --board <BOARD> attach <YOUR-CARD-ID> /tmp/<YOUR-CARD-ID>.patch` — the bare `git diff --cached` would bundle everything earlier cards staged. (4) Do not write profile memories.
 
 TASK: write integration tests that exercise the lane's deliverable end to end, as the plan at <PLAN> describes. Then run the full suite — unit and integration together — and record the totals.
 

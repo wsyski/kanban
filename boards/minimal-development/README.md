@@ -2,7 +2,7 @@
 
 The smallest idea that still travels the whole lane. Its purpose is to exercise
 the machinery — arm an idea, watch the researcher refine it, act on the gates,
-see staged code and a timing report — for as close to nothing as a full run can
+see force-staged code (work/ is scratch, never committed) and a timing report — for as close to nothing as a full run can
 cost. Run it after any change to `mission/`, and before trusting a real board.
 
 Everything about the idea is chosen for speed: one function, four test cases,

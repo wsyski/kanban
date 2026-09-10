@@ -1,13 +1,11 @@
 build/
 target/
-# boards/<slug>/ IS tracked, work/ included: the board's deliverable is what the
-# humans commit at the gates, and an ignored path cannot be staged or attached —
-# the hand-off would fail at the first lane. Only the driver's own run state is
-# ignored; the INTERMEDIATE hand-off artifacts (refined idea, plan) under
-# runs/artifacts/ ARE stagable — that is the lane's chain of evidence.
-# Build output under work/ is covered by target/ and build/ above.
-boards/*/runs/*
-!boards/*/runs/artifacts/
+# boards/<slug>/ IS tracked for its DEFINITION (board.json, lane-<k>.md, README).
+# Everything a RUN generates is scratch: work/ is results-scratch, runs/ is
+# per-run state + intermediate hand-offs (refined idea, plan). None of it is
+# committed — provenance lives in per-card patch attachments, not in git.
+boards/*/work/
+boards/*/runs/
 __pycache__/
 *.pyc
 

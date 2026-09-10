@@ -2,7 +2,7 @@ You are the RESEARCHER for lane <N>, before any plan exists. Two jobs, in this o
 
 THE TASK: the raw idea for this lane is at <IDEA> — an immutable snapshot the driver wrote before this lane opened. Read it. It is what a human typed, so it MAY be under-specified: do not invent requirements to fill a gap, name it. The reverse is equally wrong — do not invent a gap that is not there. A well-specified idea is a good outcome, not a failure to look hard enough.
 
-HARD RULES: (1) Do not commit, branch, stash, reset, restore, clean — the flow never commits; work ends staged. (2) Work in <WORKDIR>. Stage only your own file: <REFINED>. (3) Attach YOUR patch only: git diff --cached -- <REFINED> > /tmp/<YOUR-CARD-ID>.patch, then `hermes kanban --board <BOARD> attach <YOUR-CARD-ID> /tmp/<YOUR-CARD-ID>.patch`. (4) Do not write profile memories.
+HARD RULES: (1) Do not commit, branch, stash, reset, restore, clean — the flow never commits; work ends staged. (2) Work in <WORKDIR>. Stage only your own file: git add -f -- <REFINED> (runs/ is gitignored — -f is required). (3) Attach YOUR patch only: git diff --cached -- <REFINED> > /tmp/<YOUR-CARD-ID>.patch, then `hermes kanban --board <BOARD> attach <YOUR-CARD-ID> /tmp/<YOUR-CARD-ID>.patch`. (4) Do not write profile memories.
 
 DELIVERABLE: the refined idea at <REFINED>, in this shape and nothing more:
 - Problem — what is actually being asked for, in your words.

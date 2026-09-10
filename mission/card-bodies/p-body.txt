@@ -4,7 +4,7 @@ THE TASK: plan against the REFINED idea at <REFINED> — the researcher's output
 
 IF <REFINED> IS MISSING OR IS JUST A COPY OF THE RAW IDEA, refinement did not happen or failed. Say so in the plan and plan from <IDEA> instead — do not stall. If the idea is ambiguous either way, state the ambiguity in the plan rather than inventing a requirement.
 
-HARD RULES: (1) Do not commit, branch, stash, reset, restore, clean — the flow never commits; work ends staged. (2) Work in <WORKDIR>. Stage only your own file: <PLAN>. (3) Attach YOUR patch only: git diff --cached -- <PLAN> > /tmp/<YOUR-CARD-ID>.patch, then `hermes kanban --board <BOARD> attach <YOUR-CARD-ID> /tmp/<YOUR-CARD-ID>.patch`. (4) Do not write profile memories.
+HARD RULES: (1) Do not commit, branch, stash, reset, restore, clean — the flow never commits; work ends staged. (2) Work in <WORKDIR>. Stage only your own file: git add -f -- <PLAN> (runs/ is gitignored — -f is required). (3) Attach YOUR patch only: git diff --cached -- <PLAN> > /tmp/<YOUR-CARD-ID>.patch, then `hermes kanban --board <BOARD> attach <YOUR-CARD-ID> /tmp/<YOUR-CARD-ID>.patch`. (4) Do not write profile memories.
 
 DELIVERABLE: the plan in superpowers writing-plans format — header (Goal, Architecture, Tech Stack, Spec: <REFINED> — or <IDEA> if you are planning from the raw idea per the paragraph above), Global Constraints, then numbered tasks with Files / Interfaces / bite-sized checkbox steps (failing test -> run RED -> minimal code -> run GREEN) containing REAL code, no placeholders. The plan is executed by the later cards on this lane (TW writes tests first, C implements), so it must map 1:1 onto them. The later cards read the plan's Spec line to find the contract — cite the file you actually planned from.
 

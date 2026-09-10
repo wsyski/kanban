@@ -295,15 +295,18 @@ def file_revision(state, lane, round_no, findings, base="P", reviewer_prefix="RV
     log(f"filed {kind} rework round {round_no}: {rev_title} + {rr_title}")
 
 def staged_files():
-    """Paths staged in WORKDIR — the evidence a gate records in place of a SHA.
+    """Paths staged in WORKDIR plus this board's artifact files — the evidence
+    a gate records in place of a SHA.
 
     The pathspec is load-bearing. `git -C <dir> diff --cached` reports the whole
     REPOSITORY, not the directory, so without it a gate would record another
-    board's staged work — or this board's refined idea, which lives beside the
-    work dir, not in it — as this lane's output. Plausible-looking wrong
+    board's staged work as this lane's output. Plausible-looking wrong
     evidence at the one place a human is asked to trust the driver.
+    Intermediates (refined idea, plan) live under runs/artifacts/, not WORKDIR,
+    and gates record them too — so both pathspecs are required.
     """
-    out = git("diff", "--cached", "--name-only", "--", WORKDIR)
+    artifacts = os.path.join(RUN_DIR, "artifacts")
+    out = git("diff", "--cached", "--name-only", "--", WORKDIR, artifacts)
     return [l for l in out.splitlines() if l.strip()]
 
 def runs_result(card_id):
@@ -724,17 +727,17 @@ def halt_if_exhausted(st):
     """
     if _HALTED["reason"]:
         return None
-    # A gave_up run on a NOT-terminal card is the dispatcher breaker's trip —
-    # retries or the runtime ceiling (SIGTERM at max_runtime → timed_out run,
-    # then the breaker's gave_up) exhausted. hits happen before block events
-    # exist, so check runs first, then blocked-card block events.
+    # Exhaustion evidence lives in the card's EVENT history, not its list row:
+    # `list --json` carries no runs, and the breaker appends gave_up/timed_out
+    # events without a `blocked` event. A non-terminal card (not done/archived)
+    # with a gave_up/timed_out event is exactly "the breaker tripped it" — a
+    # done card keeps its history but must not re-halt a later run.
     for title, c in st.items():
-        runs = c.get("runs") or []
-        bad = [r for r in runs
-               if r.get("outcome") in ("gave_up", "timed_out")]
-        if bad and c.get("status") not in ("done", "archived"):
-            reason_txt = str((c.get("last_run") or {}).get("summary")
-                             or bad[-1].get("outcome"))
+        if c.get("status") in ("done", "archived"):
+            continue
+        p = _exhaustion_event(c["id"])
+        if p is not None:
+            reason_txt = str(p.get("reason") or "")
             break
     else:
         for title, c in st.items():
@@ -748,6 +751,12 @@ def halt_if_exhausted(st):
             return None
     _HALTED["reason"] = f"{title}: {reason_txt or 'exhausted (see board)'}"
     log(f"BOARD HALTED: {_HALTED['reason']}")
+    # The reason must be readable where the human looks first: on the card
+    # itself, not only in runs/halt.txt or the driver log.
+    try:
+        kb("comment", c["id"], f"BOARD HALTED: {_HALTED['reason']}")
+    except RuntimeError as e:
+        log(f"WARNING: halt comment failed ({e})")
     notify_deadman(st)
     try:
         with open(os.path.join(RUN_DIR, "halt.txt"), "w") as f:
@@ -759,6 +768,30 @@ def halt_if_exhausted(st):
 
 _HALTED = {"reason": None}   # mutable holder: functions assign inner keys
 _ESCALATED = set()   # gate codes already escalated this driver run
+
+
+EXHAUSTION_KINDS = ("gave_up", "timed_out")
+
+
+def _exhaustion_event(card_id):
+    """Payload of the newest gave_up/timed_out event on a card, or None.
+
+    The dispatcher breaker emits these when a card exhausts max_retries or is
+    SIGTERMed at max_runtime (timed_out; gave_up follows when retries are also
+    spent). Not a block event — the breaker writes its own kind — so the
+    block-event reader cannot see it.
+    """
+    try:
+        ev = json.loads(kb("show", card_id, "--json"))
+    except Exception:
+        return None
+    for e in reversed(ev.get("events", [])):
+        if e.get("kind") in EXHAUSTION_KINDS:
+            payload = e.get("payload") if isinstance(e.get("payload"), dict) else {}
+            return {"reason": str(payload.get("error")
+                                  or payload.get("outcome")
+                                  or e.get("kind"))}
+    return None
 
 
 def _blocked_event_payload(card_id):
@@ -957,6 +990,116 @@ def armed_ideas(state):
     return sorted(out, key=lambda r: r[0])
 
 
+def snapshot_run_evidence(lanes_n):
+    """Preserve the finishing run's intermediates + DB snapshot under runs/.
+
+    Called at refile: the incoming run overwrites runs/artifacts/lane-<k>/
+    (refined.md, plan.md), so first rotate the finished run's copies into
+    runs/artifacts/<run-id>/ and copy the board DB, which the dispatcher will
+    soon archive away from boards/. runs/ then reads self-contained without
+    drilling into ~/.hermes archived DBs.
+    """
+    import shutil
+    run_id = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    out_dir = os.path.join(RUN_DIR, "artifacts", run_id)
+    nothing = True
+    for lane in range(1, lanes_n + 1):
+        lane_dir = os.path.join(RUN_DIR, "artifacts", f"lane-{lane}")
+        if not os.path.isdir(lane_dir):
+            continue
+        for name in sorted(os.listdir(lane_dir)):
+            lp = os.path.join(lane_dir, name)
+            if not os.path.isfile(lp):
+                continue
+            nothing = False
+            dst_dir = os.path.join(out_dir, f"lane-{lane}")
+            os.makedirs(dst_dir, exist_ok=True)
+            dst = os.path.join(dst_dir, name)
+            if os.path.exists(dst):
+                dst = os.path.join(dst_dir, f"{run_id}-{name}")
+            shutil.copy2(lp, dst)
+    # HERMES_HOME leaks a profile dir when run from a profiled shell (observed);
+    # the board DB duplicates under every candidate home — snapshot the one
+    # that actually holds this board's non-empty DB.
+    candidates = [os.path.join(os.path.expanduser("~/.hermes"), "kanban",
+                               "boards", BOARD, "kanban.db")]
+    leaked = os.environ.get("HERMES_HOME")
+    if leaked:
+        candidates.insert(0, os.path.join(leaked, "kanban", "boards", BOARD,
+                                          "kanban.db"))
+    for db in candidates:
+        if os.path.exists(db):
+            nothing = False
+            os.makedirs(out_dir, exist_ok=True)
+            shutil.copy2(db, os.path.join(out_dir, "kanban.db"))
+            break
+    # Per-run card histories + timing snapshots belong to the rotation dir too:
+    # clear_run_state deletes them next, so move (not copy) them now.
+    for name in ("cards", "timing.jsonl"):
+        path = os.path.join(RUN_DIR, name)
+        if not os.path.exists(path):
+            continue
+        nothing = False
+        os.makedirs(out_dir, exist_ok=True)
+        shutil.move(path, os.path.join(out_dir, name))
+    if not nothing:
+        log(f"run evidence archived: {os.path.relpath(out_dir, REPO)}")
+    # Clear the shared staged index of this board's paths so the new run starts
+    # from a clean index: previous run's staged entries (workers stage, the
+    # gate commits nothing) would otherwise be swept into the next run's
+    # per-card patches and gate evidence. Explicit pathspecs — same reason as
+    # reset.sh; never parse `git status --porcelain`. of this board's paths so the new run starts
+    # from a clean index: previous run's staged entries (workers stage, the
+    # gate commits nothing) would otherwise be swept into the next run's
+    # per-card patches and gate evidence. Explicit pathspecs — same reason as
+    # reset.sh; never parse `git status --porcelain`.
+    board_rel = os.path.relpath(BOARD_DIR, REPO)
+    # :(top) prefixes each pathspec to the repo root — git runs -C WORKDIR,
+    # so plain relative paths would resolve under work/. checkout (not
+    # restore --worktree) also discards UNTRACKED worktree copies of staged
+    # files: a refile starts the next lane clean of the previous run's debris.
+    for name in ("work", os.path.join("runs", "artifacts")):
+        pathspec = f":(top){os.path.join(board_rel, name)}"
+        staged = git("diff", "--cached", "--name-only", "--", pathspec)
+        if staged.strip():
+            git("restore", "--staged", "--worktree", "--", pathspec)
+            log(f"cleared staged index for {pathspec} "
+                f"({len(staged.splitlines())} files)")
+
+
+
+def clear_run_state(lanes_n):
+    """Start the incoming run with an EMPTY per-run state under runs/.
+
+    The finished run's evidence was just rotated into runs/artifacts/<run-id>/
+    by snapshot_run_evidence; what remains (per-run state) is now stale:
+    per-card JSONLs keyed by card ids the new run won't reuse, the timing
+    snapshot series, the finished run's halt/deadman notices. Clearing them
+    means every file under runs/ outside artifacts/ belongs to exactly the
+    CURRENT run - no mixing, no stale-reading hazard. driver.log keeps
+    appending (it is the live process's stdout target; truncating it would
+    break the running writer's file handle).
+    """
+    import shutil
+    gone = []
+    for name in ("cards", "snapshots", "timing.jsonl", "run-summary.json",
+                 "halt.txt", "deadman.txt"):
+        path = os.path.join(RUN_DIR, name)
+        if os.path.isdir(path):
+            shutil.rmtree(path)
+            gone.append(name + "/")
+        elif os.path.exists(path):
+            os.remove(path)
+            gone.append(name)
+    if gone:
+        log("cleared previous run state: " + ", ".join(gone))
+    # The fresh timing.jsonl must open with a run-boundary marker (the report
+    # splits run segments on it); the _started flag would otherwise suppress a
+    # second boundary for this long-lived process.
+    if hasattr(record_timing, "_started"):
+        del record_timing._started
+
+
 def adopt_and_refile(state):
     """Write armed ideas back to their files, archive the old run, file a fresh
     lane set. Returns True when the board was refiled.
@@ -980,6 +1123,8 @@ def adopt_and_refile(state):
         with open(dst, "w") as f:
             f.write(text.rstrip() + "\n")
         log(f"adopted idea for lane {lane} -> {os.path.relpath(dst, REPO)}")
+    snapshot_run_evidence(lanes_n)
+    clear_run_state(lanes_n)
     # Archive everything, including the armed cards: file_ideas re-creates the
     # triage cards from the files we just wrote, so the loop closes on itself.
     ids = [c["id"] for c in state.values() if c.get("id")]
