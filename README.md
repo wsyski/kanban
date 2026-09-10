@@ -39,7 +39,7 @@ the board runs them in order. See §3.
 | `git add`/`git diff` always allowed (provenance patches) | card bodies |
 | Lane N+1's root parented to lane N's gate card | `mission/lanes.py` — the board itself is the sequencer |
 | The manager never sees a raw idea | `mission/lanes.py` — `I` is the lane root, `Gi` stands between it and `P` |
-| Every hand-off is a staged file, never a card comment | refined idea `boards/<slug>/lane-<k>-refined.md`, plan, patches |
+| Every hand-off is a staged file, never a card comment | refined idea `boards/<slug>/runs/artifacts/lane-<k>/refined.md`, plan, patches |
 | Every card's evidence | `git diff --cached` patch attached to the card |
 | Verdicts in the result field | reviewer card bodies mandate it |
 
@@ -87,7 +87,7 @@ nothing about it lives under `mission/`:
         README.md             this board's preconditions and toolchain
         board.json            slug, title, workdir, lanes, integration_tests, auto_gates
         lane-1.md             the idea for lane 1 — the one copy, edited in place
-        lane-<k>-refined.md   written by the researcher, edited by a human at Gi
+        runs/artifacts/lane-<k>/refined.md  written by the researcher, edited by a human at Gi
         work/                 EVERYTHING the board generates — code, tests,
                               build files, work/plans/lane-<k>-plan.md
         runs/snapshots/       driver-written, gitignored

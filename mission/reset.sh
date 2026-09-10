@@ -94,7 +94,7 @@ if git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1; then
   # knows nothing about (runs/ is gitignored, so it never has one) fails the
   # WHOLE restore with "pathspec did not match" — silently, under `|| true`.
   staged=$(git -C "$REPO" diff --cached --name-only \
-             -- "$REL/work" "$REL/lane-*-refined.md" 2>/dev/null)
+             -- "$REL/work" "$REL/runs/artifacts/*" 2>/dev/null)
   if [ -n "$staged" ]; then
     printf '%s\n' "$staged" | xargs -r -d '\n' git -C "$REPO" restore --staged --
     echo "unstaged $(printf '%s\n' "$staged" | wc -l) generated path(s) under $REL"

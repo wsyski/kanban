@@ -3,5 +3,7 @@
   "title": "Minimal Development",
   "lanes": 1,
   "integration_tests": false,
-  "auto_gates": true
+  "auto_gates": true,
+  "max_runtime": "4m",
+  "max_retries": 2
 }

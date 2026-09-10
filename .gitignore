@@ -3,8 +3,11 @@ target/
 # boards/<slug>/ IS tracked, work/ included: the board's deliverable is what the
 # humans commit at the gates, and an ignored path cannot be staged or attached —
 # the hand-off would fail at the first lane. Only the driver's own run state is
-# ignored. Build output under work/ is covered by target/ and build/ above.
-boards/*/runs/
+# ignored; the INTERMEDIATE hand-off artifacts (refined idea, plan) under
+# runs/artifacts/ ARE stagable — that is the lane's chain of evidence.
+# Build output under work/ is covered by target/ and build/ above.
+boards/*/runs/*
+!boards/*/runs/artifacts/
 __pycache__/
 *.pyc
 

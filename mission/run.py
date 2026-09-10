@@ -342,7 +342,7 @@ def gate_action(state, title, kind, lane):
         # person reading it, which is the whole point of putting a gate here.
         # So the only evidence the driver can record is that the artifact
         # exists; the judgement is the human's and is never inferred.
-        refined = os.path.join(IDEAS_DIR, f"lane-{lane}-refined.md")
+        refined = os.path.join(RUN_DIR, "artifacts", f"lane-{lane}", "refined.md")
         if not os.path.exists(refined) or not open(refined).read().strip():
             return f"waiting: no refined idea at {refined}"
         evidence = f"refined idea present ({os.path.getsize(refined)} bytes)"
@@ -523,6 +523,8 @@ def open_lane(state, lane):
 def tick():
     st = state = board()
     record_timing(st)
+    if halt_if_exhausted(st):
+        return True          # truthy = board finished/stopped; serve loop halts
     graph = lane_graph(st)
     # 1. handoff promotion: blocked card whose parents are all done -> unblock
     for title, parents, kind, lane in graph:
@@ -645,7 +647,6 @@ def tick():
     return bool(gc and gc["status"] == "done")
 
 
-_ESCALATED = set()   # gate codes already escalated this driver run
 
 
 def file_coder_revision(state, lane, round_no, findings, max_rounds=2):
@@ -693,6 +694,72 @@ def escalate(card_id, code, reason):
     _ESCALATED.add(code)
     kb("comment", card_id, f"ESCALATION: {reason}")
     log(f"ESCALATED: {code} — {reason}")
+    # Escalation = rework rounds exhausted = the lane cannot advance by
+    # itself; halt the board the way a gave_up trip does (same tick).
+    if not _HALTED["reason"]:
+        _HALTED["reason"] = f"{code}: {reason}"
+        log(f"BOARD HALTED: {_HALTED['reason']}")
+        try:
+            with open(os.path.join(RUN_DIR, "halt.txt"), "w") as f:
+                f.write(f"{BOARD} halted: {_HALTED['reason']}\n")
+        except OSError:
+            pass
+
+
+def halt_if_exhausted(st):
+    """Stop the whole driver the moment any card gives up: retries exhausted,
+    max_runtime reached, or a rework loop escalated.
+
+    Three exhaustions leave evidence on a blocked card:
+    (a) retries exhausted — dispatcher breaker trips the card into blocked
+        (needs_input) with a gave_up run;
+    (b) max_runtime reached — the worker is SIGTERMed at its runtime ceiling
+        and the card ends blocked with a timed_out/gave_up run after its
+        retries are spent;
+    (c) rework escalation — escalate() comments ESCALATION on the gate card
+        after the revision rounds burn out.
+    Any of them means the lane cannot advance by itself: driving on would
+    only file more work against a broken step. One halt per run — log,
+    write runs/halt.txt, deadman-notify; the serve loop exits.
+    """
+    if _HALTED["reason"]:
+        return None
+    # A gave_up run on a NOT-terminal card is the dispatcher breaker's trip —
+    # retries or the runtime ceiling (SIGTERM at max_runtime → timed_out run,
+    # then the breaker's gave_up) exhausted. hits happen before block events
+    # exist, so check runs first, then blocked-card block events.
+    for title, c in st.items():
+        runs = c.get("runs") or []
+        bad = [r for r in runs
+               if r.get("outcome") in ("gave_up", "timed_out")]
+        if bad and c.get("status") not in ("done", "archived"):
+            reason_txt = str((c.get("last_run") or {}).get("summary")
+                             or bad[-1].get("outcome"))
+            break
+    else:
+        for title, c in st.items():
+            if c.get("status") != "blocked":
+                continue
+            p = _blocked_event_payload(c["id"])
+            reason_txt = str((p or {}).get("reason") or "")
+            if "ESCALATION" in reason_txt:
+                break
+        else:
+            return None
+    _HALTED["reason"] = f"{title}: {reason_txt or 'exhausted (see board)'}"
+    log(f"BOARD HALTED: {_HALTED['reason']}")
+    notify_deadman(st)
+    try:
+        with open(os.path.join(RUN_DIR, "halt.txt"), "w") as f:
+            f.write(f"{BOARD} halted: {_HALTED['reason']}\n")
+    except OSError:
+        pass
+    return _HALTED["reason"]
+
+
+_HALTED = {"reason": None}   # mutable holder: functions assign inner keys
+_ESCALATED = set()   # gate codes already escalated this driver run
+
 
 def _blocked_event_payload(card_id):
     """Latest block event payload, or None.
@@ -733,7 +800,7 @@ def notify_deadman(state):
              and not is_parked(c)]
     msg = f"kanban-smoke DEADMAN: {len(stuck)} cards awaiting human input: {', '.join(stuck[:6])}"
     log(msg)
-    with open("/tmp/kanban-deadman.txt", "w") as f:
+    with open(os.path.join(RUN_DIR, "deadman.txt"), "w") as f:
         f.write(msg + "\n")
     # Telegram if the manager gateway is configured; else the file suffices
     try:
@@ -927,7 +994,9 @@ def adopt_and_refile(state):
             log(f"WARNING: {len(left)} card(s) survived the archive: {', '.join(left)} "
                 f"— archive them by hand before arming another idea")
     key = f"{BOARD}-{datetime.datetime.now():%Y%m%d-%H%M%S}"
-    made = file_lanes.file_board(BOARD, REPO, WORKDIR, lanes_n, key)
+    made = file_lanes.file_board(BOARD, REPO, WORKDIR, lanes_n, key,
+                                 max_runtime=cfg.get("max_runtime"),
+                                 max_retries=cfg.get("max_retries"))
     file_lanes.file_ideas(BOARD, REPO, BOARD_DIR, lanes_n, key)
     global _ARMED
     _ARMED = True
@@ -1017,6 +1086,10 @@ def main():
                 idle = False
                 continue
             if tick():
+                if _HALTED["reason"]:
+                    log("BOARD HALTED — driver exiting; board state left "
+                        "for human inspection")
+                    return 1
                 if not idle:
                     log("ALL GATES COMPLETE — scenario finished")
                     try:

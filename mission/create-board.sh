@@ -19,8 +19,8 @@ nothing about it lives under mission/:
         board.json          the manifest — see below
         lane-1.md           the idea for lane 1
         lane-2.md           the idea for lane 2
-        lane-<k>-refined.md written by the researcher, edited by a human
-        runs/snapshots/     driver-written, gitignored
+        runs/artifacts/lane-<k>/   intermediates: refined-<k>.md, plan.md
+        runs/snapshots/     driver-written idea snapshots, gitignored
 
     {
       "slug": "my-board",              # optional; defaults to the dir name
@@ -28,8 +28,16 @@ nothing about it lives under mission/:
       "workdir": "/path/to/repo",      # where lanes stage; default: this repo
       "lanes": 2,
       "integration_tests": [false, true],
-      "auto_gates": false
+      "auto_gates": false,
+      "max_runtime": "60m",
+      "max_retries": 1
     }
+
+`max_runtime` and `max_retries` are the per-card worker runtime ceiling
+("45m", "90m", …) and retry budget, applied to every card the board files —
+per card, not shared. Omitted means the defaults, 60m and 1. Cards whose next
+step is a reviewer card get 3 retries regardless of `max_retries` (a REJECT →
+revision cycle is an attempt; failing there is judgment, not a wedged worker).
 
 `integration_tests` and `auto_gates` take one value for every lane, or a list
 with exactly one value per lane — `[false, true]` reads as "lane 1 without
@@ -51,7 +59,7 @@ file as many lanes as you have ideas — an empty lane is 11 parked cards
 nobody reads.
 
 Each lane starts at the RESEARCHER, who turns the raw idea into
-boards/<slug>/lane-<k>-refined.md, and at the idea gate a human accepts that
+runs/artifacts/lane-<k>/refined.md, and at the idea gate a human accepts that
 refinement before the manager plans against it.
 
 The driver NEVER commits. Work is staged; humans commit at gates.
@@ -188,8 +196,12 @@ slug, workdir, lanes_n, board_dir = sys.argv[1:5]
 lanes_n = int(lanes_n)
 repo = os.getcwd()
 key = f"{slug}-{datetime.datetime.now():%Y%m%d-%H%M}"
-made = file_lanes.file_board(slug, repo, workdir, lanes_n, key)
-print(f"filed {len(made)} cards in {lanes_n} lane(s), all parked")
+cfg = file_lanes._board_cfg(board_dir)
+made = file_lanes.file_board(slug, repo, workdir, lanes_n, key,
+                             max_runtime=cfg.get("max_runtime"),
+                             max_retries=cfg.get("max_retries"))
+print(f"filed {len(made)} cards in {lanes_n} lane(s), all parked "
+      f"(max-runtime: {cfg.get('max_runtime') or file_lanes.DEFAULT_MAX_RUNTIME})")
 ideas_filed = file_lanes.file_ideas(slug, repo, board_dir, lanes_n, key)
 if ideas_filed:
     print(f"raw ideas in triage: lane(s) {', '.join(map(str, sorted(ideas_filed)))}")

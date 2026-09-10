@@ -28,7 +28,32 @@ def kb(board, *args):
     return r.stdout
 
 
-def file_board(board, repo, workdir, lane_count, key_prefix):
+DEFAULT_MAX_RUNTIME = "60m"
+DEFAULT_MAX_RETRIES = 1
+# Cards whose work a reviewer judges (the card BEFORE one with a reviewer
+# assignee) default to 3 retries: a REJECT → revision cycle costs an attempt,
+# and failing there is judgment, not a wedged worker — the chain re-enters
+# review after each fix. Everything else failing twice in a row is broken —
+# 1 is right.
+REVIEWER_FEED_MAX_RETRIES = 3
+
+
+def _retries_for(card_id, cards_by_id):
+    """3 when the card's child (next step) is a reviewer card, else 1."""
+    for c in cards_by_id:
+        if c["parent"] == card_id and c["assignee"] == "reviewer":
+            return REVIEWER_FEED_MAX_RETRIES
+    return DEFAULT_MAX_RETRIES
+
+
+def _board_cfg(board_dir):
+    """This board's manifest — max_runtime comes from board.json (`max_runtime`,
+    e.g. "45m" or "90m"); the default applies when omitted."""
+    return read_board(board_dir)
+
+
+def file_board(board, repo, workdir, lane_count, key_prefix, max_runtime=None,
+               max_retries=None):
     """File lane_count full lanes, every card parked. Returns id map.
 
     Every lane is filed IT-complete; pruning happens at unblock time, when the
@@ -53,20 +78,20 @@ def file_board(board, repo, workdir, lane_count, key_prefix):
     # relative --workdir would otherwise leave the filed cards disagreeing
     # with it about which tree they mean
     workdir = os.path.abspath(workdir)
+    runtime = max_runtime or DEFAULT_MAX_RUNTIME
+    max_retries = int(max_retries) if max_retries is not None else DEFAULT_MAX_RETRIES
     made = {}
     for lane in range(1, lane_count + 1):
         cards = lanes.lane_cards(lane, integration_tests=True)
         for card in cards:
             snapshot = f"{repo}/boards/{board}/runs/snapshots/lane-{lane}.md"
-            # The refined idea is a file for the same reason the raw one is:
-            # every hand-off in this flow is a staged artifact, never a comment.
-            # It sits beside the raw idea (not under runs/) because a human edits
-            # it at the gate and may want it committed.
-            refined = f"boards/{board}/lane-{lane}-refined.md"
-            # The plan lives in the WORKDIR, not under mission/: it is board
-            # output like the code it describes. A slugless mission/plans/ path
-            # collided — every board's lane 1 wrote the same file.
-            plan = os.path.join(workdir, "plans", f"lane-{lane}-plan.md")
+            # Every INTERMEDIATE artifact lives under runs/ — work/ holds only
+            # the lane's results (the product code). The refined idea is a file
+            # for the same reason the raw one is: every hand-off in this flow
+            # is a staged artifact, never a comment. A human still edits it at
+            # the gate — in runs/artifacts/lane-<k>/.
+            refined = f"boards/{board}/runs/artifacts/lane-{lane}/refined.md"
+            plan = f"{repo}/boards/{board}/runs/artifacts/lane-{lane}/plan.md"
             body = open(f"{repo}/mission/card-bodies/{card['body']}").read()
             body = (body.replace("<WORKDIR>", workdir)
                         .replace("<BOARD>", board)
@@ -74,9 +99,12 @@ def file_board(board, repo, workdir, lane_count, key_prefix):
                         .replace("<REFINED>", refined)
                         .replace("<PLAN>", plan)
                         .replace("<N>", str(lane)))
+            retries = REVIEWER_FEED_MAX_RETRIES \
+                if _retries_for(card["id"], cards) > DEFAULT_MAX_RETRIES \
+                else max_retries
             args = ["create", card["title"], "--body", body,
                     "--assignee", card["assignee"], "--workspace", f"dir:{workdir}",
-                    "--max-runtime", "60m", "--max-retries", "1",
+                    "--max-runtime", runtime, "--max-retries", str(retries),
                     "--idempotency-key", f"{key_prefix}-{card['id']}",
                     "--created-by", "manager", "--json"]
             if card["skill"]:
