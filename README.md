@@ -181,7 +181,7 @@ including what is still open:
 - **The index is board state.** Nothing here commits, so a previous run's
   staged files outlive its work directory unless `reset.sh` clears them —
   which it now does, for generated paths only.
-- **A lane has run end to end** under the current card graph (test-board,
+- **A lane has run end to end** under the current card graph (minimal-development,
   auto-gates, 2026-09-09): TW, C, RVa, Gc, timing report, run summary, and
   preserved per-card patches all exercised. Lane chaining (`Gc1 → I2`) is the
   one part still waiting for a two-lane run. See `ERRORS.md` O4.
@@ -192,11 +192,11 @@ discretion, or not at all. With gates skipped, nothing is committed.
 
 Three ready-to-run examples ship as board directories:
 
-    mission/create-board.sh --board boards/test-board
+    mission/create-board.sh --board boards/minimal-development
     mission/create-board.sh --board boards/test-driven-development
     mission/create-board.sh --board boards/portfolio-engineering
 
-`test-board` is the cheap one and the place to start: a single Python function and
+`minimal-development` is the cheap one and the place to start: a single Python function and
 its tests, no build tool, no dependencies. Its purpose is to exercise the
 machinery — arm an idea, watch the researcher refine it, act on three gates,
 read the timing report — for almost nothing. Run it after any change to
@@ -208,9 +208,9 @@ tester 2.5m, coder 2.8m, ~46 min wall — and produced the run summary, the
 timing report and the per-card patches. Reset and re-create it after engine
 changes:
 
-    mission/reset.sh --board boards/test-board --yes
-    mission/create-board.sh --board boards/test-board
-    mission/start-board.sh --slug test-board
+    mission/reset.sh --board boards/minimal-development --yes
+    mission/create-board.sh --board boards/minimal-development
+    mission/start-board.sh --slug minimal-development
     # then drag the Triage card to Todo (or set status='todo' on the card row)
 
 `test-driven-development` is two small lanes building a word-count CLI and a
@@ -373,7 +373,7 @@ Crossover points this run proves: plan accepted on the FIRST review (the
 the lane — the new loop filed a coder revision + re-review automatically and
 the lane closed unattended.
 
-**Run history (test-board, one lane, auto-gates):**
+**Run history (minimal-development, one lane, auto-gates):**
 
 | run | finished | agent work | wall | plan RV | code RV |
 |---|---|---|---|---|---|

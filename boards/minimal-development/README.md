@@ -1,4 +1,4 @@
-# test-board — the cheap board
+# minimal-development — the cheap board
 
 The smallest idea that still travels the whole lane. Its purpose is to exercise
 the machinery — arm an idea, watch the researcher refine it, act on the gates,
@@ -12,11 +12,11 @@ so `TI` and `RVc` are archived and `Gc` is re-linked to `RVa`.
 
 Toolchain: Python 3 and pytest. Nothing else.
 
-    mission/create-board.sh --board boards/test-board
-    mission/start-board.sh --slug test-board
+    mission/create-board.sh --board boards/minimal-development
+    mission/start-board.sh --slug minimal-development
 
 Then in the dashboard: drag the Triage card to Todo. A clean start is
-`rm -rf boards/test-board/work`, or just type a new idea into the Triage card
+`rm -rf boards/minimal-development/work`, or just type a new idea into the Triage card
 and drag it again — that archives the previous run for you.
 
 **For a fully unattended smoke run**, set `"auto_gates": true` in `board.json`:

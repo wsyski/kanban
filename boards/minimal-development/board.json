@@ -1,6 +1,6 @@
 {
-  "slug": "test-board",
-  "title": "Test Board",
+  "slug": "minimal-development",
+  "title": "Minimal Development",
   "lanes": 1,
   "integration_tests": false,
   "auto_gates": true

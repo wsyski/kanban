@@ -50,7 +50,7 @@ ships a bare diff.
 ## Fixed (2026-09-09, second round — verified by a full auto-gated E2E run)
 
 The session's headline: **a lane ran end to end for the first time** on
-`boards/test-board` with `auto_gates: true` — `I → Gi → P → RVp → Gp → TW →
+`boards/minimal-development` with `auto_gates: true` — `I → Gi → P → RVp → Gp → TW →
 C → RVa → Gc`, all gates completed, run-summary.json and a timing report
 written, provenance patches preserved. 57 tests pass. O4 is closed.
 
@@ -225,14 +225,14 @@ pruning/linking in `open_lane` remains I-specific and must move with the
 rows on any such removal, but the structural trap (root detection by
 hardcoded kind) is gone. Tested: `test_lane_root_is_positional`.
 
-### O4. End-to-end run — DONE (2026-09-09 19:48, test-board, auto-gates)
+### O4. End-to-end run — DONE (2026-09-09 19:48, minimal-development, auto-gates)
 
 The full lane ran under the current graph: RED-first tester (4 tests staged,
 RED confirmed), coder (GREEN), RVa PASS with re-derivation and mutation
 checks, Gc completed with staged evidence, timing report
 (`timing-report-lane-1-*.txt`), run-summary.json (agent minutes per card),
 and 4 provenance patches preserved in `runs/artifacts/`. Lane chaining
-(`Gc1 → I2`) remains unexercised — test-board has one lane; the next
+(`Gc1 → I2`) remains unexercised — minimal-development has one lane; the next
 two-lane run closes that.
 
 ### O5. Worker bounding — RESOLVED with `--goal` (2026-09-09)

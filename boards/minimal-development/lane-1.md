@@ -1,6 +1,6 @@
 ## Idea 1: roman-evaluator
 
-Create one file, `boards/test-board/work/roman-evaluator.html`: a standalone
+Create one file, `boards/minimal-development/work/roman-evaluator.html`: a standalone
 HTML page (no build step, no external dependencies, no server) implementing a
 roman number evaluator. It contains:
 
@@ -34,7 +34,7 @@ above.
 
 ### Done means
 
-- `boards/test-board/work/roman-evaluator.html` exists and is the only file
+- `boards/minimal-development/work/roman-evaluator.html` exists and is the only file
   created for this idea.
 - Opening the file directly in a browser (`file://`) works without a server.
 - Evaluating `XIV` appends exactly one row `XIV = 14`; evaluating `IIII`
