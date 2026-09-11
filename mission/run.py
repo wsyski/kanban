@@ -468,7 +468,10 @@ def gate_action(state, title, kind, lane):
         verdict_txt = latest_verdict(state, lane, "RVp", "Gp")
         if verdict_token(verdict_txt) != "PASS":
             return f"waiting: plan review verdict = {verdict_txt[:40]!r}"
-        evidence = f"plan staged ({len(staged_files())} files), verdict PASS"
+        # The plan review reads the plan by PATH, so the index count here is
+        # context, not the subject: "plan staged (0 files)" read as a
+        # contradiction in the run summary of 2026-09-11.
+        evidence = f"plan verdict PASS ({len(staged_files())} file(s) staged)"
     else:  # gc
         final = "RVc" if state.get(lanes.card_title("RVc", lane)) else "RVa"
         verdict_txt = latest_verdict(state, lane, "RVa", "Gc", final_code="RVc")

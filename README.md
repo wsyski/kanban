@@ -192,6 +192,13 @@ including what is still open:
 - **Never unlink, archive or re-parent a card while the dispatcher is claiming
   it.** The worker spawns holding the pre-change view and then fights a board
   that has moved. Board surgery is safe on a parked lane.
+- **A commit made while a driver is live is suspect.** The repo is edited live
+  from outside the session (an IDE changelist commit has no pathspec, so it takes
+  whatever the run has staged): on 2026-09-11 one such commit brought two
+  generated `runs/artifacts` files into HEAD and the next deleted `ERRORS.md`,
+  the plan and the spec — 3284 lines, restored from the last good commit
+  (`ERRORS.md` O8). Check `git log --stat` for `boards/*/work|runs` additions and
+  for missing documents; untrack generated paths with `git rm --cached`.
 - **While a driver is live, do not stage, unstage or commit.** The index is
   board state, and the operator is a writer on it: unstaging a lane's files
   mid-run makes the next reviewer REJECT correct work (2026-09-11, run 4 —
