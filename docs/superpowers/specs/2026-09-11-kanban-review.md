@@ -347,3 +347,42 @@ table already drifted from `lanes.LABELS` ("integration tests", "reviewer verdic
 3. Skills/personas: drop brainstorming on I, persona override line, TI integration-testing.
 4. Coder: prune + manual park, on both hosts.
 5. Re-run minimal-development with a trivial idea and a sane ceiling; then the roman page on its own board.
+
+## 10. Addendum (2026-09-11, evening) — profiles re-checked after `ca09514`
+`skill-sync -n` reports `All invariants held.` in all six profiles, no hub-auto copy is enabled, and
+the trims of `ca09514` stand. The six SOUL.md managed blocks match `~/.claude/CLAUDE.md` word for
+word; the only CLAUDE.md content outside that block (Hooks, RTK) is Claude-only, so nothing needs
+porting. Two findings are new; both go into the plan.
+
+### 10.1 Card sessions write skills into their own profile
+Joining each profile's `skills/.curator_ledger.jsonl` with its `state.db` session source: three rows
+with actor `agent` come from kanban sessions — manager patched `hermes-kanban-missions` twice
+(2026-09-06 11:51 and 13:39 UTC), coder patched `kanban-worker` (2026-09-09 10:00 UTC, card
+`t_74b4df2a`). Every later card in that profile loads the patched copy. The bodies forbid profile
+memories only. The background-review writes (actor `curator`) so far all come from desktop sessions.
+That is "not observed on cards", not "cannot happen": the review runs after a turn unless
+`auxiliary.background_review.enabled` is false, and the source has no kanban exemption. A card rule
+cannot reach that fork, so the smoke run's ledger check counts every actor; a hit there makes the
+config switch the fix.
+Fix: the profile-memory hard rule also forbids creating, patching or deleting skills.
+
+### 10.2 The persona override stops at the Profile Role
+The paragraph `ca09514` added lets the card win where it differs from "the Profile Role above". The
+Shared Floor below it, which skill-sync regenerates from `~/.agents/RULES.md`, pulls the other way on
+a card: ask one clarifying question when uncertain (no one answers — the card burns its turns), stage
+and then ask, dispatch subagents for parallel work and helpers for large output, write in the terse
+caveman style (the floor does not limit it to chat), tidy stale skills and config. Backups is the one
+floor rule a card should keep.
+Fix: the same profile-owned paragraph names the floor and keeps Backups as its one exception. Hermes
+scans SOUL.md and drops the whole file on a threat-pattern hit; the new text scans clean.
+
+### 10.3 Reported, not planned (profile hygiene)
+- researcher's `autoresearch` still shares its name with the hub manual skill (§6), and coder holds
+  the same copy; researcher still keeps a disabled `finishing-a-development-branch` copy.
+- Category-bundle `SKILL.md` files appeared at manager `autonomous-ai-agents` and `devops`, and at
+  coder `autonomous-ai-agents`.
+- Background review created `checker-repair` (researcher), `skill-sync-maintenance` (reviewer),
+  `profile-floor-maintenance` and `spring-http-client-tls` (coder), all from desktop sessions.
+- In the 18:00 autocommit (`25d21bf`) trader's five skill symlinks (`finance/stocks`,
+  `research/{blogwatcher,competitor-news-monitor,grounded-citations,rss-feeds}`) became copied
+  directories at `skills/<name>/`.

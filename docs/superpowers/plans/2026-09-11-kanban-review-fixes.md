@@ -10,6 +10,8 @@
 
 **Spec:** docs/superpowers/specs/2026-09-11-kanban-review.md
 
+**Status (2026-09-11):** Task 1 is implemented and was committed by the operator in `8a59f46`, together with this plan and the spec; its task review has not run. Resume there, with a package scoped to Task 1's files (`scripts/review-package` takes no pathspec, and the range also adds this plan and the spec): `{ git log --oneline dbe41ae..8a59f46; git diff --stat dbe41ae 8a59f46 -- mission; git diff -U10 dbe41ae 8a59f46 -- mission; }`. Tasks 2–7 have not started. Added after `8a59f46`: Task 3's profile-memory hard rule covers skills too, Task 5's ERRORS.md gains #23, Task 6 (profiles) is new, and the smoke run is now Task 7.
+
 ## Global Constraints
 
 - Work on the current branch of `/opt/projects/kanban/main/kanban`. No worktree, no branch, no commit, no stash (operator standing rule). Implementers do not stage anything; the controller stages new files at the very end.
@@ -19,7 +21,7 @@
 - The driver never commits. Nothing in this plan changes that.
 - `README.md`'s mermaid block, `mission/flow.mmd` and `mission/flow.drawio` change only by running `python3 mission/render-flow.py`.
 - Match the surrounding code: explanatory docstrings where a decision needs its why, no comments that restate code.
-- `~/.hermes/profiles` is out of scope (done in `ca09514`).
+- `~/.hermes/profiles` is touched only by Task 6, by the controller, and only outside the `skill-sync:response-style` managed blocks. The skill trims and the coder cleanup are done (`ca09514`).
 
 ---
 
@@ -1091,6 +1093,15 @@ def test_worker_bodies_forbid_committing():
         assert "do not commit" in read(body).lower(), body
 
 
+def test_card_sessions_leave_their_profile_alone():
+    """Card sessions patched skills in their own profile (manager's
+    hermes-kanban-missions twice, coder's kanban-worker once) and every later
+    card in that profile loaded the patched copy."""
+    for body in ("i-body.txt", "p-body.txt", "rvp-body.txt", "tw-body.txt", "c-body.txt",
+                 "rva-body.txt", "ti-body.txt", "rvc-body.txt"):
+        assert "Do not write profile memories or create, patch or delete skills" in read(body), body
+
+
 def test_patch_attach_commands_carry_a_pathspec():
     """A bare `git diff --cached > patch` bundles EVERYTHING earlier cards
     staged — the E2E coder patch carried the refined idea, the plan and the
@@ -1203,7 +1214,7 @@ def test_md_section_stops_at_the_next_heading():
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `python3 -m pytest -q mission/tests`
-Expected: FAIL — `_plan-checklist.txt` missing, `REFINED_SECTIONS`/`md_section` missing, bodies lack `DONE WHEN:` / `<PLAN_CHECKLIST>` / the verdict wording, `LOOP_COMPLETE` and `transient` still present, `I` still carries `brainstorming`.
+Expected: FAIL — `_plan-checklist.txt` missing, `REFINED_SECTIONS`/`md_section` missing, bodies lack `DONE WHEN:` / `<PLAN_CHECKLIST>` / the verdict wording / the skills clause, `LOOP_COMPLETE` and `transient` still present, `I` still carries `brainstorming`.
 
 - [ ] **Step 3: `mission/lanes.py`**
 
@@ -1277,7 +1288,7 @@ You are the RESEARCHER for lane <N>. Turn the raw idea into a refined idea a pla
 
 INPUT: the raw idea at <IDEA> — an immutable snapshot of what a human typed. It may be under-specified: name a gap, never fill it with an invented requirement. It may equally be complete: a clear idea restated with its facts verified is the job done.
 
-HARD RULES: (1) Do not commit, branch, stash, reset, restore or clean — work ends staged. (2) Work in <WORKDIR>. Write only <REFINED>; stage it with `git add -f -- <REFINED>` (runs/ is gitignored, so -f is required). (3) Attach your own patch only: `git diff --cached -- <REFINED> > /tmp/<YOUR-CARD-ID>.patch`, then `hermes kanban --board <BOARD> attach <YOUR-CARD-ID> /tmp/<YOUR-CARD-ID>.patch`. (4) Do not write profile memories. (5) Scratch goes to /tmp.
+HARD RULES: (1) Do not commit, branch, stash, reset, restore or clean — work ends staged. (2) Work in <WORKDIR>. Write only <REFINED>; stage it with `git add -f -- <REFINED>` (runs/ is gitignored, so -f is required). (3) Attach your own patch only: `git diff --cached -- <REFINED> > /tmp/<YOUR-CARD-ID>.patch`, then `hermes kanban --board <BOARD> attach <YOUR-CARD-ID> /tmp/<YOUR-CARD-ID>.patch`. (4) Do not write profile memories or create, patch or delete skills — the profile serves every later card. (5) Scratch goes to /tmp.
 
 DELIVERABLE: <REFINED> with exactly these headings, in this order — the idea gate checks them. Keep each short; a section with nothing to say says so in one line.
 
@@ -1312,7 +1323,7 @@ You are the MANAGER writing the implementation plan for lane <N>. You plan; you 
 
 INPUT: the refined idea at <REFINED> — accepted by a human at the idea gate and the lane's contract: Scope, Assumptions, Findings (the only source of environment facts), Verification recipe and Success criteria. Where it differs from the raw idea at <IDEA>, the refined file wins. If <REFINED> says `refinement failed`, plan from <IDEA> instead and say so in the plan.
 
-HARD RULES: (1) Do not commit, branch, stash, reset, restore or clean — work ends staged. (2) Work in <WORKDIR>. Write only <PLAN>; stage it with `git add -f -- <PLAN>` (runs/ is gitignored, so -f is required). (3) Attach your own patch only: `git diff --cached -- <PLAN> > /tmp/<YOUR-CARD-ID>.patch`, then `hermes kanban --board <BOARD> attach <YOUR-CARD-ID> /tmp/<YOUR-CARD-ID>.patch`. (4) Do not write profile memories. (5) PLAN ONLY: create no product file — no deliverable, prototype, fixture or test on disk; code in the plan is text inside <PLAN>. (6) No environment probes: cite Findings by number. A load-bearing fact they lack goes in your result, where the plan gate sees it; if no plan is possible without it, block: `hermes kanban --board <BOARD> block --kind needs_input <YOUR-CARD-ID> "<the missing fact>"`.
+HARD RULES: (1) Do not commit, branch, stash, reset, restore or clean — work ends staged. (2) Work in <WORKDIR>. Write only <PLAN>; stage it with `git add -f -- <PLAN>` (runs/ is gitignored, so -f is required). (3) Attach your own patch only: `git diff --cached -- <PLAN> > /tmp/<YOUR-CARD-ID>.patch`, then `hermes kanban --board <BOARD> attach <YOUR-CARD-ID> /tmp/<YOUR-CARD-ID>.patch`. (4) Do not write profile memories or create, patch or delete skills — the profile serves every later card. (5) PLAN ONLY: create no product file — no deliverable, prototype, fixture or test on disk; code in the plan is text inside <PLAN>. (6) No environment probes: cite Findings by number. A load-bearing fact they lack goes in your result, where the plan gate sees it; if no plan is possible without it, block: `hermes kanban --board <BOARD> block --kind needs_input <YOUR-CARD-ID> "<the missing fact>"`.
 
 FORMAT: the writing-plans format with three changes for this lane — omit the "For agentic workers" header line, write no Commit steps (the cards stage their own work), and skip the Execution Handoff. Tech Stack comes only from tools Findings show present: honour a stated preference when Findings show it available, otherwise take the present alternative they name. The later cards execute your steps verbatim by tag: TW runs every [TW] step, C every [C] step, TI every [TI] step. Plan [TI] steps only when card TI<N> is live on the board (`hermes kanban --board <BOARD> list`) — an archived TI<N> means this lane runs without integration tests.
 
@@ -1334,7 +1345,7 @@ TURN BUDGET: edit the plan in place and never re-read it whole to "check"; build
 ```
 VERDICT CARD — plan review for lane <N>. You review a PLAN, not code. Never edit or stage anything.
 
-HARD RULES: (1) Read-only on the repository; write only /tmp/<YOUR-CARD-ID>.review. (2) Do not commit, branch, stash, reset, restore or clean. (3) Do not write profile memories.
+HARD RULES: (1) Read-only on the repository; write only /tmp/<YOUR-CARD-ID>.review. (2) Do not commit, branch, stash, reset, restore or clean. (3) Do not write profile memories or create, patch or delete skills — the profile serves every later card.
 
 TASK: the parent card staged a plan at <PLAN>. Its contract is the refined idea at <REFINED> — the raw idea at <IDEA> only when <REFINED> says `refinement failed`. Check the plan against this checklist, item by item:
 
@@ -1353,7 +1364,7 @@ Write the full review to /tmp/<YOUR-CARD-ID>.review and attach it: `hermes kanba
 ```
 TESTER — lane <N>, RED-first. Write the failing tests the plan at <PLAN> specifies, before any implementation exists.
 
-HARD RULES: (1) Do not commit, branch, stash, reset, restore or clean — work ends staged. (2) Work in <WORKDIR>. Stage only the test files you create: `git add -f -- <your test paths>` (work/ is gitignored, so -f is required). (3) Attach your own patch only: `git diff --cached -- <your test paths> > /tmp/<YOUR-CARD-ID>.patch`, then `hermes kanban --board <BOARD> attach <YOUR-CARD-ID> /tmp/<YOUR-CARD-ID>.patch` — a bare `git diff --cached` bundles every earlier card's staged files. (4) Do not write profile memories. (5) Tests only — no implementation, not even a stub of it. (6) Scratch goes to /tmp.
+HARD RULES: (1) Do not commit, branch, stash, reset, restore or clean — work ends staged. (2) Work in <WORKDIR>. Stage only the test files you create: `git add -f -- <your test paths>` (work/ is gitignored, so -f is required). (3) Attach your own patch only: `git diff --cached -- <your test paths> > /tmp/<YOUR-CARD-ID>.patch`, then `hermes kanban --board <BOARD> attach <YOUR-CARD-ID> /tmp/<YOUR-CARD-ID>.patch` — a bare `git diff --cached` bundles every earlier card's staged files. (4) Do not write profile memories or create, patch or delete skills — the profile serves every later card. (5) Tests only — no implementation, not even a stub of it. (6) Scratch goes to /tmp.
 
 <TOOLCHAIN_BOUNDARY>
 
@@ -1367,7 +1378,7 @@ DONE WHEN: the tests are staged and RED for the right reason, the patch is attac
 ```
 CODER — lane <N>. Make the staged RED tests GREEN with the implementation the plan at <PLAN> describes.
 
-HARD RULES: (1) Do not commit, branch, stash, reset, restore or clean — work ends staged. (2) Work in <WORKDIR>. Stage only the implementation files you create or change: `git add -f -- <your paths>` (work/ is gitignored, so -f is required). (3) Never edit the tester's tests to make them pass; if a test is wrong, say so in your result and stop. (4) Attach your own patch only: `git diff --cached -- <your paths> > /tmp/<YOUR-CARD-ID>.patch`, then `hermes kanban --board <BOARD> attach <YOUR-CARD-ID> /tmp/<YOUR-CARD-ID>.patch` — a bare `git diff --cached` bundles every earlier card's staged files. (5) Do not write profile memories. (6) Scratch goes to /tmp.
+HARD RULES: (1) Do not commit, branch, stash, reset, restore or clean — work ends staged. (2) Work in <WORKDIR>. Stage only the implementation files you create or change: `git add -f -- <your paths>` (work/ is gitignored, so -f is required). (3) Never edit the tester's tests to make them pass; if a test is wrong, say so in your result and stop. (4) Attach your own patch only: `git diff --cached -- <your paths> > /tmp/<YOUR-CARD-ID>.patch`, then `hermes kanban --board <BOARD> attach <YOUR-CARD-ID> /tmp/<YOUR-CARD-ID>.patch` — a bare `git diff --cached` bundles every earlier card's staged files. (5) Do not write profile memories or create, patch or delete skills — the profile serves every later card. (6) Scratch goes to /tmp.
 
 <TOOLCHAIN_BOUNDARY>
 
@@ -1383,7 +1394,7 @@ ON A REVISION CARD: fix exactly the numbered findings, re-run the whole suite, r
 ```
 VERDICT CARD — implementation review for lane <N>. Never edit or stage anything.
 
-HARD RULES: (1) Read-only on the repository; write only /tmp/<YOUR-CARD-ID>.review. (2) Do not commit, branch, stash, reset, restore or clean. (3) Do not write profile memories.
+HARD RULES: (1) Read-only on the repository; write only /tmp/<YOUR-CARD-ID>.review. (2) Do not commit, branch, stash, reset, restore or clean. (3) Do not write profile memories or create, patch or delete skills — the profile serves every later card.
 
 TASK: review what this lane staged, against the plan at <PLAN> and the lane's contract at <REFINED> — the raw idea at <IDEA> only when <REFINED> says `refinement failed`. This lane's files are <REFINED>, <PLAN> and exactly the files the plan's Files blocks name, under <WORKDIR> or a declared target root (<TARGETS>); anything else in the index belongs to someone else and is not this lane's to judge. Check:
 (a) Every [C] step is implemented, and nothing beyond the plan is.
@@ -1404,7 +1415,7 @@ Write the full review to /tmp/<YOUR-CARD-ID>.review and attach it: `hermes kanba
 ```
 TESTER — lane <N>, integration tests. The unit level is GREEN and reviewed.
 
-HARD RULES: (1) Do not commit, branch, stash, reset, restore or clean — work ends staged. (2) Work in <WORKDIR>. Stage only the integration test files you create: `git add -f -- <your integration test paths>` (work/ is gitignored, so -f is required). (3) Attach your own patch only: `git diff --cached -- <your integration test paths> > /tmp/<YOUR-CARD-ID>.patch`, then `hermes kanban --board <BOARD> attach <YOUR-CARD-ID> /tmp/<YOUR-CARD-ID>.patch`. (4) Do not write profile memories. (5) Scratch goes to /tmp.
+HARD RULES: (1) Do not commit, branch, stash, reset, restore or clean — work ends staged. (2) Work in <WORKDIR>. Stage only the integration test files you create: `git add -f -- <your integration test paths>` (work/ is gitignored, so -f is required). (3) Attach your own patch only: `git diff --cached -- <your integration test paths> > /tmp/<YOUR-CARD-ID>.patch`, then `hermes kanban --board <BOARD> attach <YOUR-CARD-ID> /tmp/<YOUR-CARD-ID>.patch`. (4) Do not write profile memories or create, patch or delete skills — the profile serves every later card. (5) Scratch goes to /tmp.
 
 <TOOLCHAIN_BOUNDARY>
 
@@ -1420,7 +1431,7 @@ This card exists only on lanes that run integration tests; a lane without them a
 ```
 VERDICT CARD — final review for lane <N>, before the code gate. Never edit or stage anything.
 
-HARD RULES: (1) Read-only on the repository; write only /tmp/<YOUR-CARD-ID>.review. (2) Do not commit, branch, stash, reset, restore or clean. (3) Do not write profile memories.
+HARD RULES: (1) Read-only on the repository; write only /tmp/<YOUR-CARD-ID>.review. (2) Do not commit, branch, stash, reset, restore or clean. (3) Do not write profile memories or create, patch or delete skills — the profile serves every later card.
 
 TASK: the last check before the gate, against the plan at <PLAN> and the contract at <REFINED>. This lane's files are <REFINED>, <PLAN> and exactly the files the plan's Files blocks name, under <WORKDIR> or a declared target root (<TARGETS>). Reproduce, do not skim:
 (a) The whole suite — unit and integration — passes from a clean run: run it yourself with the plan's Run commands; never trust an earlier card's totals.
@@ -1989,8 +2000,17 @@ Insert directly above `## Fixed (2026-09-09, third round — the /loop sweep)`:
 ```markdown
 ## Fixed (2026-09-11 — prompts read against the driver)
 
-Found by reading the card bodies against `run.py` and against the last run's
-artifacts. Unit-tested; not yet exercised by a live run.
+Found by reading the card bodies against `run.py`, the last run's artifacts and
+the profiles' skill ledgers. Unit-tested; not yet exercised by a live run.
+
+### 23. Card sessions patched their own profile's skills
+
+The bodies forbade profile memories but not skills. Three kanban sessions
+patched a skill in their own profile (`skills/.curator_ledger.jsonl`, actor
+`agent`): manager's `hermes-kanban-missions` twice on 2026-09-06 and coder's
+`kanban-worker` on 2026-09-09 — and every later card in that profile loaded the
+patched copy. The profile-memory hard rule of every worker and verdict body now
+forbids creating, patching or deleting skills too.
 
 ### 22. Rework rounds were filed with raw placeholders
 
@@ -2108,19 +2128,131 @@ Expected: all PASS; `--check` exits 0 with no `stale:` lines.
 
 ---
 
-### Task 6: Live smoke run (controller, not a subagent)
+### Task 6: Profiles — the card wins over the shared floor too (controller, not a subagent)
+
+The override paragraph `ca09514` added to the five kanban profiles' SOUL.md lets the card win over the Profile Role only. The Shared Floor below it — the `skill-sync`-managed copy of `~/.agents/RULES.md` — still tells a card session to ask a clarifying question when unsure (no one answers, so the card burns its turns), to stage and then ask, to dispatch subagents and helpers, to answer tersely, and to tidy stale skills and config. `~/.hermes/profiles` is live configuration that zeus and apollo share through its autocommit, so the controller runs this task and no test touches it.
+
+**Files:**
+- Modify: `~/.hermes/profiles/{researcher,manager,reviewer,tester,coder}/SOUL.md` — only the paragraph under `## Kanban Cards` that starts `On a kanban card the card body is the entire contract.`. It sits above `## Shared Floor`, outside the `skill-sync:response-style` markers, and is identical in all five files.
+
+**Interfaces:** none. Hermes reads SOUL.md from the profile home each time it builds a session's system prompt (`agent/prompt_builder.py`, `load_soul_md`), so the next card session picks the change up without a gateway restart. It scans the file first and, on a threat-pattern hit, loads `[BLOCKED: SOUL.md …]` instead of the whole file — Step 3 runs that scanner.
+
+- [ ] **Step 1: Back up the five files** (Backups rule)
+
+```bash
+B=/opt/backup/agents/$(date +%Y%m%d-%H%M%S)-soul-card-override
+for p in researcher manager reviewer tester coder; do
+  mkdir -p "$B/$p" && cp -a ~/.hermes/profiles/$p/SOUL.md "$B/$p/"
+done
+echo "$B" | tee /tmp/soul-override-backup
+```
+
+- [ ] **Step 2: Replace the paragraph**
+
+Write this text, exactly, to `/tmp/soul-override.txt`:
+
+```
+On a kanban card the card body is the entire contract. Where it differs from anything else in
+this file — the Profile Role above or the Shared Floor below — the card wins: no branches, no
+commits, no `request-review`, no filing or decomposing cards, no design or plan beyond what the
+card asks, no subagent or helper dispatch the card does not ask for (large output goes to a /tmp
+file instead). Use the skills the card force-loads; do not pull in brainstorming, planning,
+worktree, branch-finishing or plan-execution skills on your own. No one answers in a card
+session: never ask a question or offer a follow-up, stage what the card says without asking
+first, and when a decision is genuinely missing use the `block` the card names. Write the files
+and the result the card asks for in plain full sentences, not in the terse response style.
+Leave the profile as you found it: write no memories, and create, patch or delete no skills and
+no config. One Shared Floor rule still holds on a card — Backups: a copy parked under
+`/opt/backup/agents/` is not a write outside the card's roots. End the card exactly as its body
+says — `complete --result "..."`, or the `block` it names.
+```
+
+Then apply it; the script writes nothing unless every file holds the old paragraph exactly once:
+
+```bash
+python3 - <<'EOF'
+import os, re, sys
+new = open("/tmp/soul-override.txt").read().rstrip("\n")
+pat = re.compile(r"^On a kanban card the card body is the entire contract\..*?the `block` it names\.$",
+                 re.S | re.M)
+paths = [os.path.expanduser(f"~/.hermes/profiles/{p}/SOUL.md")
+         for p in ("researcher", "manager", "reviewer", "tester", "coder")]
+texts = {path: open(path).read() for path in paths}
+for path, text in texts.items():
+    if len(pat.findall(text)) != 1:
+        sys.exit(f"{path}: expected the override paragraph exactly once")
+for path, text in texts.items():
+    open(path, "w").write(pat.sub(lambda m: new, text, count=1))
+    print("updated", path)
+EOF
+```
+
+- [ ] **Step 3: Verify**
+
+```bash
+B=$(cat /tmp/soul-override-backup)
+for p in researcher manager reviewer tester coder; do
+  diff -u "$B/$p/SOUL.md" ~/.hermes/profiles/$p/SOUL.md | grep -c '^@@'
+done
+```
+Expected: `1` five times — one changed hunk per file, the paragraph and nothing else.
+
+```bash
+cd ~/.hermes/hermes-agent && ./venv/bin/python - <<'EOF'
+import os
+from tools.threat_patterns import scan_for_threats
+for p in ("researcher", "manager", "reviewer", "tester", "coder"):
+    text = open(os.path.expanduser(f"~/.hermes/profiles/{p}/SOUL.md")).read()
+    print(p, scan_for_threats(text, scope="context") or "clean")
+EOF
+```
+Expected: `clean` for all five.
+
+```bash
+for p in researcher manager reviewer tester coder; do
+  printf '%-11s ' $p
+  HERMES_HOME=$HOME/.hermes/profiles/$p ~/.agents/manual-skills/skill-sync/scripts/skill-sync.sh -n 2>&1 | tail -1
+done
+```
+Expected: `All invariants held.` for all five. Check 13 compares each managed block with `~/.agents/RULES.md`, so this proves the edit stayed outside the blocks.
+
+- [ ] **Step 4: Leave the commit to the autocommit**
+
+Do not commit or push by hand (operator rule): the profiles repo's autocommit on zeus records the five files, and apollo receives them on its next pull. Report the backup directory from Step 1.
+
+---
+
+### Task 7: Live smoke run (controller, not a subagent)
 
 The project's own rule: run `minimal-development` after any change to `mission/`.
 
 - [ ] **Step 1:** Back up the previous run's evidence: `cp -a boards/minimal-development/runs /opt/backup/agents/<ts>-minimal-development-runs/` (Backups rule), then `mission/reset.sh --board boards/minimal-development --yes`. reset.sh unstages every staged path under `work/` — which restores the index entry Task 4 removed — so repeat `git rm --cached -q boards/minimal-development/work/roman-evaluator.html` afterwards. (The removal sticks only once committed; the controller asks.)
 - [ ] **Step 2:** `mission/create-board.sh --board boards/minimal-development` — expected: `filed 11 cards in 1 lane(s), all parked (max-runtime: 10m)` and `raw ideas in triage: lane(s) 1`.
-- [ ] **Step 3:** `mission/start-board.sh --slug minimal-development --once` in the background; follow `boards/minimal-development/runs/driver.log` until `ALL GATES COMPLETE` or `BOARD HALTED`.
-- [ ] **Step 4:** Read the evidence: RVp1's result (first-attempt PASS is the target), RVa1's result, every card's `runs` (no timeouts expected at 10m), the refined idea's headings and the plan's checklist conformance, `runs/run-summary.json`, the timing report. Report what passed first time and what did not.
+- [ ] **Step 3:** `date -u +%Y-%m-%dT%H:%M:%S > /tmp/smoke-start`, then `mission/start-board.sh --slug minimal-development --once` in the background; follow `boards/minimal-development/runs/driver.log` until `ALL GATES COMPLETE` or `BOARD HALTED`.
+- [ ] **Step 4:** Read the evidence: RVp1's result (first-attempt PASS is the target), RVa1's result, every card's `runs` (no timeouts expected at 10m), the refined idea's headings and the plan's checklist conformance, `runs/run-summary.json`, the timing report. Then check that no card session wrote a skill into its profile — expected: no output:
+
+```bash
+python3 - <<'EOF'
+import json, os, sqlite3
+since = open("/tmp/smoke-start").read().strip()
+for p in ("researcher", "manager", "reviewer", "tester", "coder"):
+    base = os.path.expanduser(f"~/.hermes/profiles/{p}")
+    con = sqlite3.connect(f"file:{base}/state.db?mode=ro", uri=True)
+    source = dict(con.execute("select id, source from sessions"))
+    for line in open(f"{base}/skills/.curator_ledger.jsonl"):
+        r = json.loads(line)
+        if r["ts"] >= since and source.get(r["evidence"].get("session_id")) == "kanban":
+            print(p, r["ts"], r["actor"], r["action"], r["skill"])
+EOF
+```
+
+An `agent` row means a card ignored its hard rule. A `curator` row means Hermes's post-turn background review ran on a card session, which no card rule reaches: report it, with the lever — `auxiliary.background_review.enabled: false` in that profile's config.yaml, which also switches the review off for the profile's desktop sessions (spec §10.1). Report what passed first time and what did not.
 
 ---
 
 ## Self-review
 
-- Spec coverage: §1.1 → Task 3 (checklist, p/rvp); §1.2 → Task 3 (cleanup rule gone, UNVERIFIED legal, lane paths defined, "flag for the idea gate" replaced, [TW]/[C]/[TI] tags); §1.3 → Task 3 (p-body FORMAT); §1.4 → Task 3 (checklist item 8); §1.5 → Task 3; §1.6 → Task 3 (verdict bodies) + Task 2 (full-verdict pointer; review file attached); §2.1–2.4 → Task 3 (bodies own their jobs, brainstorming dropped, Verification recipe, IDs, gate headings); §3.1–3.10 → Tasks 1–2 (render, re-review text, REWORK + race, REJECT parsing, truncation pointer, halt, IT lanes, absolute paths, CLI error, tautology test); §4 → Task 3; §5 → Task 4 (+ `targets` in Task 1); §6 per-card skill change → Task 3, profile work already done; §8 → Task 5; the gateway banner → Task 2 (`cli_error`). Deferred by the spec note: tester `integration-testing`, `--model`, `kanban-worker` move.
-- Placeholder scan: every code and text step carries its full content; Task 4 Step 3's lane-1.md is an exact edit list against a named source file.
+- Spec coverage: §1.1 → Task 3 (checklist, p/rvp); §1.2 → Task 3 (cleanup rule gone, UNVERIFIED legal, lane paths defined, "flag for the idea gate" replaced, [TW]/[C]/[TI] tags); §1.3 → Task 3 (p-body FORMAT); §1.4 → Task 3 (checklist item 8); §1.5 → Task 3; §1.6 → Task 3 (verdict bodies) + Task 2 (full-verdict pointer; review file attached); §2.1–2.4 → Task 3 (bodies own their jobs, brainstorming dropped, Verification recipe, IDs, gate headings); §3.1–3.10 → Tasks 1–2 (render, re-review text, REWORK + race, REJECT parsing, truncation pointer, halt, IT lanes, absolute paths, CLI error, tautology test); §4 → Task 3; §5 → Task 4 (+ `targets` in Task 1); §6 per-card skill change → Task 3, profile work already done; §8 → Task 5; the gateway banner → Task 2 (`cli_error`); §10.1 → Task 3 (skills clause and its test), Task 5 (ERRORS.md #23) and Task 7 Step 4 (ledger check); §10.2 → Task 6. §10.3 is reported, not planned. Deferred by the spec note: tester `integration-testing`, `--model`, `kanban-worker` move.
+- Placeholder scan: every code and text step carries its full content; Task 4 Step 3's lane-1.md is an exact edit list against a named source file; Task 6 Step 3 reads the backup path Step 1 wrote.
+- Dry runs (2026-09-11, read-only on the profiles): Task 6's paragraph through Hermes's `scan_for_threats(scope="context")` for all five would-be SOUL.md files — clean; Task 6 Step 2's script and Step 3's hunk count on scratch copies — five updates, one hunk each; Task 7 Step 4's script with an early start time — exactly the three kanban-session patches #23 cites.
 - Type consistency: `render_body(body_file, *, repo, board, workdir, lane, targets=(), bodies_dir=None)`, `lane_paths(repo, board, lane)`, `latest_verdict_card(state, lane, reviewer_prefix, final_code=None)`, `held_by_verdict(state, kind, lane)`, `rework_rounds(st)`, `file_revision(..., verdict_card_id=None)`, `file_coder_revision(..., verdict_card_id=None)`, `REFINED_SECTIONS`, `md_section(text, name)` — used with the same names and arguments in every task that consumes them.
