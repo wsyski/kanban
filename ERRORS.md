@@ -583,6 +583,18 @@ Not bugs — ways to lose an afternoon.
 
 ---
 
+### O9. A guard whose last command is an `echo` always exits 0
+
+Committing the loop's machinery, the check for staged generated paths was written
+as `(git diff --cached --name-only --diff-filter=A | grep -E 'boards/...' && echo
+REFUSING || echo "(no generated adds)") && git commit …`. `grep` matched, both
+echoes ran, and the subshell's status was the *echo's* — 0 — so the commit ran
+with the two `runs/artifacts` hand-offs staged, which is the failure #26 and O8
+are about. Written out, the guard reads correctly and does nothing at all. Fixed
+by untracking (a new commit, `git rm --cached`, never a rewrite) and by writing
+the guard as `if <test>; then echo …; exit 1; fi`: a guard must end the pipeline
+in its failing branch, never in a message about it.
+
 ### O7. The index is shared with the operator — never touch it during a live run
 
 Run 4's `RVa1` rejected correct work, and its repro is verbatim

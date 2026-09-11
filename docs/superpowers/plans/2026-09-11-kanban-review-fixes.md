@@ -41,6 +41,15 @@ missing step (#35). A fifth run on the fixed code then re-ran the lane clean
 not by another live round, because a lane that passes review first time never
 files one.
 
+The loop that closed the plan: `mission/run-audit.py` audits a finished run and
+exits 0 only at 0 errors AND 0 warnings, so the stopping rule is mechanical, and
+the board is re-run until it reports clean. Run 6 failed the audit on exactly one
+finding — `--once` released the lane root before the driver had prepared the
+lane, so the researcher started nine seconds before the `<IDEA>` snapshot it is
+told to read existed (`ERRORS.md` #36) — and the fix was re-run: runs 7 and 8
+both audit 0/0, 9 cards each, worst card 1.85 min of the 4-minute ceiling,
+chain clean.
+
 The spec's open question for a 2-lane board is answered by item 4's rule: a
 reviewer judges exactly the files the PLAN's Files blocks name, never "whatever is
 staged", so lane 2 inherits lane 1's staged files without judging them.

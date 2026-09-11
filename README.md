@@ -257,10 +257,12 @@ read the timing report — for almost nothing. Run it after any change to
 
 Its `board.json` sets a **4-minute ceiling per card, board-wide**: on an idea
 this small, a card that needs longer is a card doing work the idea does not ask
-for, so the ceiling doubles as a check on the card bodies. The 2026-09-11 run
-(`"auto_gates": true`) finished the lane unattended in 9.9 min wall / 4.7 min of
-agent work — worst card 1.12 min — and produced the run summary, the timing
-report, the per-card patches and a clean document chain.
+for, so the ceiling doubles as a check on the card bodies. Unattended
+(`"auto_gates": true`), the lane finishes in 11-14 min wall / 5-7 min of agent
+work, worst card under 2 min, and produces the run summary, the timing report,
+the per-card patches and a clean document chain — audited, not eyeballed: the
+last two runs of 2026-09-11 (runs 7 and 8) both report 0 errors and 0 warnings
+from `mission/run-audit.py`.
 
 **Audit every run; that is the loop's stopping rule.** `mission/run-audit.py
 --runs boards/<slug>/runs` exits 0 only when a finished run has no errors and no
