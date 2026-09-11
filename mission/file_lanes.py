@@ -48,7 +48,8 @@ FRAGMENTS = {"<PLAN_CHECKLIST>": "_plan-checklist.txt",
 # Every key a board.json may carry. create-board.sh rejects anything else: a typo
 # in a key is a typo in the board's shape.
 BOARD_KEYS = frozenset({"slug", "title", "workdir", "lanes", "integration_tests",
-                        "auto_gates", "max_runtime", "max_retries", "targets"})
+                        "auto_gates", "max_runtime", "max_retries", "targets",
+                        "goal_mode"})
 
 
 def lane_paths(repo, board, lane):
@@ -104,7 +105,7 @@ def _board_cfg(board_dir):
 
 
 def file_board(board, repo, workdir, lane_count, key_prefix, max_runtime=None,
-               max_retries=None, targets=None):
+               max_retries=None, targets=None, goal_mode=None):
     """File lane_count full lanes, every card parked. Returns id map.
 
     Every lane is filed IT-complete; pruning happens at unblock time, when the
@@ -132,6 +133,16 @@ def file_board(board, repo, workdir, lane_count, key_prefix, max_runtime=None,
     workdir = os.path.abspath(workdir)
     runtime = max_runtime or DEFAULT_MAX_RUNTIME
     max_retries = int(max_retries) if max_retries is not None else DEFAULT_MAX_RETRIES
+    # Filing is where a card's goal_mode is decided, so the board's switch has to
+    # be read HERE, not only in run.py's rework/revision path: a manifest that
+    # says `"goal_mode": false` and a card filed with --goal anyway is how
+    # 2026-09-11's run 10 wedged (ERRORS O10).
+    if goal_mode is None:
+        try:
+            goal_mode = bool(_board_cfg(os.path.join(repo, "boards", board))
+                             .get("goal_mode", True))
+        except Exception:
+            goal_mode = True      # unreadable manifest: keep the documented default
     made = {}
     for lane in range(1, lane_count + 1):
         cards = lanes.lane_cards(lane, integration_tests=True)
@@ -148,7 +159,7 @@ def file_board(board, repo, workdir, lane_count, key_prefix, max_runtime=None,
                     "--created-by", "manager", "--json"]
             if card["skill"]:
                 args += ["--skill", card["skill"]]
-            args += lanes.goal_args(card["code"])
+            args += lanes.goal_args(card["code"], enabled=goal_mode)
             cid = json.loads(kb(board, *args))["id"]
             made[card["id"]] = cid
             kb(board, "block", "--kind", "needs_input", cid,

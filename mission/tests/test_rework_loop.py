@@ -101,6 +101,18 @@ def test_escalate_comments_once_per_code(monkeypatch):
 
 # --- _goal_args: workers only, never reviewers or gates ----------------------
 
+def test_a_board_can_turn_the_goal_judge_off(monkeypatch):
+    """A judge that is reachable but failing must not decide a card's fate."""
+    assert lanes.goal_args("C") == ["--goal", "--goal-max-turns", "40"]
+    assert lanes.goal_args("C", enabled=False) == []
+    assert lanes.goal_args("RVp", enabled=False) == []
+    monkeypatch.setattr(run, "board_defaults", lambda: {"goal_mode": False})
+    assert run._goal_args("coder", "C") == []
+    assert run._goal_args("tester", "TW") == []
+    monkeypatch.setattr(run, "board_defaults", lambda: {})
+    assert run._goal_args("coder", "C") == ["--goal", "--goal-max-turns", "40"]
+
+
 def test_goal_args_on_worker_cards_only():
     assert lanes.goal_args("P") == ["--goal", "--goal-max-turns", "40"]
     assert lanes.goal_args("I") == ["--goal", "--goal-max-turns", "40"]

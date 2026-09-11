@@ -1,3 +1,4 @@
+import json
 import sys, os
 import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -67,6 +68,33 @@ def file_two_lanes(monkeypatch, tmp_path):
     repo = os.path.dirname(repo)
     made = file_lanes.file_board("b", repo, str(tmp_path), 2, "k")
     return fake, made
+
+
+def _file_one_lane(monkeypatch, tmp_path, **kwargs):
+    """One lane filed against the REAL repo (the card bodies live there)."""
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    repo = os.path.dirname(repo)
+    fake = FakeKb()
+    monkeypatch.setattr(file_lanes, "kb", fake)
+    file_lanes.file_board("b", repo, str(tmp_path), 1, "k", **kwargs)
+    return fake
+
+
+def test_a_board_can_file_without_the_goal_judge(monkeypatch, tmp_path):
+    """`goal_mode: false` has to reach the FILING path: a card filed with --goal
+    anyway wedges on a judge that is reachable but transport-failing (O10)."""
+    fake = _file_one_lane(monkeypatch, tmp_path, goal_mode=False)
+    assert fake.created()
+    assert not [a for a in fake.created() if "--goal" in a]
+
+
+def test_the_goal_judge_is_the_default_for_a_worker_card(monkeypatch, tmp_path):
+    fake = _file_one_lane(monkeypatch, tmp_path)
+    assert [a for a in fake.created() if "--goal" in a], \
+        "a worker card should still be filed under the goal judge"
+    for a in fake.created():
+        if "--goal" in a:
+            assert "reviewer" not in a and "gate" not in a, a
 
 
 def test_every_card_is_blocked(monkeypatch, tmp_path):

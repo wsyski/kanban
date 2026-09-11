@@ -193,8 +193,14 @@ def plan_review_pass(state, lane):
     return latest_verdict(state, lane, "RVp", "Gp")
 
 def _goal_args(assignee, code):
-    """Delegates to lanes.goal_args — single source of the worker-only rule."""
-    return lanes.goal_args(code)
+    """Delegates to lanes.goal_args — single source of the worker-only rule.
+
+    The board decides whether its workers run under the goal judge: machine
+    without a working auxiliary model sets `"goal_mode": false` in board.json
+    and its cards complete on their own evidence (reviewers and gates still
+    judge the work). See ERRORS O10.
+    """
+    return lanes.goal_args(code, enabled=bool(board_defaults().get("goal_mode", True)))
 
 
 def latest_verdict_card(state, lane, reviewer_prefix, final_code=None):

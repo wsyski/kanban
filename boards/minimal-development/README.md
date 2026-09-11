@@ -22,10 +22,23 @@ longer is a card doing work the idea does not ask for, so the ceiling is also
 the check on the card bodies themselves. A timed-out card is retried, and the
 driver halts only once its retries are spent.
 
+`"goal_mode": false` — this board files no card under the goal judge. The judge
+is a worker self-check that needs a REACHABLE auxiliary model, and on 2026-09-11
+this machine's judge was reachable but failing (`400 MissingSessionID` from the
+OpenCode provider): `judge_goal` reports a transport failure as the verdict
+`continue` — "not done yet" — so every goal-mode card became uncompletable and
+the lane wedged (ERRORS O10). Workers here complete on their own evidence;
+reviewer cards and the gates still judge the work. The switch comes off when the
+harness treats a transport failure as "cannot judge".
+
     mission/reset.sh --board boards/minimal-development --yes   # after engine changes
+    hermes kanban boards rm minimal-development                 # reset archives cards, not the board
     mission/create-board.sh --board boards/minimal-development
     mission/start-board.sh --slug minimal-development           # then drag Triage → Todo
-    mission/start-board.sh --slug minimal-development --once    # or: release lane 1 now
+    mission/start-board.sh --slug minimal-development --once    # or: open lane 1 now
+
+Then audit it — `mission/run-audit.py --runs boards/minimal-development/runs`
+exits 0 only at 0 errors and 0 warnings.
 
 The roman-number page that used to live here is its own board now:
-`boards/roman-evaluator/`.
+`boards/roman-evaluator-js/`.

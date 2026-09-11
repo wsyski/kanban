@@ -68,8 +68,17 @@ def card_title(code, lane):
     return f"{code}{lane}: {LABELS[code]} - lane {lane}"
 
 
-def goal_args(code):
+def goal_args(code, enabled=True):
     """`--goal` flags for a WORKER card at filing time; [] for gates/reviewers.
+
+    ``enabled=False`` — a board whose manifest sets ``"goal_mode": false`` —
+    files none of them. The judge gate is a worker self-check that needs a
+    REACHABLE auxiliary model; a judge that is reachable but failing returns
+    its transport error as the verdict ``continue`` ("not done yet"), which
+    makes every goal-mode card uncompletable and the lane unwinnable (the
+    harness warns of exactly this wedge and guards only the no-client case —
+    ERRORS O10). Nothing else bounds a worker: agent.max_turns is 80 and the
+    card's runtime ceiling still applies.
 
     Turn-based bounding for the cards that produce work (O5: /loop inside a
     one-shot worker was never proven to wake). NEVER on a reviewer or gate
@@ -83,7 +92,7 @@ def goal_args(code):
     goal ceiling, not the agent one.
     """
     c = code.lower()
-    if c.startswith("g") or c.startswith("rv"):
+    if not enabled or c.startswith("g") or c.startswith("rv"):
         return []
     return ["--goal", "--goal-max-turns", "40"]
 

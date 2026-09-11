@@ -212,9 +212,11 @@ repo = os.getcwd()
 key = f"{slug}-{datetime.datetime.now():%Y%m%d-%H%M}"
 cfg = file_lanes._board_cfg(board_dir)
 made = file_lanes.file_board(slug, repo, workdir, lanes_n, key,
-                             max_runtime=cfg.get("max_runtime"),
-                             max_retries=cfg.get("max_retries"),
-                             targets=cfg.get("targets"))
+                         max_runtime=cfg.get("max_runtime"),
+                         max_retries=cfg.get("max_retries"),
+                         targets=cfg.get("targets"),
+                         # filing is where a card's goal_mode is decided
+                         goal_mode=cfg.get("goal_mode"))
 print(f"filed {len(made)} cards in {lanes_n} lane(s), all parked "
       f"(max-runtime: {cfg.get('max_runtime') or file_lanes.DEFAULT_MAX_RUNTIME})")
 ideas_filed = file_lanes.file_ideas(slug, repo, board_dir, lanes_n, key)

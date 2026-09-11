@@ -208,6 +208,13 @@ including what is still open:
   driver sweeps the index every tick, because a staged hand-off is handed to
   every later card's `git diff --cached` and to the operator's `git status`
   (`ERRORS.md` #37). `run-audit.py` fails a run that leaves one staged (E14).
+- **A board can run its workers without the goal judge** (`"goal_mode": false`
+  in `board.json`). The judge is a self-check that needs a REACHABLE auxiliary
+  model, and a reachable-but-failing one reports its transport error as the
+  verdict `continue`, i.e. "not done yet", which no evidence can satisfy — every
+  goal-mode card wedges (`ERRORS.md` O10). The switch has to reach the FILING
+  path (`create-board.sh` → `file_board`), because that is where a card's
+  `goal_mode` is decided.
 - **An assigned card in Triage is an escalation, and it halts the board.** A
   worker that cannot complete returns its card there for a human; the driver used
   to poll forever with a stale log, which reads as a stall (`ERRORS.md` O10).

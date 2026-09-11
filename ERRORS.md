@@ -619,21 +619,41 @@ goal-mode handoff without a verdict. The repeated block was then escalated by
 the board's own loop detector (`block_loop_detected`, `kind: needs_input`,
 `recurrences: 2`) — to `triage`, for a human, which is the design.
 
-Two things were wrong, and only one is the board's. The harness fault is a
-half-finished update: the running gateway serves pre-update modules while the
-on-disk code (and its docs) put `x-opencode-session` on every OpenCode request
-"on every transport plus auxiliary calls"; the CLI itself printed the warning
-into the card log. Remedy is the user's: `hermes gateway restart` (or point
-`auxiliary.goal_judge` at a provider that does not need the header) — a service
-change, so it is not made from here.
+The harness half is a judge that is REACHABLE but failing, and the wedge is in
+how that failure is reported: `judge_goal` returns its transport error as the
+verdict `continue` ("not done yet") with `transport_failed=True`
+(`hermes_cli/goals.py` — "transport errors … fail-open to `continue`"), and both
+gates discard that flag (`tools/kanban_tools.py:374-391`, `hermes_cli/kanban.py:
+807-829`), so a call that never reached the model reads as a real rejection and
+no evidence can satisfy it. `_goal_judge_available()` guards the *no-client*
+case only — its own docstring names the wedge it fails to cover ("indistinguishable
+from 'not done yet' and would wedge every goal_mode worker"). The 400 behind it
+(`MissingSessionID: Request is missing x-opencode-session`) is the provider
+requiring an affinity header that the auxiliary call does not carry here; the
+running gateway also serves pre-update modules, which the CLI prints as a warning
+into every card log. Both are the operator's to fix — `hermes gateway restart`, or
+point `auxiliary.goal_judge` at a provider that needs no header, or treat
+`transport_failed` as "cannot judge" — service and hermes-agent changes, not this
+repo's.
 
-The board's half is that a stalled lane looked exactly like a working one. An
+The board must not depend on that verdict, and now does not: `board.json` may set
+`"goal_mode": false` and its cards are filed without `--goal`, so a worker
+completes on its own evidence while reviewers and gates still judge the work
+(`lanes.goal_args(code, enabled=…)`, read from the manifest at FILING —
+`create-board.sh`/`file_board` — and at rework/revision filing, `run._goal_args`;
+`agent.max_turns` is 80 and the runtime ceiling still bounds every card). The
+first cut of the switch covered only the rework path, so run 10's I1 was filed
+with `--goal` anyway and wedged again — the card's own log caught it ("filed with
+`goal_mode: true` even though board.json now reads false"), which is why the
+filing path is the one that matters.
+
+The other board-side half: a stalled lane looked exactly like a working one. An
 assigned card in Triage is the board's escalation and cannot advance by itself,
 so the driver now halts on it (`escalated_to_triage` → `escalate` → one comment,
 `BOARD HALTED`, `runs/halt.txt`) instead of polling with a stale log. The
 unassigned idea card in Triage — serve mode's normal resting place — is
 explicitly not a halt. `run-audit.py` reports an assigned card left in triage as
-E12. Tests in `test_open_lane.py`.
+E12. Tests in `test_open_lane.py` and `test_file_lanes.py`.
 
 ### O9. A guard whose last command is an `echo` always exits 0
 
