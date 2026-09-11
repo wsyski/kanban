@@ -37,6 +37,55 @@ DEFAULT_MAX_RETRIES = 1
 # 1 is right.
 REVIEWER_FEED_MAX_RETRIES = 3
 
+# Shared text a body includes by name, so a rule two cards must agree on (the
+# plan checklist, the toolchain boundary) is written once. A fragment may use the
+# lane placeholders; it may not include another fragment.
+FRAGMENTS = {"<PLAN_CHECKLIST>": "_plan-checklist.txt",
+             "<TOOLCHAIN_BOUNDARY>": "_toolchain-boundary.txt"}
+
+# Every key a board.json may carry. create-board.sh rejects anything else: a typo
+# in a key is a typo in the board's shape.
+BOARD_KEYS = frozenset({"slug", "title", "workdir", "lanes", "integration_tests",
+                        "auto_gates", "max_runtime", "max_retries", "targets"})
+
+
+def lane_paths(repo, board, lane):
+    """Absolute paths of one lane's hand-off files. Absolute because workers run in
+    the board's workdir, where a repo-relative path resolves somewhere else."""
+    runs = os.path.join(os.path.abspath(repo), "boards", board, "runs")
+    return {"<IDEA>": os.path.join(runs, "snapshots", f"lane-{lane}.md"),
+            "<REFINED>": os.path.join(runs, "artifacts", f"lane-{lane}", "refined.md"),
+            "<PLAN>": os.path.join(runs, "artifacts", f"lane-{lane}", "plan.md")}
+
+
+def targets_text(targets):
+    """The board's extra write roots (board.json `targets`) as a body names them."""
+    if not targets:
+        return "none — every deliverable lives under the work directory"
+    return ", ".join(os.path.expanduser(t) for t in targets)
+
+
+def render_body(body_file, *, repo, board, workdir, lane, targets=(), bodies_dir=None):
+    """A card body with every placeholder resolved.
+
+    The one renderer: board filing and the driver's rework rounds both call it, so
+    a revision card reads the same paths as the card it revises. `<YOUR-CARD-ID>`
+    is left for the worker, who learns its id from the dispatcher.
+    """
+    bodies_dir = bodies_dir or os.path.join(repo, "mission", "card-bodies")
+    with open(os.path.join(bodies_dir, body_file)) as f:
+        text = f.read()
+    for placeholder, name in FRAGMENTS.items():
+        if placeholder in text:
+            with open(os.path.join(bodies_dir, name)) as f:
+                text = text.replace(placeholder, f.read().strip())
+    values = {"<WORKDIR>": os.path.abspath(workdir), "<BOARD>": board,
+              "<N>": str(lane), "<TARGETS>": targets_text(targets),
+              **lane_paths(repo, board, lane)}
+    for placeholder, value in values.items():
+        text = text.replace(placeholder, value)
+    return text
+
 
 def _retries_for(card_id, cards_by_id):
     """3 when the card's child (next step) is a reviewer card, else 1."""
@@ -53,7 +102,7 @@ def _board_cfg(board_dir):
 
 
 def file_board(board, repo, workdir, lane_count, key_prefix, max_runtime=None,
-               max_retries=None):
+               max_retries=None, targets=None):
     """File lane_count full lanes, every card parked. Returns id map.
 
     Every lane is filed IT-complete; pruning happens at unblock time, when the
@@ -71,8 +120,9 @@ def file_board(board, repo, workdir, lane_count, key_prefix, max_runtime=None,
     So the whole board sits parked until the driver activates a lane, and every
     hand-off is the driver's decision rather than the dispatcher's.
 
-    <WORKDIR> is where workers edit and stage; <IDEA> is the absolute path of the
-    lane's immutable snapshot, which the driver writes before unblocking the root.
+    Bodies are rendered by render_body: <WORKDIR> is where workers edit and stage,
+    <IDEA> the lane's immutable snapshot, which the driver writes before
+    unblocking the root, and <TARGETS> the board's extra write roots.
     """
     # absolutize here too: the manifest stores an absolute workdir, and a
     # relative --workdir would otherwise leave the filed cards disagreeing
@@ -84,21 +134,8 @@ def file_board(board, repo, workdir, lane_count, key_prefix, max_runtime=None,
     for lane in range(1, lane_count + 1):
         cards = lanes.lane_cards(lane, integration_tests=True)
         for card in cards:
-            snapshot = f"{repo}/boards/{board}/runs/snapshots/lane-{lane}.md"
-            # Every INTERMEDIATE artifact lives under runs/ — work/ holds only
-            # the lane's results (the product code). The refined idea is a file
-            # for the same reason the raw one is: every hand-off in this flow
-            # is a staged artifact, never a comment. A human still edits it at
-            # the gate — in runs/artifacts/lane-<k>/.
-            refined = f"boards/{board}/runs/artifacts/lane-{lane}/refined.md"
-            plan = f"{repo}/boards/{board}/runs/artifacts/lane-{lane}/plan.md"
-            body = open(f"{repo}/mission/card-bodies/{card['body']}").read()
-            body = (body.replace("<WORKDIR>", workdir)
-                        .replace("<BOARD>", board)
-                        .replace("<IDEA>", snapshot)
-                        .replace("<REFINED>", refined)
-                        .replace("<PLAN>", plan)
-                        .replace("<N>", str(lane)))
+            body = render_body(card["body"], repo=repo, board=board, workdir=workdir,
+                               lane=lane, targets=targets or ())
             retries = REVIEWER_FEED_MAX_RETRIES \
                 if _retries_for(card["id"], cards) > DEFAULT_MAX_RETRIES \
                 else max_retries
@@ -190,7 +227,7 @@ def file_ideas(board, repo, ideas_dir, lane_count, key_prefix):
         text = open(path).read()
         if not text.strip():
             continue
-        snapshot = f"{repo}/boards/{board}/runs/snapshots/lane-{lane}.md"
+        snapshot = lane_paths(repo, board, lane)["<IDEA>"]
         body = (f"RAW IDEA for lane {lane} — human input, not a work card.\n\n"
                 f"{_options_line(repo, board, lane, text)}\n"
                 f"Source: {os.path.join(ideas_dir, f'lane-{lane}.md')}\n"

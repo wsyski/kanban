@@ -19,7 +19,7 @@ nothing about it lives under mission/:
         board.json          the manifest — see below
         lane-1.md           the idea for lane 1
         lane-2.md           the idea for lane 2
-        runs/artifacts/lane-<k>/   intermediates: refined-<k>.md, plan.md
+        runs/artifacts/lane-<k>/   intermediates: refined.md, plan.md
         runs/snapshots/     driver-written idea snapshots, gitignored
 
     {
@@ -30,7 +30,8 @@ nothing about it lives under mission/:
       "integration_tests": [false, true],
       "auto_gates": false,
       "max_runtime": "60m",
-      "max_retries": 1
+      "max_retries": 1,
+      "targets": ["~/.hermes/profiles/trader"],   # optional: write roots outside workdir
     }
 
 `max_runtime` and `max_retries` are the per-card worker runtime ceiling
@@ -38,6 +39,10 @@ nothing about it lives under mission/:
 per card, not shared. Omitted means the defaults, 60m and 1. Cards whose next
 step is a reviewer card get 3 retries regardless of `max_retries` (a REJECT →
 revision cycle is an attempt; failing there is judgment, not a wedged worker).
+
+`targets` lists extra write roots outside the workdir — a lane that installs
+into a Hermes profile, say. Cards may write there and reviewers count files
+there as the lane's; git never runs in a target root.
 
 `integration_tests` and `auto_gates` take one value for every lane, or a list
 with exactly one value per lane — `[false, true]` reads as "lane 1 without
@@ -97,6 +102,8 @@ fi
 CFG=$(python3 - "$REPO" "$BOARD_DIR" "$SLUG" "$TITLE" <<'PY'
 import json, os, shlex, sys
 repo, board_dir, slug, title = sys.argv[1:5]
+sys.path.insert(0, os.path.join(repo, "mission"))
+from file_lanes import BOARD_KEYS
 cfg = {}
 if board_dir:
     with open(os.path.join(board_dir, "board.json")) as f:
@@ -121,11 +128,12 @@ for k, v in (("integration_tests", cfg.get("integration_tests", False)),
 # A typo in a key is a typo in the board's shape — the value you meant to set
 # silently keeps its default, and you find out from the cards. Same reasoning as
 # lanes.parse_idea rejecting an unknown idea header.
-KNOWN = {"slug", "title", "workdir", "lanes", "integration_tests", "auto_gates",
-         "max_runtime", "max_retries"}
-unknown = sorted(set(cfg) - KNOWN)
+unknown = sorted(set(cfg) - BOARD_KEYS)
 if unknown:
-    sys.exit(f"board.json: unknown key(s) {unknown} (known: {sorted(KNOWN)})")
+    sys.exit(f"board.json: unknown key(s) {unknown} (known: {sorted(BOARD_KEYS)})")
+targets = cfg.get("targets", [])
+if not isinstance(targets, list) or not all(isinstance(t, str) and t for t in targets):
+    sys.exit("board.json: 'targets' must be a list of paths")
 
 # An idea file above the lane count is filed by nothing and reported by nothing.
 # A silently dropped lane is exactly the failure the array-length check above
@@ -180,7 +188,7 @@ fi
 hermes kanban boards create "$SLUG" --name "$TITLE" --default-workdir "$WORKDIR"   # flags verified: hermes kanban boards create --help
 echo "board '$SLUG' created (workdir $WORKDIR)"
 
-mkdir -p "$BOARD_DIR/runs/snapshots" "$WORKDIR/plans"
+mkdir -p "$BOARD_DIR/runs/snapshots" "$WORKDIR"
 if [ ! -f "$BOARD_DIR/board.json" ]; then
   printf '{\n  "title": %s,\n  "lanes": %s,\n  "integration_tests": false,\n  "auto_gates": false\n}\n' \
     "\"$TITLE\"" "$LANES" > "$BOARD_DIR/board.json"
@@ -200,7 +208,8 @@ key = f"{slug}-{datetime.datetime.now():%Y%m%d-%H%M}"
 cfg = file_lanes._board_cfg(board_dir)
 made = file_lanes.file_board(slug, repo, workdir, lanes_n, key,
                              max_runtime=cfg.get("max_runtime"),
-                             max_retries=cfg.get("max_retries"))
+                             max_retries=cfg.get("max_retries"),
+                             targets=cfg.get("targets"))
 print(f"filed {len(made)} cards in {lanes_n} lane(s), all parked "
       f"(max-runtime: {cfg.get('max_runtime') or file_lanes.DEFAULT_MAX_RUNTIME})")
 ideas_filed = file_lanes.file_ideas(slug, repo, board_dir, lanes_n, key)

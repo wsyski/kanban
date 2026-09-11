@@ -172,3 +172,11 @@ def test_idea_cards_have_no_edges(monkeypatch, tmp_path):
     file_lanes.file_ideas("b", "/repo", str(tmp_path), 1, "k")
     assert fake.links() == []
     assert all("--parent" not in a for a in fake.created())
+
+
+def test_filed_bodies_carry_no_raw_placeholders(monkeypatch, tmp_path):
+    import re
+    fake, _ = file_two_lanes(monkeypatch, tmp_path)
+    for a in fake.created():
+        body = a[a.index("--body") + 1]
+        assert not re.findall(r"<[A-Z_]+>", body), a[1]

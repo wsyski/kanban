@@ -245,6 +245,24 @@ def code_rework_hold(state, lane):
     return False
 
 
+def _round_settings(lane):
+    """(max_runtime, render) for a rework round: the board's own ceiling, and bodies
+    rendered exactly as board filing renders them."""
+    cfg = manifest()
+    runtime = cfg.get("max_runtime") or file_lanes.DEFAULT_MAX_RUNTIME
+    targets = cfg.get("targets") or ()
+
+    def render(body_file):
+        return file_lanes.render_body(body_file, repo=REPO, board=BOARD, workdir=WORKDIR,
+                                      lane=lane, targets=targets)
+    return runtime, render
+
+
+def _skill_args(code):
+    skill = lanes.skill_for(code)
+    return ["--skill", skill] if skill else []
+
+
 def file_revision(state, lane, round_no, findings, base="P", reviewer_prefix="RVp",
                   gate_code="Gp", max_rounds=3):
     """File one rework round: a revision card + its re-gate, linked to the gate.
@@ -252,7 +270,8 @@ def file_revision(state, lane, round_no, findings, base="P", reviewer_prefix="RV
     Serves BOTH loops (ERRORS.md O2): the plan loop (base P, reviewer RVp,
     gate Gp) and the idea loop (base I, re-gate Gi itself). The idea loop's
     'reviewer' is the re-gate — no separate reviewer sits before an idea
-    gate, by design.
+    gate, by design. Both cards are rendered like the cards they repeat: same
+    paths, same workdir, same ceiling, same skill.
     """
     kind = "plan" if base == "P" else "idea"
     if kind == "plan":
@@ -260,31 +279,43 @@ def file_revision(state, lane, round_no, findings, base="P", reviewer_prefix="RV
         rev_body_file, rev_assignee = "p-body.txt", "manager"
         rr_title = f"RVp{lane}-r{round_no + 1}: plan review round {round_no + 1} - lane {lane}"
         rr_body_file, rr_assignee = "rvp-body.txt", "reviewer"
+        sender = "The plan review"
     else:
         rev_title = f"I{lane}-rev-{round_no}: idea refinement round {round_no} - lane {lane}"
         rev_body_file, rev_assignee = "i-body.txt", "researcher"
         rr_title = f"Gi{lane}-r{round_no + 1}: idea re-gate round {round_no + 1} - lane {lane}"
         rr_body_file, rr_assignee = "gi-body.txt", "human-gate"
+        sender = "The idea gate"
     if title_of_prefix(state, rev_title)[0]:
         return  # already filed
     gate_id = card_id(state, lanes.card_title(gate_code, lane))
+    runtime, render = _round_settings(lane)
 
-    rbody = open(f"{REPO}/mission/card-bodies/{rev_body_file}").read()
+    rbody = render(rev_body_file)
     rbody += (f"\nREVISION ROUND {round_no} of {max_rounds} (max {max_rounds}, then human "
-              f"escalation).\n\nThe gate sent this back. Address EXACTLY:\n{findings}\n"
+              f"escalation).\n\n{sender} sent this back. Address EXACTLY:\n{findings}\n"
               f"Fix only these, re-stage, re-attach, complete with a change summary.\n")
     args = ["create", rev_title, "--body", rbody, "--assignee", rev_assignee,
-            "--workspace", f"dir:{REPO}", "--max-runtime", "60m", "--max-retries", "1",
+            "--workspace", f"dir:{WORKDIR}", "--max-runtime", runtime, "--max-retries", "1",
             "--idempotency-key", f"{BOARD}-rev-{base}{lane}-{round_no}",
-            "--created-by", "manager", "--json"] + _goal_args(rev_assignee, base)
+            "--created-by", "manager", "--json"] + _skill_args(base) + _goal_args(rev_assignee, base)
     rev_id = json.loads(kb(*args))["id"]
 
-    rrbody = open(f"{REPO}/mission/card-bodies/{rr_body_file}").read()
-    rrbody += (f"\nRE-GATE ROUND {round_no + 1} of {max_rounds + 1}. A previous gate-holder "
-               f"sent the work back with the findings on the parent revision card. Verify "
-               f"they are addressed, then complete this card exactly as a gate-holder would.\n")
+    rrbody = render(rr_body_file)
+    if kind == "plan":
+        # A re-review is a verdict card like the review it repeats: told to act
+        # "as a gate-holder", it could complete without PASS/REJECT and hold Gp
+        # forever with no further round filed.
+        rrbody += (f"\nRE-REVIEW ROUND {round_no + 1} of {max_rounds + 1}. The plan was revised "
+                   f"after a REJECT; the findings are on the parent revision card. Re-check "
+                   f"EVERY checklist item against the revised plan, not only the fixed ones, "
+                   f"and put the verdict first in the result field: PASS: or REJECT:.\n")
+    else:
+        rrbody += (f"\nRE-GATE ROUND {round_no + 1} of {max_rounds + 1}. A previous gate-holder "
+                   f"sent the work back with the findings on the parent revision card. Verify "
+                   f"they are addressed, then complete this card exactly as a gate-holder would.\n")
     rr_args = ["create", rr_title, "--body", rrbody, "--assignee", rr_assignee,
-               "--parent", rev_id, "--workspace", f"dir:{REPO}", "--max-runtime", "45m",
+               "--parent", rev_id, "--workspace", f"dir:{WORKDIR}", "--max-runtime", runtime,
                "--max-retries", "1", "--idempotency-key",
                f"{BOARD}-rr-{base}{lane}-r{round_no + 1}", "--created-by", "manager", "--json"]
     rr_id = json.loads(kb(*rr_args))["id"]
@@ -676,22 +707,23 @@ def file_coder_revision(state, lane, round_no, findings, max_rounds=2):
     if title_of_prefix(state, rev_title)[0]:
         return  # already filed
     gate_id = card_id(state, lanes.card_title("Gc", lane))
-    rbody = open(f"{REPO}/mission/card-bodies/c-body.txt").read()
+    runtime, render = _round_settings(lane)
+    rbody = render("c-body.txt")
     rbody += (f"\nREVISION ROUND {round_no} of {max_rounds} (max {max_rounds}, then human "
-              f"escalation).\n\nThe code gate returned the work. Address EXACTLY:\n{findings}\n"
+              f"escalation).\n\nThe review returned the work. Address EXACTLY:\n{findings}\n"
               f"Fix only these, re-stage your files, re-attach, complete with a change summary.\n")
     args = ["create", rev_title, "--body", rbody, "--assignee", "coder",
-            "--workspace", f"dir:{REPO}", "--max-runtime", "60m", "--max-retries", "1",
+            "--workspace", f"dir:{WORKDIR}", "--max-runtime", runtime, "--max-retries", "1",
             "--idempotency-key", f"{BOARD}-rev-C{lane}-{round_no}",
-            "--created-by", "manager", "--json"] + _goal_args("coder", "C")
+            "--created-by", "manager", "--json"] + _skill_args("C") + _goal_args("coder", "C")
     rev_id = json.loads(kb(*args))["id"]
-    rrbody = open(f"{REPO}/mission/card-bodies/rva-body.txt").read()
-    rrbody += (f"\nRE-REVIEW ROUND {round_no + 1} of {max_rounds + 1}. The round-1 REJECT "
-               f"left findings on the parent revision card. Re-derive every (a)-(d) check "
-               f"against the CURRENT staged index, run the suite yourself, verdict in the "
-               f"result field.\n")
+    rrbody = render("rva-body.txt")
+    rrbody += (f"\nRE-REVIEW ROUND {round_no + 1} of {max_rounds + 1}. The previous review's "
+               f"REJECT left findings on the parent revision card. Re-derive every check in this "
+               f"body against the CURRENT staged index, run the suite yourself, and put the "
+               f"verdict first in the result field: PASS: or REJECT:.\n")
     rr_args = ["create", rr_title, "--body", rrbody, "--assignee", "reviewer",
-               "--parent", rev_id, "--workspace", f"dir:{REPO}", "--max-runtime", "45m",
+               "--parent", rev_id, "--workspace", f"dir:{WORKDIR}", "--max-runtime", runtime,
                "--max-retries", "1", "--idempotency-key",
                f"{BOARD}-rr-C{lane}-r{round_no + 1}", "--created-by", "manager", "--json"]
     rr_id = json.loads(kb(*rr_args))["id"]
@@ -1191,7 +1223,8 @@ def adopt_and_refile(state):
     key = f"{BOARD}-{datetime.datetime.now():%Y%m%d-%H%M%S}"
     made = file_lanes.file_board(BOARD, REPO, WORKDIR, lanes_n, key,
                                  max_runtime=cfg.get("max_runtime"),
-                                 max_retries=cfg.get("max_retries"))
+                                 max_retries=cfg.get("max_retries"),
+                                 targets=cfg.get("targets"))
     file_lanes.file_ideas(BOARD, REPO, BOARD_DIR, lanes_n, key)
     global _ARMED
     _ARMED = True

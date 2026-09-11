@@ -83,6 +83,14 @@ def goal_args(code):
     return ["--goal", "--goal-max-turns", "40"]
 
 
+def skill_for(code):
+    """The skill a card of this code is filed with — rework rounds reuse it."""
+    for row in LANE_CARDS:
+        if row[0] == code:
+            return row[4]
+    raise KeyError(code)
+
+
 def lane_cards(lane, integration_tests=True):
     """The card graph for one lane, in filing order (parents before children)."""
     rows = [r for r in LANE_CARDS

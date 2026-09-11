@@ -1,4 +1,10 @@
-import sys, os
+import json
+import os
+import re
+import sys
+
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import lanes
 import run
@@ -154,3 +160,66 @@ def test_verdict_token_finds_the_first_token_anywhere():
     assert run.verdict_token("PASS") == "PASS"
     assert run.verdict_token("") == ""
     assert run.verdict_token("no verdict here") == ""
+
+
+# --- rework rounds are rendered like the cards they repeat ------------------
+
+def _capture_kb(monkeypatch):
+    calls = []
+
+    def fake(*a, capture=True):
+        calls.append(a)
+        return json.dumps({"id": f"t_{len(calls)}"})
+
+    monkeypatch.setattr(run, "kb", fake)
+    return calls
+
+
+def _arg(call, flag):
+    return call[call.index(flag) + 1]
+
+
+def _revision_state():
+    return {lanes.card_title(c, 1): {"id": f"id-{c}", "status": "blocked"}
+            for c in ("Gi", "Gp", "Gc")}
+
+
+@pytest.fixture
+def board_env(monkeypatch, tmp_path):
+    monkeypatch.setattr(run, "BOARD", "b")
+    monkeypatch.setattr(run, "WORKDIR", str(tmp_path / "work"))
+    monkeypatch.setattr(run, "manifest", lambda: {"max_runtime": "7m", "targets": []})
+    return tmp_path
+
+
+def test_revision_rounds_are_rendered_like_filed_cards(monkeypatch, board_env):
+    calls = _capture_kb(monkeypatch)
+    run.file_revision(_revision_state(), 1, 1, "1. fix the header", base="P",
+                      reviewer_prefix="RVp", gate_code="Gp")
+    run.file_coder_revision(_revision_state(), 1, 1, "1. fix the parser")
+    created = [c for c in calls if c[0] == "create"]
+    assert len(created) == 4
+    for c in created:
+        assert not re.findall(r"<[A-Z_]+>", _arg(c, "--body")), c[1]
+        assert _arg(c, "--workspace") == f"dir:{run.WORKDIR}"
+        assert _arg(c, "--max-runtime") == "7m"
+    rev_plan = next(c for c in created if c[1].startswith("P1-rev-1"))
+    assert _arg(rev_plan, "--skill") == "writing-plans"
+
+
+def test_plan_re_review_is_filed_as_a_verdict_card_not_a_gate(monkeypatch, board_env):
+    calls = _capture_kb(monkeypatch)
+    run.file_revision(_revision_state(), 1, 1, "1. x", base="P",
+                      reviewer_prefix="RVp", gate_code="Gp")
+    rr = next(c for c in calls if c[0] == "create" and c[1].startswith("RVp1-r2"))
+    body = _arg(rr, "--body")
+    assert "as a gate-holder would" not in body
+    assert "PASS: or REJECT:" in body
+
+
+def test_idea_re_gate_keeps_the_gate_holder_instructions(monkeypatch, board_env):
+    calls = _capture_kb(monkeypatch)
+    run.file_revision(_revision_state(), 1, 1, "answers", base="I",
+                      reviewer_prefix="Gi", gate_code="Gi", max_rounds=2)
+    rr = next(c for c in calls if c[0] == "create" and c[1].startswith("Gi1-r2"))
+    assert "as a gate-holder would" in _arg(rr, "--body")

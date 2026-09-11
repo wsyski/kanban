@@ -52,3 +52,8 @@ def test_declared_parent_codes_match_generated_chain():
     for c in cards:
         expected = declared[c["code"]]
         assert c["parent"] == (f"{expected}1" if expected else None)
+
+
+def test_skill_for_reads_the_lane_table():
+    assert lanes.skill_for("P") == "writing-plans"
+    assert lanes.skill_for("C") is None
