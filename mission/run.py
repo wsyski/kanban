@@ -852,9 +852,10 @@ def open_lanes(state):
 
     open_lane() used to run only from the root card's promotion branch, and that
     branch is skipped for any card that is not `blocked` — so a root someone else
-    had already unblocked never opened its lane. `mission/start-board.sh --once`
-    unblocks the root itself, so on an `integration_tests: false` board TI and
-    RVc stayed live and RAN (live, 2026-09-11), and no snapshot was refreshed.
+    had already unblocked never opened its lane. `start-board.sh --once` used to
+    unblock the root itself (and a human can unblock one by hand), so on an
+    `integration_tests: false` board TI and RVc stayed live and RAN (live,
+    2026-09-11), and no snapshot was refreshed.
     Opening here also means the lane's stale outputs are cleared on every entry
     path — a human continuing from a dirty state included (ERRORS #31).
     Returns True when the board changed, so the caller re-reads it.

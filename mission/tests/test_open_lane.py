@@ -40,6 +40,29 @@ def _board_env(monkeypatch, tmp_path, calls, it=False):
     run._WAITING.clear()
 
 
+def test_the_lane_is_prepared_before_its_root_is_released(monkeypatch, tmp_path):
+    """--once must not release the root from the shell: the dispatcher claims a
+    ready card immediately, and the researcher then starts before open_lane has
+    written the <IDEA> snapshot its body reads (ERRORS #36)."""
+    calls = []
+    _board_env(monkeypatch, tmp_path, calls)
+    monkeypatch.setattr(run, "board", lambda: _state(root_status="blocked"))
+    snap = os.path.join(str(tmp_path), "snapshots", "lane-1.md")
+
+    def kb(*a, **k):
+        calls.append(a)
+        if a and a[0] == "unblock" and a[1] == "id-I":
+            # the hand-off the root card is told to read must already be there
+            assert os.path.exists(snap), "root released before the lane was prepared"
+        return ""
+
+    monkeypatch.setattr(run, "kb", kb)
+    run.tick()
+    assert [c for c in calls if c[0] == "unblock"] == [("unblock", "id-I")]
+    assert os.path.exists(snap)
+    run._OPENED.clear()
+
+
 def test_tick_opens_a_lane_whose_root_is_already_unblocked(monkeypatch, tmp_path):
     calls = []
     _board_env(monkeypatch, tmp_path, calls)

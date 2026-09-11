@@ -260,8 +260,18 @@ this small, a card that needs longer is a card doing work the idea does not ask
 for, so the ceiling doubles as a check on the card bodies. The 2026-09-11 run
 (`"auto_gates": true`) finished the lane unattended in 9.9 min wall / 4.7 min of
 agent work — worst card 1.12 min — and produced the run summary, the timing
-report, the per-card patches and a clean document chain. Reset and re-create it
-after engine changes:
+report, the per-card patches and a clean document chain.
+
+**Audit every run; that is the loop's stopping rule.** `mission/run-audit.py
+--runs boards/<slug>/runs` exits 0 only when a finished run has no errors and no
+warnings — it reads the driver log (terminal state, error vocabulary, held
+gates), `run-summary.json` (gate wording, restarts, per-card budget against the
+board's ceiling), the document chain, the workers that outlived the run and the
+board's own end state, then prints the per-card table and wall/agent/overhead.
+A warning alone fails it. The loop is: run, audit, fix, run again — no cycle is
+done while the auditor reports anything.
+
+Reset and re-create it after engine changes:
 
     mission/reset.sh --board boards/minimal-development --yes
     hermes kanban boards rm minimal-development     # reset archives cards, not the board

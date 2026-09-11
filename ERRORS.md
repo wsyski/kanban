@@ -9,6 +9,32 @@ Fixed items name the commit that fixed them. Open items are open.
 
 ---
 
+## Fixed (2026-09-11, third round — the fix-run-audit loop)
+
+The stopping rule for this round is mechanical: `mission/run-audit.py` exits 0
+only when a run has **no errors and no warnings**, and every cycle re-runs the
+board until it does.
+
+### 36. `--once` released the lane root before the lane was prepared
+
+`run-audit.py` on the sixth run reported `F2 I1 lane 1: IDEA written 21:39:31
+after the card started 21:39:22` — and the chain start says `"observed": true`,
+so I1 was already `running` before the driver's first tick. `start-board.sh
+--once` unblocked the root card from the shell (line 76); the dispatcher claims a
+ready card immediately, while the driver's own tick is what opens the lane —
+writing the `<IDEA>` snapshot its body names, pruning TI/RVc on an
+`integration_tests:false` board and clearing the lane's stale outputs. The
+researcher therefore began nine seconds before the document it is told to read
+existed, and got none of the lane preparation on the way in.
+
+`open_lanes()` exists because `--once` used to release the root out of band
+(#27); preparing the lane in tick step 0 cannot help when a worker has already
+been claimed. Fixed by removing the release: `--once` now only starts the driver,
+whose promotion branch prepares the lane and unblocks the root in the same tick,
+so nothing can be claimed before its hand-off exists. Test:
+`test_the_lane_is_prepared_before_its_root_is_released` asserts the snapshot
+exists at the moment of the unblock call.
+
 ## Fixed (2026-09-11, second round — reading the fourth live run)
 
 The smoke run of `minimal-development` (21:03-21:18, 4-minute ceiling) was the

@@ -13,7 +13,8 @@ cat <<'USAGE'
 mission/start-board.sh --slug <s> [--once] [--timeout-min N]
 
   --slug <s>        board slug (required)
-  --once            legacy one-shot: release lane 1 now and exit when the
+  --once            legacy one-shot: open lane 1 (the driver releases its root
+                    once the lane is prepared) and exit when the
                     gates close. For tests and recovery.
   --timeout-min N   driver runtime cap (default: 240 with --once, none in
                     serve mode)
@@ -66,14 +67,14 @@ if [ "$ONCE" = 1 ]; then
   [ -s "$REPO/boards/$SLUG/lane-1.md" ] || {
     echo "refusing: boards/$SLUG/lane-1.md is empty — enter an idea first" >&2
     exit 1; }
-  # The lane root is the RESEARCHER card, not the plan card: a raw idea goes to
-  # refinement first, and the manager is reached only through the idea gate.
-  ROOT=$(hermes kanban --board "$SLUG" list --json | python3 -c "
-import json,sys
-for t in json.load(sys.stdin):
-    if t['title'].startswith('I1:'): print(t['id']); break")
-  [ -n "$ROOT" ] || { echo "no I1 card on board '$SLUG'" >&2; exit 1; }
-  hermes kanban --board "$SLUG" unblock "$ROOT" 2>/dev/null || true
+  # Nothing is released from here: the driver's own first tick opens the lane
+  # (writes the <IDEA> snapshot, prunes TI/RVc on an integration_tests:false
+  # board, clears the lane's stale outputs) and only then unblocks the root —
+  # both inside one tick. Unblocking from the shell instead let the dispatcher
+  # claim the root before that tick ran, so the researcher started 9 seconds
+  # BEFORE the snapshot its body is told to read existed (the chain reports it
+  # as F2; live 2026-09-11). The lane root is the RESEARCHER card, not the plan
+  # card: a raw idea goes to refinement first (ERRORS #36).
   BOARD="$SLUG" nohup python3 -u mission/run.py --timeout-min "${TIMEOUT:-240}" >> "$RUNLOG" 2>&1 &
   echo "board '$SLUG' started (one-shot); log: $RUNLOG"
 else
