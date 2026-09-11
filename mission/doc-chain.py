@@ -130,7 +130,9 @@ def main(argv=None):
             ins = ", ".join(f'{d["role"]}={os.path.basename(d["path"])}'
                             f'({d.get("mtime", "missing")}{"!" if d["state"] != "ok" else ""})'
                             for d in row["inputs"]) or "-"
-            outs = ", ".join(row["attached"]) or "-"
+            # No done record = still in flight. A bare "-" there read as "this
+            # card produced nothing" while it was busy producing it.
+            outs = ", ".join(row["attached"]) or ("-" if row["done"] else "(still running)")
             staged = f' + {len(row["staged"])} staged' if row["staged"] else ""
             print(f'  {row["code"]:5} {row["started"]}  in: {ins}')
             print(f'        {"":8} out: {outs}{staged}')

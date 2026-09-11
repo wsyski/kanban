@@ -90,6 +90,17 @@ def lane_graph(state):
                 parents += rework
             if c["code"] == "Gp":
                 parents = [f"RVp{lane}"] + rework
+            # Same shape one stage later, for the code loop a REJECT files:
+            # C{lane}-rev-<r> / RVa{lane}-r<r> sit between RVa and Gc. Nothing
+            # linked them, so Gc unblocked while its own rework was still live
+            # and only the verdict-token check in gate_action held it — while
+            # tick()'s comment claimed the parents did. Linked now, for RVa and
+            # Gc alike; Gc keeps its positional parent (RVa, or RVc on a lane
+            # with integration tests) and the round is added to it.
+            code_rework = [pfx for pfx in (f"C{lane}-rev", f"RVa{lane}-r")
+                           if title_of_prefix(state, pfx)[1] is not None]
+            if c["code"] in ("RVa", "Gc"):
+                parents += code_rework
             rows.append((c["title"], parents, c["code"].lower(), lane))
             prev = c["id"]
     return rows
@@ -916,9 +927,10 @@ def tick():
     # driver restart mid-rework. Blocking needs ready/running; the downstream
     # card is blocked-by-parents here in the normal flow, so a no-op failure
     # is expected and harmless — skip it rather than spam the error log.
-    # The code loop (RVa REJECT) is NOT here: its round cards (C{lane}-rev /
-    # RVa{lane}-r<r>) sit between RVa and Gc, so the gate's own parents do
-    # the holding while the round is live.
+    # The code loop (RVa REJECT) is held by parents instead: lane_graph links a
+    # filed round's C{lane}-rev / RVa{lane}-r<r> cards into RVa's and Gc's
+    # parents, so the gate cannot open while the round is live. TI keeps its
+    # verdict-based hold (held_by_verdict), which is the same guarantee.
     for lane in range(1, board_lane_count(st) + 1):
         for base, gate, downstream in (("I", "Gi", "P"), ("P", "Gp", "TW")):
             if not rework_hold(st, lane, base, gate):
@@ -941,7 +953,13 @@ def tick():
             continue
         msg = gate_action(st, title, kind, lane)
         if msg and msg not in ("gate-held", "skip"):
-            log(f"{title.split(':')[0]}: {msg}")
+            # Once per distinct message per card, not once per tick: a gate
+            # waiting on a rework round sits here for minutes, and the old path
+            # wrote the identical line every tick (six in two minutes on
+            # 2026-09-11) — the same spam the gate announcement was fixed for.
+            if _WAITING.get(card["id"]) != msg:
+                _WAITING[card["id"]] = msg
+                log(f"{title.split(':')[0]}: {msg}")
     # done when every lane that HAS an idea reached its final gate
     last = 0
     for lane in range(1, board_lane_count(st) + 1):
@@ -1256,6 +1274,7 @@ def write_summary(state):
 _TIMED = set()
 # Gates already announced this run — see gate_action.
 _ANNOUNCED = set()
+_WAITING = {}
 
 # The triage card body file_ideas writes always opens with this line, so a card
 # the human typed from scratch in the dashboard is distinguishable from one the

@@ -192,6 +192,10 @@ including what is still open:
 - **Never unlink, archive or re-parent a card while the dispatcher is claiming
   it.** The worker spawns holding the pre-change view and then fights a board
   that has moved. Board surgery is safe on a parked lane.
+- **While a driver is live, do not stage, unstage or commit.** The index is
+  board state, and the operator is a writer on it: unstaging a lane's files
+  mid-run makes the next reviewer REJECT correct work (2026-09-11, run 4 —
+  a spurious rework round; `ERRORS.md` O7).
 - **The index is board state, and `git diff --cached --name-only` lists all of
   it** — not just the directory you run it from. A pending entry from anywhere (a
   repo cleanup, another board's `git add -f`) is handed to every card that checks
@@ -253,6 +257,7 @@ report, the per-card patches and a clean document chain. Reset and re-create it
 after engine changes:
 
     mission/reset.sh --board boards/minimal-development --yes
+    hermes kanban boards rm minimal-development     # reset archives cards, not the board
     mission/create-board.sh --board boards/minimal-development
     mission/start-board.sh --slug minimal-development
     # then drag the Triage card to Todo (or set status='todo' on the card row)

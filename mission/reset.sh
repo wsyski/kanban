@@ -130,5 +130,9 @@ else
   echo "board '$SLUG' is not in the registry — nothing to archive"
 fi
 
+echo "The board itself stays in the registry — this archives its cards, not the"
+echo "board, and create-board.sh refuses a board that still exists (it is the"
+echo "board's own error message that named the missing step, printed below)."
 echo "Re-create it with:"
+echo "  hermes kanban boards rm $SLUG        # archives the board row, recoverable"
 echo "  mission/create-board.sh --board ${BOARD_DIR#$REPO/}"

@@ -9,6 +9,67 @@ Fixed items name the commit that fixed them. Open items are open.
 
 ---
 
+## Fixed (2026-09-11, second round — reading the fourth live run)
+
+The smoke run of `minimal-development` (21:03-21:18, 4-minute ceiling) was the
+first to take an `RVa` REJECT into the code rework loop. Reading its driver log,
+its chain and the index produced three defects and one operational rule.
+
+### 35. The documented reset path failed at its second command
+
+`reset.sh` archives a board's live cards and then prints its next step:
+`mission/create-board.sh --board boards/<slug>`. Run it and `create-board.sh`
+refuses — "board '<slug>' already exists … remove it first: hermes kanban boards
+rm <slug>" — because a reset archives CARDS, not the board row, and the script
+never said so. The README's reset-and-re-create block had the same two commands,
+so the documented path was unfollowable from either end (found while resetting
+for the fifth run). The missing step is only ever named by the tool that trips
+over it. Both sites now print it: `hermes kanban boards rm <slug>` between the
+reset and the re-create (it archives the board row, recoverable, not a delete).
+
+### 34. A filed code rework round was in no parents list
+
+Run 4: `RVa1` rejected, the driver filed `C1-rev-1` + `RVa1-r2` at 21:14:53, and
+then — while the re-review was still being worked — logged `unblocked Gc1
+(parents done)` followed by a 90-second stream of `Gc1: waiting: final review
+verdict = 'REJECT...'`. The gate was open during its own rework.
+
+`lane_graph` builds parents positionally from `lanes.lane_cards()`, which lists
+the LANE_CARDS and nothing else. The plan loop's round cards (`P<k>-rev`,
+`RVp<k>-r`) ARE added to `RVp`/`Gp`'s parents when present; nothing ever added
+the code loop's `C{lane}-rev-<r>` / `RVa{lane}-r<r>` cards to anything — while
+`tick()`'s comment asserted the opposite ("its round cards sit between RVa and
+Gc, so the gate's own parents do the holding"). So `Gc` was held by
+`gate_action`'s verdict-token check alone. Benign in effect (a gate cannot
+complete on a REJECT either way), but the guarantee was accidental, the comment
+was false, and an unblocked gate mid-rework is the shape of the old "TI ran
+against rejected code" bug (#17), one stage later. Fixed in `lane_graph`:
+present code-round prefixes are appended to `RVa`'s and `Gc`'s parents, and
+`Gc` keeps its positional parent (`RVc` on a lane with integration tests, `RVa`
+without). Three tests in `test_rework_loop.py`: the round links both cards, the
+positional parent survives, and an unfiled round adds no parent (the plan
+loop's lesson — a missing parent means never-done).
+
+### 33. A held gate wrote the same waiting line every tick
+
+Six identical `Gc1: waiting: final review verdict = 'REJECT: 1. (c) fails — no
+plan-named fil'` lines between 21:15:17 and 21:16:49, while the re-review ran —
+each one burying the events that mattered. The gate *announcement* had already
+been fixed for exactly this; the `waiting:` return path in tick()'s gate loop
+was not, and `gate_action` runs every pass. Fixed: one line per distinct message
+per card (`_WAITING`), so a changed reason — a new verdict, a missing section —
+is still news. Test in `test_open_lane.py`.
+
+### 32. The document chain showed an in-flight card as one that produced nothing
+
+`doc-chain.py` prints `out: -` when the done record carries no attachments — and
+a card with only a start record printed the same `-`. That was read (and
+reported) as "RVa1 finished having produced nothing" while `RVa1` was mid-verdict;
+its done record, written later, carries `attached: ['t_70eb812a.review']`. The
+recording was right — one done record per card, captured with the attachment —
+the display was wrong. An in-flight card now prints `out: (still running)`.
+Test in `test_doc_chain.py`.
+
 ## Fixed (2026-09-11 — prompts read against the driver)
 
 Found by reading the card bodies against `run.py`, the last run's artifacts and
@@ -448,6 +509,20 @@ blocking into completing, silently opening the gate it guards; every verdict
 body now says an unfinished review is a REJECT, never a PASS with caveats.
 Verified live: worker cards carry `goal_mode: true`, reviewer cards do not (E2E
 run).
+
+### O7. The index is shared with the operator — never touch it during a live run
+
+Run 4's `RVa1` rejected correct work, and its repro is verbatim
+`git diff --cached --name-only` prints nothing. The lane's files WERE staged; the
+operator (this session) unstaged them mid-run to commit the day's work, and the
+reviewer — checking the index, as its body instructs — saw nothing staged and
+rejected. The reviewer was right. The rework round it caused (`C1-rev-1` +
+`RVa1-r2`) was spurious, and the lane paid the full round for it.
+
+Rule: while a driver is live, do not stage, unstage or commit from outside. The
+git index is board state (#29, #26) and the operator is now one of its writers.
+`reset.sh` and the lane's first card restore this board's own entries; nothing
+protects a run in flight.
 
 ### O6. `python3` on a worker's PATH has no pytest
 

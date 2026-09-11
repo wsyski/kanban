@@ -27,6 +27,20 @@ Renamed after execution (same day): `boards/roman-evaluator` ->
 word-count CLI/service to the roman-number CLI/service (same structure, same
 technology, roman domain).
 
+A fourth run then exercised the rework loop for the first time in a live lane:
+`RVa1` rejected, the driver filed `C1-rev-1` + `RVa1-r2`, the re-review PASSed
+and `Gc1` completed — `ALL GATES COMPLETE` at 21:18:01. That REJECT was itself a
+defect of the operator's, not of the work: the lane's files were unstaged
+mid-run to commit the day's changes, and the reviewer, checking the index as its
+body instructs, saw nothing staged (`ERRORS.md` O7). Reading that run produced
+three more fixes — the code rework round was in no parents list, a held gate
+wrote the same waiting line every tick, and the chain showed an in-flight card
+as one that produced nothing (`ERRORS.md` #32-#34), plus the reset path's own
+missing step (#35). A fifth run on the fixed code then re-ran the lane clean
+(chain OK, every gate PASS); note that its rework-round path is covered by tests,
+not by another live round, because a lane that passes review first time never
+files one.
+
 The spec's open question for a 2-lane board is answered by item 4's rule: a
 reviewer judges exactly the files the PLAN's Files blocks name, never "whatever is
 staged", so lane 2 inherits lane 1's staged files without judging them.

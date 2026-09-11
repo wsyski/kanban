@@ -98,3 +98,17 @@ def test_the_cli_exits_zero_on_a_good_chain(tmp_path, capsys):
     chain(tmp_path)
     assert dc.main(["--runs", str(tmp_path), "--quiet"]) == 0
     assert "FAIL" not in capsys.readouterr().out
+
+
+def test_a_card_still_in_flight_is_not_shown_as_producing_nothing(tmp_path, capsys):
+    """`out: -` means "no attachment", not "this card produced nothing" — a
+    start record with no done record yet is a card mid-flight, and reading it as
+    a finished card that produced nothing is what it looks like."""
+    rec = {"ts": at(0), "event": "start", "lane": 1, "code": "I1", "card_id": "t_i",
+           "title": "I1: idea refinement - lane 1", "status": "ready",
+           "inputs": {}, "unresolved": []}
+    (tmp_path / "chain.jsonl").write_text(json.dumps(rec) + "\n")
+    assert dc.main(["--runs", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "(still running)" in out, out
+    assert "out: -" not in out, out

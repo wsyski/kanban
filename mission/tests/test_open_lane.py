@@ -36,6 +36,8 @@ def _board_env(monkeypatch, tmp_path, calls, it=False):
     monkeypatch.setattr(run, "SNAP_DIR", str(tmp_path / "snapshots"))
     monkeypatch.setattr(run, "SERVE", False)
     run._OPENED.clear()
+    # tick() also remembers which gate messages it has already logged
+    run._WAITING.clear()
 
 
 def test_tick_opens_a_lane_whose_root_is_already_unblocked(monkeypatch, tmp_path):
@@ -75,4 +77,24 @@ def test_a_finished_lane_is_never_reopened(monkeypatch, tmp_path):
     monkeypatch.setattr(run, "board", lambda: _state(root_status="done"))
     assert run.tick() is False
     assert not [c for c in calls if c[0] == "archive"], calls
+    run._OPENED.clear()
+
+
+def test_a_held_gate_reports_once_not_once_per_tick(monkeypatch, tmp_path, capsys):
+    """A gate can wait minutes for a rework round; the message belongs in the
+    log once, not once every tick (six identical lines in two minutes on
+    2026-09-11, each one burying the events that mattered)."""
+    calls = []
+    _board_env(monkeypatch, tmp_path, calls)
+    monkeypatch.setattr(run, "board", lambda: _state(root_status="done"))
+    monkeypatch.setattr(run, "gate_action",
+                        lambda *a: "waiting: final review verdict = 'REJECT: nope'")
+    for _ in range(3):
+        run.tick()
+    out = capsys.readouterr().out
+    assert out.count("waiting: final review verdict") == 1, out
+    # a DIFFERENT reason is news, and is logged
+    monkeypatch.setattr(run, "gate_action", lambda *a: "waiting: something else")
+    run.tick()
+    assert capsys.readouterr().out.count("waiting: something else") == 1
     run._OPENED.clear()

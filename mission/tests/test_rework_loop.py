@@ -383,3 +383,47 @@ def test_gave_up_always_halts(monkeypatch, quiet_halt):
     monkeypatch.setattr(run, "_exhaustion_event", _event("gave_up"))
     st = {lanes.card_title("TW", 1): {"id": "t1", "status": "running"}}
     assert run.halt_if_exhausted(st)
+
+
+# --- the code rework round gates the code gate by parents -------------------
+# An RVa REJECT files C{lane}-rev-<r> + RVa{lane}-r<r>. Nothing linked them, so
+# on 2026-09-11's fourth run Gc1 unblocked and sat in "waiting" while its own
+# rework round was live — held by the verdict check alone, not by the graph
+# tick()'s comment claimed was holding it.
+
+def _parents(state):
+    return {t: p for t, p, _kind, _lane in run.lane_graph(state)}
+
+
+def test_a_filed_code_round_gates_rva_and_the_code_gate():
+    st = full_lane_state()          # integration tests: Gc1 follows RVc1
+    st["C1-rev-1: implementation revision round 1 - lane 1"] = card("C1-rev-1")
+    st["RVa1-r2: implementation re-review round 2 - lane 1"] = card("RVa1-r2")
+    parents = _parents(st)
+    for code in ("RVa", "Gc"):
+        p = parents[lanes.card_title(code, 1)]
+        assert "C1-rev" in p and "RVa1-r" in p, (code, p)
+    assert not run.parents_done(st, parents[lanes.card_title("Gc", 1)])
+
+
+def test_the_code_gate_keeps_its_positional_parent():
+    """Gc follows RVc on a lane with integration tests, RVa without — and the
+    round is ADDED to that parent, never a substitute for it."""
+    def lane_id(code, lane=1, integration_tests=True):
+        return {c["code"]: c["id"] for c in lanes.lane_cards(lane, integration_tests)}[code]
+
+    it_parents = _parents(full_lane_state())[lanes.card_title("Gc", 1)]
+    assert lane_id("RVc") in it_parents
+    plain_parents = _parents(full_lane_state(integration_tests=False))[
+        lanes.card_title("Gc", 1)]
+    assert lane_id("RVa", integration_tests=False) in plain_parents
+
+
+def test_no_code_round_means_no_extra_parent():
+    """The plan loop's lesson: a round that was never filed must not become a
+    parent, or a lane that passes review first time waits forever."""
+    st = full_lane_state(integration_tests=False)
+    gc = _parents(st)[lanes.card_title("Gc", 1)]
+    assert "C1-rev" not in gc and "RVa1-r" not in gc
+    st[lanes.card_title("RVa", 1)].update(status="done")
+    assert run.parents_done(st, gc)
