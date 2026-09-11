@@ -1564,27 +1564,30 @@ def snapshot_run_evidence(lanes_n):
         shutil.move(path, os.path.join(out_dir, name))
     if not nothing:
         log(f"run evidence archived: {os.path.relpath(out_dir, REPO)}")
-    # Clear the shared staged index of this board's paths so the new run starts
-    # from a clean index: previous run's staged entries (workers stage, the
-    # gate commits nothing) would otherwise be swept into the next run's
-    # per-card patches and gate evidence. Explicit pathspecs — same reason as
-    # reset.sh; never parse `git status --porcelain`. of this board's paths so the new run starts
-    # from a clean index: previous run's staged entries (workers stage, the
-    # gate commits nothing) would otherwise be swept into the next run's
-    # per-card patches and gate evidence. Explicit pathspecs — same reason as
-    # reset.sh; never parse `git status --porcelain`.
+    # Clear the shared staged index of this board's HAND-OFF paths so the new run
+    # starts from a clean index: previous run's staged entries under runs/artifacts
+    # would otherwise be swept into the next run's per-card patches and gate
+    # evidence. Explicit pathspecs — same reason as reset.sh; never parse
+    # `git status --porcelain`.
+    #
+    # `work/` is deliberately NOT touched here (user rule, 2026-09-12). A new idea
+    # may be a FIX of what the previous run built, so the directory it inherits is
+    # that task's input; clearing it is a human decision, taken when the human
+    # knows what the next task is — `mission/reset.sh` wipes it and stages the
+    # removal of the committed paths. A driver that guessed would destroy the
+    # baseline between two runs.
     board_rel = os.path.relpath(BOARD_DIR, REPO)
-    # :(top) prefixes each pathspec to the repo root — git runs -C WORKDIR,
-    # so plain relative paths would resolve under work/. checkout (not
-    # restore --worktree) also discards UNTRACKED worktree copies of staged
-    # files: a refile starts the next lane clean of the previous run's debris.
-    for name in ("work", os.path.join("runs", "artifacts")):
-        pathspec = f":(top){os.path.join(board_rel, name)}"
-        staged = git("diff", "--cached", "--name-only", "--", pathspec)
-        if staged.strip():
-            git("restore", "--staged", "--worktree", "--", pathspec)
-            log(f"cleared staged index for {pathspec} "
-                f"({len(staged.splitlines())} files)")
+    # runs/artifacts holds the intermediate hand-offs (refined idea, plan): never
+    # committed, so a plain staged restore is right. :(top) prefixes the pathspec
+    # to the repo root — git runs -C WORKDIR, so a plain relative path would
+    # resolve under work/ — and restore --worktree also discards UNTRACKED
+    # worktree copies of staged files.
+    pathspec = f":(top){os.path.join(board_rel, 'runs', 'artifacts')}"
+    staged = git("diff", "--cached", "--name-only", "--", pathspec)
+    if staged.strip():
+        git("restore", "--staged", "--worktree", "--", pathspec)
+        log(f"cleared staged index for {pathspec} "
+            f"({len(staged.splitlines())} files)")
 
 
 
@@ -1597,7 +1600,7 @@ def clear_run_state(lanes_n):
     snapshot series, the finished run's halt/deadman notices — and the per-lane
     HAND-OFF files, runs/artifacts/lane-<k>/{refined,plan}.md, which are the
     incoming run's OUTPUT paths. They used to disappear only as a side effect of
-    the staged-index restore below (workers force-stage them), so a hand-off that
+    the staged-index restore below (workers stage them with a plain `git add`), so a hand-off that
     was never staged survived: the Gi gate checks the refined idea's STRUCTURE,
     so the previous run's refined idea passed it and the new plan would be built
     on the old idea (2026-09-11). Clear them explicitly; gate_action already
@@ -1711,17 +1714,48 @@ def write_timing_report(lane):
         f.write(r.stdout)
     log(f"timing report written: {os.path.relpath(dst, REPO)}")
 
+def pid_alive(held):
+    """Is the pid a lockfile names still on this machine?
+
+    A lock nobody holds is not a lock, so anything unreadable (empty file, a
+    half-written pid, garbage) reads as dead: the file is only ever written with
+    one pid, by os.write, immediately after creation."""
+    try:
+        pid = int(held)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:      # it exists, owned by someone else
+        return True
+    return True
+
+
 def acquire_lock():
     """One driver per board. A lockfile, not a state machine — recovery stays
-    'restart the driver and let its idempotent actions reconcile'."""
+    'restart the driver and let its idempotent actions reconcile'.
+
+    A DEAD holder's lockfile is taken over, not refused. The file is left behind
+    by any driver that did not exit through the interpreter — SIGTERM/SIGKILL skip
+    the atexit unlink — and refusing on the file's existence alone turns one kill
+    into a manual `rm` before the board can restart, while every other guard says
+    the board is free (observed 2026-09-12: start-board.sh's liveness check passed
+    and run.py refused, so the restart silently did nothing)."""
     os.makedirs(RUN_DIR, exist_ok=True)
     path = os.path.join(RUN_DIR, "driver.lock")
     try:
         fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
     except FileExistsError:
         held = open(path).read().strip()
-        raise SystemExit(f"another driver holds {path} (pid {held}) — "
-                         f"kill it or remove the lockfile")
+        if pid_alive(held):
+            raise SystemExit(f"another driver holds {path} (pid {held}) — "
+                             f"kill it or remove the lockfile")
+        log(f"taking over a stale driver lock ({path}: pid {held!r} is gone)")
+        fd = os.open(path, os.O_CREAT | os.O_TRUNC | os.O_WRONLY, 0o644)
     os.write(fd, str(os.getpid()).encode())
     os.close(fd)
     import atexit

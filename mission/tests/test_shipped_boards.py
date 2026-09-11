@@ -60,18 +60,36 @@ def test_the_suite_writes_nothing_into_the_repo():
         "a test wrote into boards/runs — patch run.RUN_DIR in its fixture"
 
 
-def test_no_board_tracks_generated_output():
-    """Generated paths may be STAGED — that is how a card hands off
-    (`git add -f`) — but never COMMITTED. A path in HEAD that is deleted in the
-    worktree is the pending removal, and that is fine.
+def test_no_board_commits_its_run_state():
+    """`boards/<slug>/work/` is the board's PRODUCT and belongs in history: its
+    cards stage it, the human commits it at the gate. What must never sit in
+    HEAD is run state (`boards/<slug>/runs/`, and the hand-offs inside it),
+    an installed dependency tree and tool caches. A path in HEAD that is
+    deleted in the worktree is the pending removal, and that is fine.
 
-    Match in Python, not with a git pathspec: `ls-files` globs `boards/*/work/*`
+    Match in Python, not with a git pathspec: `ls-files` globs `boards/*/runs/*`
     across slashes and `ls-tree` does NOT (it needs `:(glob)`), so a pathspec
-    version asserted over an empty set and passed vacuously.
+    version asserted over an empty set passed vacuously (2026-09-11).
     """
-    assert fnmatch("boards/x/work/y.py", "boards/*/work/*")   # the pattern itself
-    patterns = ("boards/*/work/*", "boards/*/runs/*")
+    assert fnmatch("boards/x/runs/y.md", "boards/*/runs/*")   # the pattern itself
     tracked = git("ls-tree", "-r", "--name-only", "HEAD").split()
-    in_head = {p for p in tracked if any(fnmatch(p, pat) for pat in patterns)}
+    forbidden = {p for p in tracked
+                 if fnmatch(p, "boards/*/runs/*")
+                 or "node_modules/" in p
+                 or "/__pycache__/" in p
+                 or p.endswith(".pyc")
+                 or "/.pytest_cache/" in p}
     removed = set(git("diff", "--name-only", "--diff-filter=D", "HEAD").split())
-    assert in_head <= removed, in_head - removed
+    assert forbidden <= removed, forbidden - removed
+
+
+def test_a_boards_product_is_not_gitignored():
+    """The deliverable must be committable: `boards/<slug>/work/` is where the
+    lane's artifact lives and the gate commit is what puts it in history.
+    `git check-ignore --no-index` reads the ignore rules regardless of what is on
+    disk, so a re-added `boards/*/work/` line fails here (2026-09-12)."""
+    for b in boards():
+        probe = f"boards/{b}/work/probe.py"
+        rc = subprocess.run(["git", "check-ignore", "--no-index", "-q", probe],
+                            cwd=REPO).returncode
+        assert rc != 0, f"{probe} is gitignored — its deliverable could never be committed"

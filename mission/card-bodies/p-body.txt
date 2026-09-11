@@ -12,10 +12,10 @@ FORMAT: the writing-plans format with three changes for this lane — omit the "
 
 Before completing, walk the checklist item by item and fix every miss: the plan review rejects on exactly these items and on nothing else.
 
-DONE WHEN: <PLAN> is staged and satisfies every checklist item, its patch is attached, and the card is completed: `hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "<the plan's architecture in one line>"`.
+DONE WHEN: <PLAN> is written and satisfies every checklist item, its patch is attached (the plan stays UNSTAGED), and the card is completed: `hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "<the plan's architecture in one line>"`.
 
 <RESULT_FIELD>
 
-ON A REVISION CARD: fix only the numbered findings, by targeted edits to the existing <PLAN>; re-check the checklist items those findings name; re-stage, re-attach (overwrite the patch) and complete with a change summary. If the round comes from an IDEA REWORK instead, plan from the updated <REFINED> and say in the plan what changed in the idea.
+ON A REVISION CARD: fix only the numbered findings, by targeted edits to the existing <PLAN>; re-check the checklist items those findings name; re-write the file, re-attach (overwrite the patch — stage nothing) and complete with a change summary. If the round comes from an IDEA REWORK instead, plan from the updated <REFINED> and say in the plan what changed in the idea.
 
 TURN BUDGET: edit the plan in place and never re-read it whole to "check"; build no certification suites of your own — the tester and reviewer cards prove the plan.

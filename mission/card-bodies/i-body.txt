@@ -23,10 +23,10 @@ Existing solutions worth knowing — a library, code in this repository, a docum
 ## Success criteria
 Numbered observable assertions, `- SC1: …`, each checkable by its Verification recipe line. Never "works well".
 
-MISSING TOOLCHAIN IS A STOP. If the idea needs a runtime or tool this machine lacks and no present alternative serves, do not install it and do not plan around it: add `- Fn: MISSING <tool> — needed for <what>; recommend: <exact install command>` to Findings, stage and attach <REFINED> as usual, then block instead of completing: `hermes kanban --board <BOARD> block --kind needs_input <YOUR-CARD-ID> "MISSING TOOLCHAIN: <tool> — recommend: <install>"`. An open question would be auto-accepted by an unattended gate; a missing tool fails the lane much later, at a far higher price.
+MISSING TOOLCHAIN IS A STOP. If the idea needs a runtime or tool this machine lacks and no present alternative serves, do not install it and do not plan around it: add `- Fn: MISSING <tool> — needed for <what>; recommend: <exact install command>` to Findings, attach <REFINED> as usual (it stays UNSTAGED), then block instead of completing: `hermes kanban --board <BOARD> block --kind needs_input <YOUR-CARD-ID> "MISSING TOOLCHAIN: <tool> — recommend: <install>"`. An open question would be auto-accepted by an unattended gate; a missing tool fails the lane much later, at a far higher price.
 
-IF REFINEMENT FAILS for any other reason, never leave the gate without a file: copy the raw idea under `## Problem`, write `refinement failed: <why>` under every other heading and `- F1: refinement failed — <why>` under Findings, then stage, attach and complete. The human at the gate decides from there.
+IF REFINEMENT FAILS for any other reason, never leave the gate without a file: copy the raw idea under `## Problem`, write `refinement failed: <why>` under every other heading and `- F1: refinement failed — <why>` under Findings, then attach and complete (stage nothing — this document stays UNSTAGED). The human at the gate decides from there.
 
-DONE WHEN: <REFINED> is staged with every heading above, its patch is attached, and the card is completed with the refined problem in one line: `hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "<the refined problem in one line>"`. Stop at the first version that satisfies this; a later pass that adds nothing is not an improvement.
+DONE WHEN: <REFINED> is written with every heading above, its patch is attached, and the card is completed with the refined problem in one line: `hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "<the refined problem in one line>"`. Stop at the first version that satisfies this; a later pass that adds nothing is not an improvement.
 
 <RESULT_FIELD>

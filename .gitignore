@@ -1,13 +1,25 @@
 build/
 target/
-# boards/<slug>/ IS tracked for its DEFINITION (board.json, lane-<k>.md, README).
-# Everything a RUN generates is scratch: work/ is results-scratch, runs/ is
-# per-run state + intermediate hand-offs (refined idea, plan). None of it is
-# committed — provenance lives in per-card patch attachments, not in git.
-boards/*/work/
-boards/*/runs/
+# boards/<slug>/ IS tracked — definition AND product. The manifest, the ideas
+# and the board README are input; `boards/<slug>/work/` is what a run BUILDS,
+# and it is tracked too: the lane's cards stage their files, the human commits
+# them at the gate, and that commit is the authorization record. A clone
+# therefore carries each board's artifact and can run its tests.
+#
+# Two things under work/ are NOT tracked: an installed dependency tree
+# (node_modules/ is reproducible from the committed lockfile) and tool caches —
+# a cache is not a deliverable, and a run that leaves one in work/ fails the
+# audit (E16).
+node_modules/
+.pytest_cache/
 __pycache__/
 *.pyc
+#
+# `boards/<slug>/runs/` is per-run state plus the intermediate hand-offs (the
+# refined idea, the plan, per-card patches, timing, the document chain): never
+# staged, never committed — hand-offs travel by path, not through git, and a
+# staged one reaches every later card's `git diff --cached` (run-audit E14).
+boards/*/runs/
 
 # IDE
 .idea/

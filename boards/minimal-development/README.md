@@ -2,7 +2,8 @@
 
 The smallest idea that still travels the whole lane. Its purpose is to exercise
 the machinery — arm an idea, watch the researcher refine it, see the three gates,
-the staged work (work/ is scratch, never committed) and a timing report — for as
+the staged work (a plain `git add` — the deliverable is tracked and your gate
+commit is what puts it in history) and a timing report — for as
 close to nothing as a full run can cost. Run it after any change to `mission/`,
 and before trusting a real board.
 

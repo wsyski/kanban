@@ -116,6 +116,27 @@ def test_the_hand_off_cards_never_stage_a_runs_path():
         assert f"cp {path}" in body and "attach" in body
 
 
+def test_the_board_stages_only_the_lanes_own_work():
+    """User rule (2026-09-12): the board stages its work and nothing else.
+
+    The three product cards stage their own paths inside <WORKDIR>; the hand-off
+    cards (i, p) stage NOTHING — they write their document under runs/ and attach
+    it — and reviewers, gates and the driver stage nothing at all. So no body may
+    carry an unscoped form (`git add .`, `-A`, `-u`, `-f`) and none may stage a
+    hand-off path. A body that says "staged" about a runs/ document sends a worker
+    off-contract into the one thing the operator sees in `git status`."""
+    staging = set()
+    for name in sorted(os.listdir(BODIES)):
+        if not name.endswith(".txt"):
+            continue
+        body = read(name)
+        for m in re.finditer(r"git add\s+([^\s`]*)", body):
+            assert m.group(1) == "--", f"{name}: unscoped staging {m.group(0)!r}"
+            staging.add(name)
+        assert not re.search(r"git add[^\n`]*(<REFINED>|<PLAN>|<IDEA>|<RUNS>)", body), name
+    assert staging == {"c-body.txt", "ti-body.txt", "tw-body.txt"}, staging
+
+
 def test_patch_attach_commands_carry_a_pathspec():
     """A bare `git diff --cached > patch` bundles EVERYTHING earlier cards
     staged — the E2E coder patch carried the refined idea, the plan and the
