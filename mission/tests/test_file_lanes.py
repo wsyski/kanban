@@ -80,6 +80,17 @@ def _file_one_lane(monkeypatch, tmp_path, **kwargs):
     return fake
 
 
+def test_scratch_is_rendered_but_is_not_a_hand_off(monkeypatch, tmp_path):
+    """`<RUNS>` resolves in a body, and is deliberately NOT a lane document: a
+    directory that changes while a card works would read to the chain as a
+    document written after the card started."""
+    repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    body = file_lanes.render_body("c-body.txt", repo=repo, board="b",
+                                  workdir=str(tmp_path), lane=1)
+    assert "<RUNS>" not in body and "/boards/b/runs/scratch/" in body
+    assert "<RUNS>" not in file_lanes.lane_paths("/repo", "b", 1)
+
+
 def test_a_board_can_file_without_the_goal_judge(monkeypatch, tmp_path):
     """`goal_mode: false` has to reach the FILING path: a card filed with --goal
     anyway wedges on a judge that is reachable but transport-failing (O10)."""

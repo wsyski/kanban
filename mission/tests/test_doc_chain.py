@@ -100,6 +100,64 @@ def test_the_cli_exits_zero_on_a_good_chain(tmp_path, capsys):
     assert "FAIL" not in capsys.readouterr().out
 
 
+def verdict_chain(tmp_path, rework=True):
+    recs = [
+        {"ts": at(0), "event": "start", "lane": 1, "code": "RVa1", "card_id": "t_rva",
+         "title": "RVa1: reviewer verdict - lane 1", "status": "ready",
+         "inputs": {}, "unresolved": []},
+        {"ts": at(60), "event": "done", "lane": 1, "code": "RVa1", "card_id": "t_rva",
+         "title": "RVa1: reviewer verdict - lane 1", "status": "done",
+         "attached": ["t_rva.review"], "staged": [], "verdict": "REJECT",
+         "result": "REJECT: 1. (c) fails"},
+    ]
+    if rework:
+        recs.append({"ts": at(70), "event": "rework", "lane": 1, "code": "Gc1",
+                     "card_id": "t_gc", "title": "Gc1: code gate - lane 1",
+                     "gate": "Gc", "round": 1,
+                     "cards": ["C1-rev-1: …", "RVa1-r2: …"], "findings": "1. (c) fails"})
+    (tmp_path / "chain.jsonl").write_text("\n".join(json.dumps(r) for r in recs) + "\n")
+    return recs
+
+
+def test_a_rejection_is_reported_with_the_round_it_filed(tmp_path, capsys):
+    """A rejection must be visible as a rejection, with the round it caused —
+    not buried in prose in a closed card's result field."""
+    verdict_chain(tmp_path)
+    assert dc.main(["--runs", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "[REJECT]" in out, out
+    assert "reviews: RVa1 REJECT" in out, out
+    assert "round 1 via Gc" in out and "C1-rev-1" in out, out
+
+
+def test_a_rejection_with_no_round_is_a_finding(tmp_path, capsys):
+    """The stall nobody could see: work sent back with nothing filed to redo it."""
+    verdict_chain(tmp_path, rework=False)
+    assert dc.main(["--runs", str(tmp_path)]) == 1
+    assert "F6" in capsys.readouterr().out
+
+
+def test_the_history_counts_every_verdict_the_board_ever_recorded(tmp_path, capsys):
+    """runs/ is rotated per run; the ledger is what makes a census possible."""
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    verdict_chain(runs)
+    (tmp_path / "verdicts.jsonl").write_text("\n".join(json.dumps(r) for r in [
+        {"event": "verdict", "lane": 1, "code": "RVa1", "verdict": "REJECT",
+         "text": "1. (c) fails"},
+        {"event": "verdict", "lane": 1, "code": "RVa1", "verdict": "PASS", "text": "fixed"},
+        {"event": "verdict", "lane": 1, "code": "RVp1", "verdict": "PASS", "text": "ok"},
+        {"event": "rework", "lane": 1, "gate": "Gc", "round": 1,
+         "cards": ["C1-rev-1: …"], "findings": "1. (c) fails"},
+    ]) + "\n")
+    (runs / "verdicts.jsonl").write_text((tmp_path / "verdicts.jsonl").read_text())
+    assert dc.main(["--runs", str(runs), "--history"]) == 0
+    out = capsys.readouterr().out
+    assert "3 verdict(s), 1 rework round(s)" in out, out
+    assert "PASS: 2" in out and "REJECT: 1" in out, out
+    assert "round 1 via Gc" in out, out
+
+
 def test_a_card_still_in_flight_is_not_shown_as_producing_nothing(tmp_path, capsys):
     """`out: -` means "no attachment", not "this card produced nothing" — a
     start record with no done record yet is a card mid-flight, and reading it as

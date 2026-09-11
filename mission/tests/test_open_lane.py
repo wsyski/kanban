@@ -94,6 +94,22 @@ def test_serve_mode_leaves_an_unarmed_lane_alone(monkeypatch, tmp_path):
     run._OPENED.clear()
 
 
+def test_a_cache_in_work_is_not_a_deliverable(monkeypatch, tmp_path):
+    """work/ holds the idea's output for a human: a pytest cache left behind by a
+    suite run is neither, and it reaches the reviewer's staged-set check."""
+    calls = []
+    _board_env(monkeypatch, tmp_path, calls)
+    work = tmp_path / "work"
+    (work / "__pycache__").mkdir(parents=True)
+    (work / "__pycache__" / "is_even.cpython-314.pyc").write_text("x")
+    (work / "is_even.py").write_text("def is_even(n): return n % 2 == 0\n")
+    (work / ".pytest_cache").mkdir()
+    removed = run.clean_work_noise()
+    assert (work / "is_even.py").exists(), "the deliverable must survive"
+    assert not (work / "__pycache__").exists() and not (work / ".pytest_cache").exists()
+    assert len(removed) == 2, removed
+
+
 def test_nothing_under_runs_stays_in_the_index(monkeypatch, tmp_path):
     """unstage_run_paths() restores the board's runs/ paths, and stays quiet
     when the index is already clean."""

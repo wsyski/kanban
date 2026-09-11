@@ -70,8 +70,8 @@ def test_no_board_tracks_generated_output():
     version asserted over an empty set and passed vacuously.
     """
     assert fnmatch("boards/x/work/y.py", "boards/*/work/*")   # the pattern itself
+    patterns = ("boards/*/work/*", "boards/*/runs/*")
     tracked = git("ls-tree", "-r", "--name-only", "HEAD").split()
-    in_head = {p for p in tracked
-               if fnmatch(p, "boards/*/work/*") or fnmatch(p, "boards/*/runs/*")}
+    in_head = {p for p in tracked if any(fnmatch(p, pat) for pat in patterns)}
     removed = set(git("diff", "--name-only", "--diff-filter=D", "HEAD").split())
     assert in_head <= removed, in_head - removed

@@ -50,6 +50,7 @@ def analyze(recs):
     """Rows per card plus the findings that make the chain wrong."""
     starts = [r for r in recs if r["event"] == "start"]
     dones = {r["card_id"]: r for r in recs if r["event"] == "done"}
+    reworks = [r for r in recs if r["event"] == "rework"]
     if not starts:
         return [], []
     run_start = min(parse_ts(r["ts"]) for r in starts)
@@ -99,12 +100,57 @@ def analyze(recs):
                 and not produced["attached"] and not produced["staged"]:
             findings.append(f"F5 {code} lane {lane}: finished with nothing attached "
                             f"and nothing staged")
+        verdict = done.get("verdict", "")
+        if verdict == "REJECT" and not [w for w in reworks if w.get("lane") == lane]:
+            # A verdict that returned the work must have a round behind it: a
+            # REJECT with no round filed is the stall nobody can see from the
+            # verdict alone (it is also what a REJECT used to do before the
+            # rework loops existed).
+            findings.append(f"F6 {code} lane {lane}: REJECT with no rework round recorded")
         rows.append({"lane": lane, "code": code, "title": r["title"],
                      "started": f"{started:%H:%M:%S}",
                      "done": done.get("ts", "")[11:19], "inputs": docs,
                      "attached": produced["attached"], "staged": produced["staged"],
-                     "result": done.get("result", "")})
+                     "result": done.get("result", ""), "verdict": verdict})
     return rows, findings
+
+
+def history(runs_dir):
+    """What this run's reviews decided, and what they sent back.
+
+    The ledger sits beside the chain under runs/ — run state, unstaged, rotated
+    with the rest — so this is one RUN's census, not a cross-run history: the
+    chain alone shows what each card was given, never what a review decided.
+    """
+    path = os.path.join(runs_dir, "verdicts.jsonl")
+    if not os.path.exists(path):
+        return f"no verdict ledger at {path} — written for runs since 2026-09-11"
+    verdicts, reworks, escalations = [], [], []
+    for line in open(path):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        bucket = {"verdict": verdicts, "rework": reworks,
+                  "escalation": escalations}.get(rec.get("event"))
+        if bucket is not None:
+            bucket.append(rec)
+    out = [f"{len(verdicts)} verdict(s), {len(reworks)} rework round(s), "
+           f"{len(escalations)} escalation(s)"]
+    for token in ("PASS", "REJECT", "REWORK"):
+        n = [v for v in verdicts if v.get("verdict") == token]
+        if n:
+            out.append(f"  {token}: {len(n)}")
+            for v in n:
+                if token != "PASS":
+                    out.append(f'    {v.get("code")} lane {v.get("lane")}: "{str(v.get("text"))[:90]}"')
+    for w in reworks:
+        out.append(f'  round {w.get("round")} via {w.get("gate")} lane {w.get("lane")}: '
+                   f'{", ".join(w.get("cards") or [])} — "{str(w.get("findings"))[:90]}"')
+    return "\n".join(out)
 
 
 def main(argv=None):
@@ -112,6 +158,8 @@ def main(argv=None):
     ap.add_argument("--runs", required=True, help="the board's runs/ directory")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--quiet", action="store_true", help="findings only")
+    ap.add_argument("--history", action="store_true",
+                    help="the board's whole verdict ledger, not just this run")
     a = ap.parse_args(argv)
     recs = load(a.runs)
     if recs is None:
@@ -119,6 +167,16 @@ def main(argv=None):
               f"written by run.py for runs started since this landed", file=sys.stderr)
         return 2
     rows, findings = analyze(recs)
+    if a.history:
+        print(history(a.runs))
+        return 1 if findings else 0
+    reworks = [r for r in recs if r["event"] == "rework"]
+    verdicts = [r for r in rows if r.get("verdict")]
+    if not a.quiet and (verdicts or reworks):
+        print("reviews: " + ", ".join(f'{r["code"]} {r["verdict"]}' for r in verdicts))
+        for w in reworks:
+            print(f'rework:  round {w.get("round")} via {w.get("gate")} '
+                  f'— {", ".join(w.get("cards") or [])} — "{str(w.get("findings"))[:80]}"')
     if a.json:
         print(json.dumps({"rows": rows, "findings": findings}, indent=2))
     elif not a.quiet:
@@ -133,6 +191,8 @@ def main(argv=None):
             # No done record = still in flight. A bare "-" there read as "this
             # card produced nothing" while it was busy producing it.
             outs = ", ".join(row["attached"]) or ("-" if row["done"] else "(still running)")
+            if row.get("verdict"):
+                outs += f'  [{row["verdict"]}]'
             staged = f' + {len(row["staged"])} staged' if row["staged"] else ""
             print(f'  {row["code"]:5} {row["started"]}  in: {ins}')
             print(f'        {"":8} out: {outs}{staged}')

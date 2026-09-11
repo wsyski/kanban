@@ -214,6 +214,23 @@ def repo_findings(runs_dir):
     return out
 
 
+def work_noise_findings(runs_dir):
+    """`work/` holds the idea's output for a human — a cache or a harness in
+    there is neither, and it reaches the reviewer's staged-set check."""
+    out = []
+    work = os.path.join(os.path.dirname(os.path.abspath(runs_dir)), "work")
+    for root, dirs, files in os.walk(work):
+        for d in dirs:
+            if d in ("__pycache__", ".pytest_cache"):
+                out.append(("ERROR", "E16",
+                            f"not a deliverable: {os.path.relpath(os.path.join(root, d), REPO)}"))
+        for f in files:
+            if f.endswith((".pyc", ".pyo", ".tmp", ".log")):
+                out.append(("ERROR", "E16",
+                            f"not a deliverable: {os.path.relpath(os.path.join(root, f), REPO)}"))
+    return out
+
+
 def board_findings(slug, runs_dir):
     """The board's end state: a card the run did not finish, a live worker."""
     out = []
@@ -287,6 +304,7 @@ def audit(runs_dir, board_dir=None):
                 pass
     findings += card_log_findings(slug, started)
     findings += repo_findings(runs_dir)
+    findings += work_noise_findings(runs_dir)
     findings += board_findings(slug, runs_dir)
     return findings, rows, stats
 
@@ -297,6 +315,10 @@ def report(findings, rows, stats, ceiling):
     print(f"{len(errors)} error(s), {len(warns)} warning(s)")
     for sev, code, text in findings:
         print(f"  {sev} {code}: {text}")
+    verdicts = [r for r in rows if r.get("verdict")]
+    if verdicts:
+        # Never bury a rejection again: an audit says what the reviews decided.
+        print("reviews: " + ", ".join(f'{r["code"]} {r["verdict"]}' for r in verdicts))
     if rows:
         print("cards")
         for row in rows:

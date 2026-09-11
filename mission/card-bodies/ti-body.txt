@@ -1,6 +1,6 @@
 TESTER — lane <N>, integration tests. The unit level is GREEN and reviewed.
 
-HARD RULES: (1) Do not commit, branch, stash, reset, restore or clean — work ends staged. (2) Work in <WORKDIR>. Stage only the integration test files you create: `git add -f -- <your integration test paths>` (work/ is gitignored, so -f is required). (3) Attach your own patch only: `git diff --cached -- <your integration test paths> > /tmp/<YOUR-CARD-ID>.patch`, then `hermes kanban --board <BOARD> attach <YOUR-CARD-ID> /tmp/<YOUR-CARD-ID>.patch`. (4) Do not write profile memories or create, patch or delete skills — the profile serves every later card. (5) Scratch goes to /tmp.
+HARD RULES: (1) Do not commit, branch, stash, reset, restore or clean — work ends staged. (2) Work in <WORKDIR>. Stage only the integration test files you create: `git add -f -- <your integration test paths>` (work/ is gitignored, so -f is required). (3) Attach your own patch only: `git diff --cached -- <your integration test paths> > <RUNS>/scratch/<YOUR-CARD-ID>/patch.diff`, then `hermes kanban --board <BOARD> attach <YOUR-CARD-ID> <RUNS>/scratch/<YOUR-CARD-ID>/patch.diff`. (4) Do not write profile memories or create, patch or delete skills — the profile serves every later card. (5) Scratch goes to `<RUNS>/scratch/<YOUR-CARD-ID>/` (create it); `work/` holds only the integration tests the plan names.
 
 <TOOLCHAIN_BOUNDARY>
 

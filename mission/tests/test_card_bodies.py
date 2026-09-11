@@ -8,7 +8,8 @@ import lanes
 
 BODIES = os.path.join(os.path.dirname(__file__), "..", "card-bodies")
 BANNED = re.compile(r"wordcount|mvn |spring|maven|pom\.xml|task 1|task 2", re.I)
-ALLOWED_PLACEHOLDERS = {"<WORKDIR>", "<BOARD>", "<N>", "<IDEA>", "<REFINED>", "<PLAN>",
+ALLOWED_PLACEHOLDERS = {
+    "<RUNS>","<WORKDIR>", "<BOARD>", "<N>", "<IDEA>", "<REFINED>", "<PLAN>",
                         "<TARGETS>", "<PLAN_CHECKLIST>", "<TOOLCHAIN_BOUNDARY>", "<RESULT_FIELD>"}
 FRAGMENT_FILES = sorted(file_lanes.FRAGMENTS.values())
 
@@ -88,6 +89,19 @@ def test_card_sessions_leave_their_profile_alone():
     for body in ("i-body.txt", "p-body.txt", "rvp-body.txt", "tw-body.txt", "c-body.txt",
                  "rva-body.txt", "ti-body.txt", "rvc-body.txt"):
         assert "Do not write profile memories or create, patch or delete skills" in read(body), body
+
+
+def test_nothing_temporary_is_written_outside_runs():
+    """`work/` is what a human receives; every transient — scratch, patches,
+    review files — lives under `<RUNS>/scratch/<card>/` (user rule)."""
+    for name in sorted(os.listdir(BODIES)):
+        if not name.endswith("-body.txt") or name.startswith("_"):
+            continue
+        with open(os.path.join(BODIES, name)) as fh:
+            body = fh.read()
+        assert "/tmp" not in body, f"{name} still sends something to /tmp"
+        if "Scratch" in body or "review.md" in body or "patch.diff" in body:
+            assert "<RUNS>" in body, f"{name} writes a transient outside runs/"
 
 
 def test_the_hand_off_cards_never_stage_a_runs_path():

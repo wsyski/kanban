@@ -7,7 +7,7 @@ a PASS verdict with staged-file evidence — still no commit.
 
 Usage: mission/run.py [--serve] [--once] [--timeout-min 120]
 """
-import json, subprocess, sys, time, os, re, datetime
+import json, shutil, subprocess, sys, time, os, re, datetime
 
 # No default: this repo has no one board, and a stale default would drive the
 # wrong one. Enforced in main(), not here — the test suite imports this module.
@@ -294,6 +294,24 @@ def _full_verdict_pointer(verdict_card_id):
             f"attached review file, if any — the excerpt above may be cut.\n")
 
 
+def record_rework(lane, gate_code, round_no, cards, findings, state):
+    """Log one return-to-predecessor: which gate sent work back, to whom, why.
+
+    Both the per-run chain and the board's ledger, because the two answer
+    different questions — and a REJECT whose round never got filed (a stall, a
+    crash, a wrong hold) is exactly what a reader cannot see from the verdict
+    alone, so the pair is what makes the loop auditable.
+    """
+    gate_title = lanes.card_title(gate_code, lane)
+    gate_id = card_id(state, gate_title) if state else None
+    excerpt = " ".join((findings or "").split())[:600]
+    rec = {"event": "rework", "lane": lane, "gate": gate_code, "round": round_no,
+           "cards": list(cards), "findings": excerpt}
+    chain_record("rework", {"title": gate_title, "id": gate_id, "status": ""}, lane,
+                 gate=gate_code, round=round_no, cards=list(cards), findings=excerpt)
+    ledger(rec)
+
+
 def file_revision(state, lane, round_no, findings, base="P", reviewer_prefix="RVp",
                   gate_code="Gp", max_rounds=3, verdict_card_id=None):
     """File one rework round: a revision card + its re-gate, linked to the gate.
@@ -356,6 +374,7 @@ def file_revision(state, lane, round_no, findings, base="P", reviewer_prefix="RV
     # rework is in flight; the positional-parents check in tick() enforces it.
     # _OPENED stays untouched: the lane's option state is settled.
     log(f"filed {kind} rework round {round_no}: {rev_title} + {rr_title}")
+    record_rework(lane, gate_code, round_no, [rev_title, rr_title], findings, state)
 
 def staged_files():
     """Paths staged in WORKDIR plus this board's artifact files — the evidence
@@ -744,6 +763,32 @@ def rework_rounds(st):
 _CHAIN_STARTED = set()
 _CHAIN_DONE = set()
 WORKER_CODES = ("I", "P", "TW", "C", "TI")
+# Review and gate cards carry a verdict; the ledger is where they outlive a run.
+VERDICT_CODES = ("rv", "g")
+VERDICTS_PATH = os.path.join(RUN_DIR, "verdicts.jsonl")
+
+
+def ledger(record):
+    """Append one line to the board's verdict ledger.
+
+    Run state, beside the chain: `runs/verdicts.jsonl` is rotated and cleared
+    with everything else under runs/, and never staged — the board directory
+    holds its DEFINITION only (board.json, lane-<k>.md, README). A rejection that
+    exists only as prose in a closed card's result field is invisible; one JSON
+    line per verdict and per rework round is what lets `mission/doc-chain.py`
+    show, for the run in front of it, what the reviews decided and what they sent
+    back.
+    """
+    if not BOARD:
+        return          # see chain_record: no run, no ledger line, no repo dirt
+    rec = {"ts": datetime.datetime.now().isoformat(timespec="seconds"), "board": BOARD}
+    rec.update(record)
+    try:
+        os.makedirs(BOARD_DIR, exist_ok=True)
+        with open(VERDICTS_PATH, "a") as f:
+            f.write(json.dumps(rec) + "\n")
+    except OSError as e:
+        log(f"ledger: cannot append to {VERDICTS_PATH} ({e})")
 
 
 def chain_inputs(body, lane):
@@ -758,6 +803,11 @@ def chain_inputs(body, lane):
 
 
 def chain_record(event, card, lane, ts=None, **extra):
+    if not BOARD:
+        # No board, no run: a process without BOARD (a test importing this
+        # module, a stray call) must never drop run state into the repo. This is
+        # the class behind the `boards/runs/` dirt the suite twice produced.
+        return
     rec = {"ts": (ts or datetime.datetime.now()).isoformat(timespec="seconds"), "event": event,
            "lane": lane, "code": card["title"].split(":")[0], "card_id": card.get("id"),
            "title": card["title"], "status": card.get("status")}
@@ -814,10 +864,19 @@ def record_chain_done(state):
         except Exception as e:
             attached = []
             log(f"chain: attachments for {card['title'][:20]} unavailable ({e})")
+        result = (card.get("result") or "").strip()
+        attached = [a for a in attached if a]
+        # What a review DECIDED belongs in the chain next to what it was given:
+        # a verdict is the one hand-off that can send work backwards.
+        verdict = ""
+        if code.lower().startswith(VERDICT_CODES):
+            verdict = "REWORK" if is_rework(result) else verdict_token(result)
         chain_record("done", card, lane, inputs=chain_inputs(card.get("body"), lane),
-                     attached=[a for a in attached if a],
-                     result=(card.get("result") or "").strip()[:200],
+                     attached=attached, result=result[:200], verdict=verdict,
                      staged=sorted(staged_files()) if code in WORKER_CODES else [])
+        if verdict:
+            ledger({"event": "verdict", "lane": lane, "code": code, "card_id": card["id"],
+                    "verdict": verdict, "attached": attached, "text": result[:600]})
 
 
 def card_id_lane(title):
@@ -987,6 +1046,8 @@ def tick():
             continue
         if not parents_done(st, parents):
             continue
+        if kind == "gc":
+            clean_work_noise()
         msg = gate_action(st, title, kind, lane)
         if msg and msg not in ("gate-held", "skip"):
             # Once per distinct message per card, not once per tick: a gate
@@ -1050,6 +1111,7 @@ def file_coder_revision(state, lane, round_no, findings, max_rounds=2, verdict_c
     rr_id = json.loads(kb(*rr_args))["id"]
     kb("link", rr_id, gate_id)
     log(f"filed code rework round {round_no}: {rev_title} + {rr_title}")
+    record_rework(lane, "Gc", round_no, [rev_title, rr_title], findings, state)
 
 
 def escalate(card_id, code, reason):
@@ -1065,6 +1127,8 @@ def escalate(card_id, code, reason):
         return
     _ESCALATED.add(code)
     kb("comment", card_id, f"ESCALATION: {reason}")
+    ledger({"event": "escalation", "code": code, "card_id": card_id,
+            "findings": " ".join((reason or "").split())[:600]})
     log(f"ESCALATED: {code} — {reason}")
     # Escalation = rework rounds exhausted = the lane cannot advance by
     # itself; halt the board the way a gave_up trip does (same tick).
@@ -1076,6 +1140,35 @@ def escalate(card_id, code, reason):
                 f.write(f"{BOARD} halted: {_HALTED['reason']}\n")
         except OSError:
             pass
+
+
+def clean_work_noise():
+    """`work/` holds what the idea asks a human to receive — nothing else.
+
+    A suite run inside work/ leaves `__pycache__`/`.pytest_cache` behind (run 12
+    did), and those then ride into the reviewer's staged-set check and the gate's
+    evidence. One place, no card has to remember: removed before the code gate
+    reads the index. Scratch belongs under runs/scratch/<card>/.
+    """
+    removed = []
+    if not os.path.isdir(WORKDIR):
+        return removed
+    for root, dirs, files in os.walk(WORKDIR):
+        for d in list(dirs):
+            if d in ("__pycache__", ".pytest_cache"):
+                shutil.rmtree(os.path.join(root, d), ignore_errors=True)
+                dirs.remove(d)
+                removed.append(d)
+        for f in files:
+            if f.endswith((".pyc", ".pyo")):
+                try:
+                    os.remove(os.path.join(root, f))
+                    removed.append(f)
+                except OSError:
+                    pass
+    if removed:
+        log(f"work/: removed {len(removed)} cache artifact(s) — work/ is the human's output")
+    return removed
 
 
 def escalated_to_triage(state):

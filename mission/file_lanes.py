@@ -84,6 +84,11 @@ def render_body(body_file, *, repo, board, workdir, lane, targets=(), bodies_dir
                 text = text.replace(placeholder, f.read().strip())
     values = {"<WORKDIR>": os.path.abspath(workdir), "<BOARD>": board,
               "<N>": str(lane), "<TARGETS>": targets_text(targets),
+              # The board's run state, as a body names it. Deliberately NOT a
+              # lane document (lane_paths): scratch lives here, and the chain
+              # checks hand-offs — a directory that changes while a card works
+              # would read as a document written after the card started.
+              "<RUNS>": os.path.join(os.path.abspath(repo), "boards", board, "runs"),
               **lane_paths(repo, board, lane)}
     for placeholder, value in values.items():
         text = text.replace(placeholder, value)

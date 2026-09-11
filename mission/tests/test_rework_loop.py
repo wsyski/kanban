@@ -203,7 +203,12 @@ def _revision_state():
 @pytest.fixture
 def board_env(monkeypatch, tmp_path):
     monkeypatch.setattr(run, "BOARD", "b")
+    monkeypatch.setattr(run, "BOARD_DIR", str(tmp_path))
     monkeypatch.setattr(run, "WORKDIR", str(tmp_path / "work"))
+    # Filing a round now also records it (chain + ledger): both paths must leave
+    # the repo, or the suite writes into boards/runs (the guard test says so).
+    monkeypatch.setattr(run, "RUN_DIR", str(tmp_path / "runs"))
+    monkeypatch.setattr(run, "VERDICTS_PATH", str(tmp_path / "verdicts.jsonl"))
     monkeypatch.setattr(run, "manifest", lambda: {"max_runtime": "7m", "targets": []})
     return tmp_path
 

@@ -273,6 +273,17 @@ def test_a_staged_path_under_runs_is_an_error(tmp_path, monkeypatch):
     assert "E14" in codes(findings, "ERROR"), findings
 
 
+def test_a_cache_left_in_work_is_an_error(tmp_path, monkeypatch):
+    clean_probe(monkeypatch)
+    runs = fixture(tmp_path, chain_recs=worker_chain())
+    work = tmp_path / "boards" / "b" / "work"
+    (work / "__pycache__").mkdir(parents=True, exist_ok=True)
+    (work / "__pycache__" / "x.pyc").write_text("x")
+    (work / "notes.tmp").write_text("scratch")
+    findings, _rows, _s = ra.audit(runs)
+    assert "E16" in codes(findings, "ERROR"), findings
+
+
 def test_the_ceiling_parser():
     assert ra.ceiling_minutes("4m") == 4.0
     assert ra.ceiling_minutes("60m") == 60.0

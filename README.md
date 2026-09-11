@@ -192,6 +192,21 @@ including what is still open:
 - **Never unlink, archive or re-parent a card while the dispatcher is claiming
   it.** The worker spawns holding the pre-change view and then fights a board
   that has moved. Board surgery is safe on a parked lane.
+- **`work/` holds only what the idea asks a human to receive.** For
+  minimal-development that is the two files the plan's Files blocks name — the
+  implementation and its tests. Every transient (scratch, per-card patches, review
+  files) lives under `runs/scratch/<card-id>/`: the bodies say so, `<RUNS>` is a
+  render value and deliberately not a lane document (the chain must not stat
+  scratch as a hand-off), the driver strips pytest caches from `work/` before the
+  code gate reads the index, and `run-audit.py` fails a run that leaves one (E16).
+- **A verdict is logged, not just spoken.** Every review and gate record in
+  `runs/chain.jsonl` carries the `verdict` it reached, and every time a gate sends
+  work back a `rework` record names the gate, the round, the cards filed and the
+  findings. The same facts go to `runs/verdicts.jsonl` — run state beside the
+  chain, unstaged like everything else under `runs/`, rotated with the rest.
+  `doc-chain.py` prints `reviews:`/`rework:` lines and `--history` counts them;
+  its `F6` fails a REJECT with no round filed, which is what an invisible stall
+  looks like.
 - **A commit made while a driver is live is suspect.** The repo is edited live
   from outside the session (an IDE changelist commit has no pathspec, so it takes
   whatever the run has staged): on 2026-09-11 one such commit brought two

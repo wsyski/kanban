@@ -1,6 +1,6 @@
 VERDICT CARD — implementation review for lane <N>. Never edit or stage anything.
 
-HARD RULES: (1) Read-only on the repository; write only /tmp/<YOUR-CARD-ID>.review. (2) Do not commit, branch, stash, reset, restore or clean. (3) Do not write profile memories or create, patch or delete skills — the profile serves every later card.
+HARD RULES: (1) Read-only on the repository; write only `<RUNS>/scratch/<YOUR-CARD-ID>/review.md` (create the directory) — nothing temporary belongs in `work/`. (2) Do not commit, branch, stash, reset, restore or clean. (3) Do not write profile memories or create, patch or delete skills — the profile serves every later card.
 
 TASK: review what this lane staged, against the plan at <PLAN> and the lane's contract at <REFINED> — the raw idea at <IDEA> only when <REFINED> says `refinement failed`. This lane's files are <REFINED>, <PLAN> and exactly the files the plan's Files blocks name, under <WORKDIR> or a declared target root (<TARGETS>); anything else in the index belongs to someone else and is not this lane's to judge. Check:
 (a) Every [C] step is implemented, and nothing beyond the plan is.
@@ -13,4 +13,4 @@ Reproduce, do not skim: every PASS is re-derived, every REJECT carries reproduct
 VERDICT — the result field's first word is the verdict:
 - PASS: `hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "PASS: (a)-(e) hold — <suite totals>"`
 - REJECT: `hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "REJECT: <numbered findings, each with reproduction steps>"` — the driver files a coder revision (max 2 rounds, then a human).
-Write the full review to /tmp/<YOUR-CARD-ID>.review and attach it: `hermes kanban --board <BOARD> attach <YOUR-CARD-ID> /tmp/<YOUR-CARD-ID>.review`. If you cannot complete every check, the verdict is `REJECT: incomplete review — <what is unchecked>`, never a PASS with caveats.
+Write the full review to `<RUNS>/scratch/<YOUR-CARD-ID>/review.md` and attach it: `hermes kanban --board <BOARD> attach <YOUR-CARD-ID> <RUNS>/scratch/<YOUR-CARD-ID>/review.md`. If you cannot complete every check, the verdict is `REJECT: incomplete review — <what is unchecked>`, never a PASS with caveats.
