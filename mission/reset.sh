@@ -35,6 +35,11 @@ USAGE
 }
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
+
+# A `delegate_task` child's marker leaks into the shell that runs this script and
+# the kanban CLI refuses every mutation in that context — the pre-flight dies, or
+# a driver started here has each worker's attach/complete refused. Drop it once.
+unset HERMES_DELEGATED_CHILD_CONTEXT
 BOARD_DIR= YES=0
 need() { [ "$#" -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }; }
 while [ $# -gt 0 ]; do
@@ -108,6 +113,15 @@ import json,sys
 for t in json.load(sys.stdin):
     print(t['id'])")
   if [ -n "$ids" ]; then
+    # A worker the dispatcher spawned does NOT die with its driver: it keeps the
+    # card's workspace and writes to the lane's shared output paths
+    # (runs/artifacts/lane-<k>/refined.md …), so an orphan outliving a killed
+    # run can overwrite the documents of the NEXT run after clear_lane_outputs
+    # has already run (observed 2026-09-11; the chain log reports it as F2).
+    # Stop this board's workers before archiving its cards.
+    for id in $ids; do
+      pkill -f "work kanban task $id" 2>/dev/null && echo "stopped the live worker for $id" || true
+    done
     # shellcheck disable=SC2086
     hermes kanban --board "$SLUG" archive $ids
   fi

@@ -17,7 +17,7 @@ card comment would be a second, mutable copy of the contract.
 
 # code, card-body file, assignee, parent code (None = lane root), skill
 LANE_CARDS = [
-    ("I",   "i-body.txt",   "researcher", None,  "brainstorming"),
+    ("I",   "i-body.txt",   "researcher", None,  None),
     ("Gi",  "gi-body.txt",  "human-gate", "I",   None),
     ("P",   "p-body.txt",   "manager",    "Gi",  "writing-plans"),
     ("RVp", "rvp-body.txt", "reviewer",   "P",   None),
@@ -43,6 +43,11 @@ LABELS = {
     "RVc": "final review",
     "Gc":  "code gate",
 }
+
+# The refined idea's headings, in order. i-body.txt prescribes them and the idea
+# gate refuses a file missing any — one list, so the two cannot drift apart.
+REFINED_SECTIONS = ("Problem", "Scope", "Open questions", "Assumptions", "Findings",
+                    "Verification recipe", "Prior art", "Success criteria")
 
 # codes dropped when a lane runs without integration tests
 IT_CODES = ("TI", "RVc")

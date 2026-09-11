@@ -1,11 +1,11 @@
-TESTER — lane <N>, RED-first. Write the failing tests for the plan at <PLAN> before any implementation exists.
+TESTER — lane <N>, RED-first. Write the failing tests the plan at <PLAN> specifies, before any implementation exists.
 
-HARD RULES: (1) Do not commit, branch, stash, reset, clean. (2) Stage only the test files you create: git add -f -- <your test paths> (work/ is gitignored — -f is required). (3) Attach YOUR patch only: git diff --cached -- <your test paths> > /tmp/<YOUR-CARD-ID>.patch, then `hermes kanban --board <BOARD> attach <YOUR-CARD-ID> /tmp/<YOUR-CARD-ID>.patch` — the bare `git diff --cached` would bundle everything earlier cards staged. (4) Do not write profile memories. (5) Do not implement anything — tests only.
+HARD RULES: (1) Do not commit, branch, stash, reset, restore or clean — work ends staged. (2) Work in <WORKDIR>. Stage only the test files you create: `git add -f -- <your test paths>` (work/ is gitignored, so -f is required). (3) Attach your own patch only: `git diff --cached -- <your test paths> > /tmp/<YOUR-CARD-ID>.patch`, then `hermes kanban --board <BOARD> attach <YOUR-CARD-ID> /tmp/<YOUR-CARD-ID>.patch` — a bare `git diff --cached` bundles every earlier card's staged files. (4) Do not write profile memories or create, patch or delete skills — the profile serves every later card. (5) Tests only — no implementation, not even a stub of it. (6) Scratch goes to /tmp.
 
-TOOLCHAIN BOUNDARY: the lane runs on this machine as it is. PACKAGE REGISTRIES ARE TOOLING, NOT INFRASTRUCTURE: the project's own package manager (`npm install` into node_modules, dependency-manifest downloads) is ALLOWED — pulling a library is how those toolchains are meant to be used. What is NEVER allowed: installing or changing the MACHINE (system packages, global toolchain installs or upgrades, services, daemons, PATH-level changes); if the required tool itself is missing, that is a scope flag up the chain, not something to install. Everything else — the runtime itself must already exist: only tools the REFINED Findings name as available may be used. A test the plan needs that this machine cannot run as-is goes into your result as an escalation, not into an install.
+<TOOLCHAIN_BOUNDARY>
 
-TASK: write the tests the plan specifies, exactly as the plan specifies them. Run them and confirm they FAIL for the right reason (missing implementation, not a typo or a broken harness). Record the RED output in your result.
+TASK: execute every [TW] step in the plan exactly as written. Run the tests and confirm each fails for the right reason — the implementation is missing — not because of a typo or a broken harness. A planned test that cannot fail as written is a finding for your result, not something to rewrite quietly.
 
-TRANSIENT FILES: scratch you create while building the tests (probe scripts, shims) is deleted before you complete — only the real test files remain staged.
+DONE WHEN: the tests are staged and RED for the right reason, the patch is attached, and the card is completed: `hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "<n> tests staged, RED confirmed: <the failure message>"`.
 
-Complete with --result "<n> tests staged, RED confirmed: <the failure message>".
+<RESULT_FIELD>

@@ -3,6 +3,11 @@
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 
+# A `delegate_task` child's marker leaks into the shell that runs this script and
+# the kanban CLI refuses every mutation in that context — the pre-flight dies, or
+# a driver started here has each worker's attach/complete refused. Drop it once.
+unset HERMES_DELEGATED_CHILD_CONTEXT
+
 usage() {
 cat <<'USAGE'
 mission/create-board.sh — create a generic kanban board instance

@@ -135,7 +135,10 @@ def test_latest_verdict_does_not_read_run_summaries(monkeypatch):
     st = full_lane_state()
     st[lanes.card_title("RVp", 1)].update(status="done", result=None, completed_at=100,
                                           summary="parked: awaiting lane activation")
-    monkeypatch.setattr(run, "runs_result", lambda cid: "parked: awaiting lane activation")
+    monkeypatch.setattr(run.runs_util, "board_runs",
+                        lambda b, cid: [{"outcome": "blocked",
+                                         "summary": "parked: awaiting lane activation",
+                                         "ended_at": 50}])
     assert run.latest_verdict(st, 1, "RVp", "Gp") == ""
 
 
@@ -156,7 +159,8 @@ def test_latest_verdict_reads_the_completed_run_summary_when_result_is_empty(mon
 def test_verdict_token_finds_the_first_token_anywhere():
     assert run.verdict_token("Lane-1 implementation review PASS: staged 3 files") == "PASS"
     assert run.verdict_token("REJECT: broken") == "REJECT"
-    assert run.verdict_token("rejected earlier, PASS later") == "REJECT" if False else True
+    assert run.verdict_token("REJECT first, PASS later") == "REJECT"
+    assert run.verdict_token("rejected earlier, PASS later") == "PASS"
     assert run.verdict_token("PASS") == "PASS"
     assert run.verdict_token("") == ""
     assert run.verdict_token("no verdict here") == ""
@@ -223,3 +227,159 @@ def test_idea_re_gate_keeps_the_gate_holder_instructions(monkeypatch, board_env)
                       reviewer_prefix="Gi", gate_code="Gi", max_rounds=2)
     rr = next(c for c in calls if c[0] == "create" and c[1].startswith("Gi1-r2"))
     assert "as a gate-holder would" in _arg(rr, "--body")
+
+
+# --- verdict text ------------------------------------------------------------
+
+def test_rejection_findings_accept_any_punctuation_after_the_token():
+    assert run.rejection_findings("REJECT: 1. commits") == "1. commits"
+    assert run.rejection_findings("REJECT — 1. commits") == "1. commits"
+    assert run.rejection_findings("Plan review REJECT - 1. commits") == "1. commits"
+    assert len(run.rejection_findings("REJECT: " + "x" * 9000)) == 4000
+
+
+def test_rework_is_the_first_word_in_any_case():
+    assert run.is_rework("REWORK: q1 yes")
+    assert run.is_rework("  rework — answers")
+    assert not run.is_rework("ACCEPT: rework nothing")
+    assert run.rework_answers("REWORK: q1 yes, q2 42") == "q1 yes, q2 42"
+
+
+# --- rework_rounds: the three loops ------------------------------------------
+
+def _recording(monkeypatch):
+    filed = []
+    monkeypatch.setattr(run, "file_revision",
+                        lambda st, lane, r, findings, **kw: filed.append(("rev", lane, r, findings, kw)))
+    monkeypatch.setattr(run, "file_coder_revision",
+                        lambda st, lane, r, findings, **kw: filed.append(("code", lane, r, findings, kw)))
+    monkeypatch.setattr(run, "escalate", lambda *a: filed.append(("escalate",) + a))
+    return filed
+
+
+def test_a_reject_without_a_colon_files_a_plan_revision(monkeypatch):
+    filed = _recording(monkeypatch)
+    st = full_lane_state()
+    rvp = lanes.card_title("RVp", 1)
+    st[rvp].update(status="done", result="REJECT — 1. Step 5 commits", completed_at=10)
+    run.rework_rounds(st)
+    assert [(f[0], f[3]) for f in filed] == [("rev", "1. Step 5 commits")]
+    assert filed[0][4]["base"] == "P"
+    assert filed[0][4]["verdict_card_id"] == f"id-{rvp}"
+
+
+def test_rework_at_the_idea_gate_files_a_researcher_round(monkeypatch):
+    filed = _recording(monkeypatch)
+    st = full_lane_state()
+    st[lanes.card_title("Gi", 1)].update(status="done", result="REWORK: q1 yes", completed_at=10)
+    run.rework_rounds(st)
+    assert [(f[0], f[3], f[4]["base"]) for f in filed] == [("rev", "q1 yes", "I")]
+
+
+def test_accept_at_the_idea_gate_files_nothing(monkeypatch):
+    filed = _recording(monkeypatch)
+    st = full_lane_state()
+    st[lanes.card_title("Gi", 1)].update(status="done", result="ACCEPT: fine", completed_at=10)
+    run.rework_rounds(st)
+    assert filed == []
+
+
+def test_an_implementation_reject_files_a_coder_round(monkeypatch):
+    filed = _recording(monkeypatch)
+    st = full_lane_state()
+    rva = lanes.card_title("RVa", 1)
+    st[rva].update(status="done", result="REJECT: 1. parser", completed_at=10)
+    run.rework_rounds(st)
+    assert [(f[0], f[3]) for f in filed] == [("code", "1. parser")]
+    assert filed[0][4]["verdict_card_id"] == f"id-{rva}"
+
+
+# --- holds behind a verdict --------------------------------------------------
+
+def test_latest_verdict_reads_the_base_card_even_when_a_round_is_listed_first():
+    """'Gi1' also prefixes 'Gi1-r2'; listed first and not yet done, the round
+    hid the base card's REWORK and let P start during rework."""
+    st = {"Gi1-r2: idea re-gate round 2 - lane 1": card("Gi1-r2", status="blocked")}
+    st.update(full_lane_state())
+    st[lanes.card_title("Gi", 1)].update(status="done", result="REWORK: q1", completed_at=10)
+    assert run.is_rework(run.latest_verdict(st, 1, "Gi", "Gi"))
+
+
+def test_p_waits_while_the_newest_idea_verdict_is_rework():
+    st = full_lane_state()
+    st[lanes.card_title("Gi", 1)].update(status="done", result="REWORK: q1", completed_at=10)
+    assert run.held_by_verdict(st, "p", 1)
+    st["Gi1-r2: idea re-gate round 2 - lane 1"] = card(
+        "Gi1-r2", status="done", result="ACCEPT", completed_at=20)
+    assert not run.held_by_verdict(st, "p", 1)
+
+
+def test_ti_waits_until_the_implementation_review_passes():
+    st = full_lane_state()
+    st[lanes.card_title("RVa", 1)].update(status="done", result="REJECT: 1. x", completed_at=10)
+    assert run.held_by_verdict(st, "ti", 1)
+    st["RVa1-r2: implementation re-review round 2 - lane 1"] = card(
+        "RVa1-r2", status="done", result="PASS: ok", completed_at=20)
+    assert not run.held_by_verdict(st, "ti", 1)
+
+
+def test_other_cards_are_never_held_by_a_verdict():
+    assert not run.held_by_verdict(full_lane_state(), "tw", 1)
+
+
+# --- rework rounds point at the full verdict; IT lanes re-run the final review
+
+def test_revision_points_at_the_full_verdict(monkeypatch, board_env):
+    calls = _capture_kb(monkeypatch)
+    run.file_revision(_revision_state(), 1, 1, "1. x", base="P", reviewer_prefix="RVp",
+                      gate_code="Gp", verdict_card_id="t_rv")
+    rev = next(c for c in calls if c[0] == "create" and c[1].startswith("P1-rev-1"))
+    assert "show t_rv" in _arg(rev, "--body")
+
+
+def test_it_lane_re_review_repeats_the_final_review(monkeypatch, board_env):
+    calls = _capture_kb(monkeypatch)
+    st = _revision_state()
+    st[lanes.card_title("RVc", 1)] = {"id": "id-RVc", "status": "done"}
+    run.file_coder_revision(st, 1, 1, "1. x", verdict_card_id="t_rv")
+    rr = next(c for c in calls if c[0] == "create" and c[1].startswith("RVa1-r2"))
+    assert "FULL suite" in _arg(rr, "--body")
+    rev = next(c for c in calls if c[0] == "create" and c[1].startswith("C1-rev-1"))
+    assert "show t_rv" in _arg(rev, "--body")
+
+
+# --- halts are for spent retries ---------------------------------------------
+
+@pytest.fixture
+def quiet_halt(monkeypatch, tmp_path):
+    monkeypatch.setattr(run, "kb", lambda *a, **k: "")
+    monkeypatch.setattr(run, "RUN_DIR", str(tmp_path))
+    monkeypatch.setattr(run, "notify_deadman", lambda st: None)
+    monkeypatch.setattr(run, "log", lambda msg: None)
+    monkeypatch.setattr(run, "RUN_DIR", str(tmp_path))
+    monkeypatch.setattr(run, "_blocked_event_payload", lambda cid: None)
+    run._HALTED["reason"] = None
+    yield
+    run._HALTED["reason"] = None
+
+
+def _event(kind):
+    return lambda cid: {"kind": kind, "reason": kind}
+
+
+def test_a_timeout_with_retries_left_does_not_halt(monkeypatch, quiet_halt):
+    monkeypatch.setattr(run, "_exhaustion_event", _event("timed_out"))
+    st = {lanes.card_title("P", 1): {"id": "t1", "status": "ready"}}
+    assert run.halt_if_exhausted(st) is None
+
+
+def test_a_timeout_that_left_the_card_blocked_halts(monkeypatch, quiet_halt):
+    monkeypatch.setattr(run, "_exhaustion_event", _event("timed_out"))
+    st = {lanes.card_title("P", 1): {"id": "t1", "status": "blocked"}}
+    assert run.halt_if_exhausted(st)
+
+
+def test_gave_up_always_halts(monkeypatch, quiet_halt):
+    monkeypatch.setattr(run, "_exhaustion_event", _event("gave_up"))
+    st = {lanes.card_title("TW", 1): {"id": "t1", "status": "running"}}
+    assert run.halt_if_exhausted(st)

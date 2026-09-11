@@ -3,9 +3,10 @@ CODE GATE — lane <N>. The driver never commits. Nothing is committed unless a 
 The driver completes this card only when the final review verdict is PASS, and records the staged path list in the result. It runs no build of its own — the reviewer cards ran the tests, and at a manual gate you run whatever verification you want.
 
 If this lane runs with human gates (the default), the driver pauses here. Your options as the gate-holder:
-1. Check the parent card's PASS verdict and the suite evidence in the driver log.
-2. Inspect the staged index: git diff --cached --stat
-3. Commit and push if you want this work in history — entirely at your discretion, with an explicit pathspec. The flow does not require it.
-4. Complete this card: hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "<what you decided>"
+1. Read the plan at <PLAN> and the newest review verdict — RVa, RVc, or their latest re-review round — with the suite evidence in the driver log.
+2. Check by hand every success criterion <REFINED> marks `manual at Gc`; no card could automate those.
+3. Inspect the staged index: git diff --cached --stat
+4. Commit and push if you want this work in history — entirely at your discretion, with an explicit pathspec. The flow does not require it.
+5. Complete this card: hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "<what you decided>"
 
 Completing this card is what releases the next lane's root card.

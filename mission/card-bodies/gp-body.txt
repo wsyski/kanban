@@ -1,9 +1,9 @@
 PLAN GATE — lane <N>. The driver never commits. Nothing is committed unless a human chooses to commit it.
 
-The driver completes this card only when the plan review verdict is PASS, and records the evidence (staged file count + verdict) in the result.
+The driver completes this card only when the newest plan-review verdict is PASS, and records the evidence (staged file count + verdict) in the result.
 
 If this lane runs with human gates (the default), the driver pauses here and logs HUMAN GATE READY. Your options as the gate-holder:
-1. Read <PLAN> and the RVp verdict (parent card result).
+1. Read <PLAN> and the newest plan-review verdict — the RVp card, or its latest re-review round — including its NOTES and any gap the manager reported.
 2. Inspect what is staged: git diff --cached --stat
 3. Commit the plan if you want it in history — entirely at your discretion, with an explicit pathspec. The flow does not require it.
 4. Complete this card: hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "<what you decided>"

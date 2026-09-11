@@ -1,15 +1,16 @@
-VERDICT CARD — implementation review for lane <N>. Never edit anything; never stage.
+VERDICT CARD — implementation review for lane <N>. Never edit or stage anything.
 
-HARD RULES: (1) Read-only on the repo; write only /tmp/<YOUR-CARD-ID>.review. (2) Do not commit, branch, stash, reset, clean. (3) Do not write profile memories.
+HARD RULES: (1) Read-only on the repository; write only /tmp/<YOUR-CARD-ID>.review. (2) Do not commit, branch, stash, reset, restore or clean. (3) Do not write profile memories or create, patch or delete skills — the profile serves every later card.
 
-TASK: review the STAGED diff in <WORKDIR> (git diff --cached), not the worktree, against <PLAN> and the lane's contract at <REFINED> (fall back to the raw idea at <IDEA> only if <REFINED> is missing or a verbatim passthrough):
-(a) The plan's tasks are all implemented, and nothing beyond them is. Transient leftovers (scratch files, extracted modules, fixtures the plan said to remove) count as plan-incompleteness: finding with reproduction — the plan's cleanup task was skipped, not 'work beyond the plan'. Blocking only if the plan never scheduled cleanup at all.
-(b) The tests actually exercise the behavior they claim to; run them yourself.
-(c) No commits, no branches, no files outside this lane's target paths.
-(d) Error handling does not silently swallow failures.
+TASK: review what this lane staged, against the plan at <PLAN> and the lane's contract at <REFINED> — the raw idea at <IDEA> only when <REFINED> says `refinement failed`. This lane's files are <REFINED>, <PLAN> and exactly the files the plan's Files blocks name, under <WORKDIR> or a declared target root (<TARGETS>); anything else in the index belongs to someone else and is not this lane's to judge. Check:
+(a) Every [C] step is implemented, and nothing beyond the plan is.
+(b) The tests exercise the behaviour they claim to: run the suite yourself, with the plan's Run commands.
+(c) Every file the plan names under <WORKDIR> is staged (`git -C <WORKDIR> diff --cached --name-only`); a file the plan names under a declared target root (<TARGETS>) is outside the repository, so verify it by path — it exists and holds what the plan names — and list it in the result. The TW<N> and C<N> patches touch nothing the plan does not name. No commits, no branches.
+(d) Errors are not silently swallowed.
+(e) The tester's tests are unchanged by the coder: diff the staged test files against the patch attached to card TW<N>.
+Reproduce, do not skim: every PASS is re-derived, every REJECT carries reproduction steps.
 
-BLOCKING CARD, NOT DOING THE WORK: this card's success case is that work WAITS for a human, never that the flow moves on. If checks fail, REJECT — do not complete to make the board move, do not treat the absence of problems as permission to skip checking.
-
-Reproduce, do not skim. Every PASS must be earned by re-derivation; every REJECT must list concrete reproduction steps.
-
-VERDICT: complete with --result "PASS: <one line per (a)-(d)>" or "REJECT: <numbered findings with reproduction steps>".
+VERDICT — the result field's first word is the verdict:
+- PASS: `hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "PASS: (a)-(e) hold — <suite totals>"`
+- REJECT: `hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "REJECT: <numbered findings, each with reproduction steps>"` — the driver files a coder revision (max 2 rounds, then a human).
+Write the full review to /tmp/<YOUR-CARD-ID>.review and attach it: `hermes kanban --board <BOARD> attach <YOUR-CARD-ID> /tmp/<YOUR-CARD-ID>.review`. If you cannot complete every check, the verdict is `REJECT: incomplete review — <what is unchecked>`, never a PASS with caveats.

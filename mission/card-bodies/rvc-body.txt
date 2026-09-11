@@ -1,10 +1,14 @@
-VERDICT CARD — final review for lane <N>, before the code gate. Never edit anything; never stage.
+VERDICT CARD — final review for lane <N>, before the code gate. Never edit or stage anything.
 
-HARD RULES: (1) Read-only on the repo; write only /tmp/<YOUR-CARD-ID>.review. (2) Do not commit, branch, stash, reset, clean. (3) Do not write profile memories.
+HARD RULES: (1) Read-only on the repository; write only /tmp/<YOUR-CARD-ID>.review. (2) Do not commit, branch, stash, reset, restore or clean. (3) Do not write profile memories or create, patch or delete skills — the profile serves every later card.
 
-TASK: the last check before the gate. Against the full staged diff:
-(a) The whole suite passes from a clean run — run it yourself, do not trust the previous card's claim.
-(b) The staged index contains all of this lane's files and nothing else.
-(c) The integration tests exercise real behavior, not mocks of the thing under test.
+TASK: the last check before the gate, against the plan at <PLAN> and the contract at <REFINED>. This lane's files are <REFINED>, <PLAN> and exactly the files the plan's Files blocks name, under <WORKDIR> or a declared target root (<TARGETS>). Reproduce, do not skim:
+(a) The whole suite — unit and integration — passes from a clean run: run it yourself with the plan's Run commands; never trust an earlier card's totals.
+(b) Every file the plan names under <WORKDIR> is staged; a file the plan names under a declared target root (<TARGETS>) is verified by path and listed in the result. The TW<N>, C<N> and TI<N> patches touch nothing the plan does not name.
+(c) The integration tests exercise real behaviour, not mocks of the thing under test.
+(d) Every success criterion in <REFINED> is covered by a passing test, or marked `manual at Gc` for the human at the code gate.
 
-VERDICT: complete with --result "PASS: full suite <totals>, <n> files staged" or "REJECT: <numbered findings>".
+VERDICT — the result field's first word is the verdict:
+- PASS: `hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "PASS: full suite <totals>, <n> lane files staged"`
+- REJECT: `hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "REJECT: <numbered findings, each with reproduction steps>"` — the driver files a coder revision whose re-review repeats this final review.
+Write the full review to /tmp/<YOUR-CARD-ID>.review and attach it: `hermes kanban --board <BOARD> attach <YOUR-CARD-ID> /tmp/<YOUR-CARD-ID>.review`. If you cannot complete every check, the verdict is `REJECT: incomplete review — <what is unchecked>`, never a PASS with caveats.

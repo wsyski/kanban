@@ -37,11 +37,10 @@ FILL = {"I": IDEA, "Gi": BUILD, "P": PLAN, "RVp": REVIEW, "Gp": BUILD,
 GATES = {"Gi", "Gp", "Gc"}
 SHORT = {"I": "refine idea", "Gi": "GATE — human accepts idea", "P": "plan",
          "RVp": "review", "Gp": "GATE — human commits plan", "TW": "tests RED",
-         "C": "implement", "RVa": "review", "TI": "failsafe ITs",
+         "C": "implement", "RVa": "review", "TI": "integration tests",
          "RVc": "final review", "Gc": "GATE — human commits code"}
-WHO = {"I": "researcher", "P": "manager", "RVp": "reviewer", "TW": "tester",
-       "C": "coder", "RVa": "reviewer", "TI": "tester", "RVc": "reviewer",
-       "Gi": "human", "Gp": "human", "Gc": "human"}
+WHO = {code: "human" if assignee == "human-gate" else assignee
+       for code, _body, assignee, _parent, _skill in lanes.LANE_CARDS}
 
 
 def _esc(text):
@@ -84,12 +83,13 @@ def drawio():
                 'style="edgeStyle=orthogonalEdgeStyle;rounded=1;dashed=1;" edge="1" parent="1" '
                 'source="Gc1" target="I2">\n'
                 '          <mxGeometry relative="1" as="geometry" />\n        </mxCell>')
-    cells.append('        <mxCell id="rework" value="REWORK (up to 3 rounds)&#10;'
-                 'RVp REJECT → P-rev → re-review → PASS&#10;'
-                 'no rework loop on I: the idea gate is the loop" '
+    cells.append('        <mxCell id="rework" value="REWORK LOOPS&#10;'
+                 'RVp REJECT → P-rev → RVp-r (max 3)&#10;'
+                 'RVa/RVc REJECT → C-rev → RVa-r (max 2)&#10;'
+                 'Gi REWORK → I-rev → Gi-r (max 2)" '
                  'style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;dashed=1;" '
                  'vertex="1" parent="1">\n'
-                 '          <mxGeometry x="820" y="60" width="280" height="70" as="geometry" />\n'
+                 '          <mxGeometry x="820" y="60" width="280" height="90" as="geometry" />\n'
                  '        </mxCell>')
     cells.append('        <mxCell id="key" value="purple=idea · blue=plan · '
                  'orange=review · green=build/test · thick=HUMAN GATE (0 agent time)" '

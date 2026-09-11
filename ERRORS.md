@@ -9,6 +9,202 @@ Fixed items name the commit that fixed them. Open items are open.
 
 ---
 
+## Fixed (2026-09-11 — prompts read against the driver)
+
+Found by reading the card bodies against `run.py`, the last run's artifacts and
+the profiles' skill ledgers. Unit-tested; not yet exercised by a live run.
+
+### 23. Card sessions patched their own profile's skills
+
+The bodies forbade profile memories but not skills. Three kanban sessions
+patched a skill in their own profile (`skills/.curator_ledger.jsonl`, actor
+`agent`): manager's `hermes-kanban-missions` twice on 2026-09-06 and coder's
+`kanban-worker` on 2026-09-09 — and every later card in that profile loaded the
+patched copy. The profile-memory hard rule of every worker and verdict body now
+forbids creating, patching or deleting skills too.
+
+### 31. A refiled board could inherit the previous run's refined idea
+
+`clear_run_state` empties the per-run state under `runs/` — `cards/`,
+`snapshots/`, `timing.jsonl`, `run-summary.json`, `halt.txt`, `deadman.txt` — and
+stops short of `runs/artifacts/`, which holds BOTH the rotated evidence of finished
+runs and the per-lane HAND-OFF files (`artifacts/lane-<k>/{refined,plan}.md`) that
+are the incoming run's output paths. Those hand-offs disappeared only as a side
+effect of the refile's `git restore --staged --worktree -- :(top)…runs/artifacts`
+(proven in a scratch repo: the worktree copy goes with the index entry, because
+workers force-stage what they write). A hand-off that was never staged — a
+researcher that failed before staging, an unstaged file — therefore stayed, and
+`gate_action`'s idea gate checks the refined idea's STRUCTURE (all
+`lanes.REFINED_SECTIONS`, >=1 Findings bullet): the previous run's refined idea
+passes it, and the new plan is built on the old idea. `reset.sh` wipes `runs/`
+wholesale, which is why the smoke path could never show this — it needs a second
+idea on a serving board. Fixed twice over. `clear_run_state` deletes `artifacts/lane-<k>/` explicitly (the
+refile path), and — because that path is not the only way in — the clearance also
+belongs to the lane's FIRST CARD: `clear_lane_outputs()` runs from `open_lane()`
+immediately before the root is released, so a refile, a `--once` start, a
+hand-unblocked root and a driver restart into a dirty state all clear the lane's
+own outputs (hand-offs deleted; this lane's staged entries restored out of the
+index; a missing work dir logs a skip instead of raising). Once per lane per
+process: a retry inside the run keeps what this run wrote, and a restart mid-lane
+(root already done) clears nothing. The gate already reports the absence as
+`waiting: no refined idea at …`. Detection is now mechanical: `runs/chain.jsonl`
+records what each card was given and produced, and `mission/doc-chain.py` fails
+(`F3`) on any document older than the run that a card was handed.
+
+### 30. The timing report said 0.0 min of agent work for a 9.1-minute run
+
+`mission/timing-report.py` reads every card's runs through `runs_util.board_runs`,
+which called `hermes kanban runs <id> --json` with the inherited environment and
+returned `[]` on any failure. From a shell carrying the leaked child marker (#25)
+the CLI refuses, so each card's agent minutes came back 0: `total agent work time:
+0.0 min`, `overhead ratio: … (100%)`, while the run's own `run-summary.json` — read
+minutes earlier — said 9.1. `board_runs()` now passes `cli_env()`, and a failed call
+warns once on stderr instead of a silent `[]` that reads as "this card has no runs".
+
+### 29. A plan review audited the repository instead of the plan
+
+`RVp1` spent 28 tool calls and 236s on a plan that fits in 30 lines: 22 `terminal`
+commands, 18 API calls, 223s of model latency, input context growing 22k -> 106k.
+The calls were not review work — from #5 on it was reading
+`docs/superpowers/plans/2026-09-11-kanban-review-fixes.md`, the spec, `.superpowers/sdd/…/progress.md`,
+ERRORS.md, `mission/run.py`, `mission/reset.sh` and `mission/tests/*`, i.e.
+auditing the repository. Cause: checklist item 8's command is
+`git diff --cached --name-only`, which lists the WHOLE index, and a foreign staged
+deletion (`D boards/minimal-development/work/roman-evaluator.html`, left by the
+roman-evaluator migration and re-staged by Task 7 Step 1 itself) appeared in it —
+with no rule in `rvp-body.txt` saying foreign entries are not the lane's. `rva`/`rvc`
+had that sentence; RVp did not. Fixes: the clause is now in `rvp-body.txt` ("<PLAN>,
+never a document under `docs/`… anything else in the index belongs to someone else"),
+Task 7 Step 1 no longer re-stages the deletion, and the deletion was unstaged so
+item 8's output is the lane's own files. A transcript audit of the same run shows
+`P1` was bitten too — it read `work/roman-evaluator.html` and the board README after
+seeing the entry — so the rule now also sits in `p-body.txt` and in checklist item 8,
+which is where both cards meet it.
+
+### 28. Worker cards reported into `summary`, not `result`
+
+Every worker body ends with the exact CLI command `complete <id> --result "…"`, yet
+all three worker cards of the 2026-09-11 run (P1, TW1, C1) completed with
+`{"result_len": 0, "summary": "…"}` — their report in the summary field. Cause is not
+the worker: the `kanban_complete` tool it actually calls documents "Prefer
+`summary`… at least one of `summary` or `result` is required"
+(`tools/kanban_tools_schemas.py` KANBAN_COMPLETE_SCHEMA), so a model completing by
+tool puts the handoff where its schema points. Verdict cards never showed this —
+their bodies frame the field as "the result field's first word is the verdict".
+Fix: one `<RESULT_FIELD>` fragment states the field for all five worker bodies, and
+`run.note_empty_results()` logs the cards that still report elsewhere instead of
+leaving it invisible.
+
+### 27. `--once` never opened the lane, so an IT-less board ran TI and RVc
+
+`open_lane()` — which archives `TI`/`RVc` when the lane's options say
+`integration_tests: false`, re-links `Gc`, and refreshes the idea snapshot — was
+called only from the root card's promotion branch, and `tick()` skips that branch
+for every card whose status is not `blocked` (run.py:693). `start-board.sh --once`
+unblocks the root itself (it must: one-shot mode never arms an idea), so the
+branch never fired on `boards/minimal-development`: no `LANE 1 open:` line in
+driver.log, `TI1` was unblocked and ran after `RVa1`, and the board's own README
+promises the lane drops to 9 cards. `tick()` now opens lanes first
+(`open_lanes()`), under the same conditions the branch used, so every entry path
+— `--once`, a human unblocking `I1`, serve-mode adoption — prunes identically.
+Found by the 2026-09-11 smoke run reading its own driver.log.
+
+### 26. The suite went red for a healthy run
+
+`test_no_board_tracks_generated_output` asked `git ls-files`, which reads the
+INDEX — so the test failed the moment a run did the right thing and force-staged
+a hand-off (`runs/artifacts/lane-1/refined.md`), and passed only while no board
+had staged output. It now asks `git ls-tree HEAD` (nothing generated is ever
+COMMITTED) and allows a path in HEAD that is deleted — staged or not — as the one
+transition state. Second trap, caught by a direct query: `ls-files` globs
+`boards/*/work/*` across slashes but `ls-tree` (and `diff`) do NOT without
+`:(glob)`, so the first rewrite asserted over an empty set and passed vacuously.
+The test matches in Python with `fnmatch` now, and carries a pattern self-check. Found by the 2026-09-11 smoke run, not by reading.
+
+### 25. A delegate_task child's marker blocks every kanban mutation
+
+`HERMES_DELEGATED_CHILD_CONTEXT=1` leaks into the shared terminal env once a
+subagent has run a shell command there. The kanban CLI then refuses every
+mutation: `create-board.sh` dies in its pre-flight, and a driver launched from
+that shell has each worker's `attach`, `complete` and `unblock` refused while
+the board still looks healthy. Read-only subcommands keep working, which is
+what made it look like a board bug. `runs_util.cli_env()` now strips the marker
+from every `kb()` subprocess, and `create-board.sh`, `start-board.sh` and
+`reset.sh` unset it at entry.
+
+### 24. The plan's Task 2 test list missed one retarget
+
+`test_latest_verdict_does_not_read_run_summaries` patched `run.runs_result`,
+which the rewritten `latest_verdict_card` no longer calls — the patch went dead
+and the test fell through to the real `hermes` CLI, breaking the rule that tests
+never call it. Retargeted to `run.runs_util.board_runs` with a `blocked` run,
+which is the behaviour the test is about.
+
+### 22. Rework rounds were filed with raw placeholders
+
+`file_revision` and `file_coder_revision` read the body files and never
+substituted them: every revision and re-review card carried literal
+`<REFINED>`, `<PLAN>`, `<WORKDIR>`, `<BOARD>` and `<N>`, ran from the repository
+root, ignored the board's `max_runtime` and dropped the card's skill. Both now
+go through `file_lanes.render_body`, the renderer board filing uses.
+
+### 21. The plan re-review was told to act as a gate-holder
+
+The re-gate text appended to every rework round landed on `rvp-body.txt` too. A
+re-review completed "exactly as a gate-holder would" may carry neither PASS nor
+REJECT, which holds Gp forever with no further round. The plan re-review now
+gets verdict-card instructions.
+
+### 20. The idea REWORK loop could never fire
+
+gi-body told the human to write `REWORK:`; the loop tested
+`verdict_token(v) == "REJECT"`, which knows only PASS and REJECT. And P was
+unblocked in the same tick, before any round was filed. The loop now matches
+REWORK itself (`is_rework`), and promotion holds P while the newest idea
+verdict is REWORK (`held_by_verdict`).
+
+### 19. A REJECT without a colon stalled the lane
+
+`v.split("REJECT:", 1)[1]` raised IndexError on "REJECT — …", once per tick.
+`rejection_findings` accepts any punctuation; findings are capped at 4000
+characters and the revision card points at the full verdict card.
+
+### 18. One timeout halted the driver
+
+Any `timed_out` event halted the board, even while the dispatcher was retrying
+the card: three manual restarts on 2026-09-10 (P1 twice, TW1). The driver now
+halts on `gave_up`, or on a timeout that left the card blocked.
+
+### 17. TI ran against rejected code
+
+On an integration lane an RVa REJECT left TI's parent done, so TI ran beside the
+coder revision; an RVc REJECT was re-reviewed by RVa alone. TI now waits for a
+PASS, and on such lanes the code re-review repeats the final review.
+
+### 16. CLI errors showed only the update banner
+
+`kb()` logged the first 200 characters of stderr — the "hermes update … did not
+restart running gateways" banner — and hid "board 'minimal-development' does
+not exist" behind it (driver.log, 2026-09-10 23:52). `runs_util.cli_error`
+drops the banner and keeps the tail.
+
+### The plan contract, same day
+
+- One plan-acceptance checklist (`_plan-checklist.txt`) is both the plan card's
+  self-check and the plan review's only REJECT grounds.
+- The transient-file / inline / cleanup-step rules are gone from every body: they
+  encoded one old idea's workaround and could not work (TW and C must stage what
+  they create). Scratch lives in /tmp; the deliverables are the plan's Files blocks.
+- The researcher card no longer force-loads `brainstorming`, whose checklist is
+  design and planning — the manager's job — with a user who is not there.
+- The refined idea gains numbered Findings, a Verification recipe (`manual at Gc`
+  for what no card can automate) and numbered success criteria; the idea gate
+  checks every heading (`lanes.REFINED_SECTIONS`) and counts only Findings bullets.
+- `boards/minimal-development` is the one-function smoke idea again; the roman
+  page is `boards/roman-evaluator`. A board.json may declare `targets`.
+
+---
+
 ## Fixed (2026-09-09, third round — the /loop sweep)
 
 ### 15. A REJECT at the code gate deadlocked the lane — no rework loop at RVa
@@ -27,6 +223,11 @@ it is written (the planner twin of the reviewers' "reproduce, don't skim");
 it removed the whole class of plan rework (run 3: PASS r1, previously REJECT
 ×3 over a pytest count written from memory, a stale staged-state claim and a
 broken pathspec).
+
+*Superseded:* `4c445f5` (2026-09-10, after run 3) inverted the clause — the
+manager may not probe at all; environment facts come only from the refined
+idea's Findings — and the 2026-09-11 section above replaces the rest of the plan
+contract.
 
 ### 14. Cards leave no log in the project
 
@@ -212,9 +413,9 @@ The gate now has the loop the plan gate has, mirrored and bounded:
   idea), then escalation — a comment on `P`, once.
 - `p-body` carries the REWORK clause: plan from the UPDATED `<REFINED>`.
 
-Not yet exercised by a live board (needs a human to type REWORK at a gate);
-the loop mechanics share `file_revision` with the plan loop, which the
-graph/verdict tests cover.
+It could not fire until 2026-09-11 (#20): the loop tested for REJECT, and REWORK
+is not a PASS/REJECT token. Still not exercised by a live board (it needs a human
+to type REWORK at a gate); `rework_rounds` and `held_by_verdict` are unit-tested.
 
 ### O3. Removing `I`/`Gi` — root detection is POSITIONAL now
 
@@ -237,14 +438,16 @@ two-lane run closes that.
 
 ### O5. Worker bounding — RESOLVED with `--goal` (2026-09-09)
 
+
 `/loop` inside a worker was never proven to fire (a worker is a one-shot
-`hermes --cli chat -q`); it is gone from `i-body`. Worker cards (I, P, TW,
-C — including revision rounds) are now filed with `--goal --goal-max-turns
-20`: turn-based bounding, judged against the card body. **Never on a
-reviewer or gate card** — the judge can push a card whose success case is
-blocking into completing, silently opening the gate it guards; `rva-body`
-now states that in the card itself. Verified live: worker cards carry
-`goal_mode: true`, reviewer cards do not (E2E run).
+`hermes --cli chat -q`); it is gone from `i-body`. Worker cards (I, P, TW, C,
+TI — including revision rounds) are filed with `--goal --goal-max-turns 40`:
+turn-based bounding, judged against the card body's `DONE WHEN:` line. **Never
+on a reviewer or gate card** — the judge can push a card whose success case is
+blocking into completing, silently opening the gate it guards; every verdict
+body now says an unfinished review is a REJECT, never a PASS with caveats.
+Verified live: worker cards carry `goal_mode: true`, reviewer cards do not (E2E
+run).
 
 ### O6. `python3` on a worker's PATH has no pytest
 

@@ -40,7 +40,7 @@ def test_assignees_and_skills():
     assert by_code["Gc"]["assignee"] == "human-gate"
     assert by_code["I"]["assignee"] == "researcher"
     assert by_code["Gi"]["assignee"] == "human-gate"
-    assert by_code["I"]["skill"] == "brainstorming"
+    assert by_code["I"]["skill"] is None
     assert by_code["TW"]["skill"] == "test-driven-development"
     assert by_code["C"]["skill"] is None
 

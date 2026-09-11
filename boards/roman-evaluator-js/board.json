@@ -1,0 +1,8 @@
+{
+  "slug": "roman-evaluator-js",
+  "title": "Roman Evaluator JS",
+  "lanes": 1,
+  "integration_tests": false,
+  "auto_gates": false,
+  "max_runtime": "20m"
+}

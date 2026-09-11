@@ -7,11 +7,10 @@ candidates with a written thesis, and that can be measured after the fact.
 
 These are two different places and the split is deliberate.
 
-**The work happens in this board's own work directory**,
-`boards/portfolio-engineering/work/` — the board's `workdir`, inside the kanban
-repository. Every card stages there: the module, its tests, its config, its
-build descriptor. Nothing this board generates lands anywhere else in the
-repository, so `rm -rf boards/portfolio-engineering/work` is a clean start.
+**The work happens in this board's own work directory** — the board's
+`workdir`, inside the kanban repository. Every card stages there: the module,
+its tests, its config, its build descriptor. Nothing this board generates lands
+anywhere else in the repository, so deleting the work directory is a clean start.
 
 **The result updates the Hermes `trader` profile, and doing so is part of this
 idea** — not a follow-up, not a document for someone else to act on. The lane

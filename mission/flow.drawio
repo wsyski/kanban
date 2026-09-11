@@ -61,7 +61,7 @@
         <mxCell id="RVa2" value="RVa2 review&#10;reviewer" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;" vertex="1" parent="1">
           <mxGeometry x="390" y="426" width="150" height="60" as="geometry" />
         </mxCell>
-        <mxCell id="TI2" value="TI2 failsafe ITs&#10;tester" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;" vertex="1" parent="1">
+        <mxCell id="TI2" value="TI2 integration tests&#10;tester" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;" vertex="1" parent="1">
           <mxGeometry x="565" y="426" width="150" height="60" as="geometry" />
         </mxCell>
         <mxCell id="RVc2" value="RVc2 final review&#10;reviewer" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;" vertex="1" parent="1">
@@ -70,8 +70,8 @@
         <mxCell id="Gc2" value="Gc2 GATE — human commits code&#10;human" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeWidth=2;" vertex="1" parent="1">
           <mxGeometry x="40" y="532" width="150" height="60" as="geometry" />
         </mxCell>
-        <mxCell id="rework" value="REWORK (up to 3 rounds)&#10;RVp REJECT → P-rev → re-review → PASS&#10;no rework loop on I: the idea gate is the loop" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;dashed=1;" vertex="1" parent="1">
-          <mxGeometry x="820" y="60" width="280" height="70" as="geometry" />
+        <mxCell id="rework" value="REWORK LOOPS&#10;RVp REJECT → P-rev → RVp-r (max 3)&#10;RVa/RVc REJECT → C-rev → RVa-r (max 2)&#10;Gi REWORK → I-rev → Gi-r (max 2)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="820" y="60" width="280" height="90" as="geometry" />
         </mxCell>
         <mxCell id="key" value="purple=idea · blue=plan · orange=review · green=build/test · thick=HUMAN GATE (0 agent time)" style="text;fontSize=11;fontStyle=2" vertex="1" parent="1">
           <mxGeometry x="40" y="658" width="900" height="20" as="geometry" />

@@ -3,6 +3,11 @@
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 
+# A `delegate_task` child's marker leaks into the shell that runs this script and
+# the kanban CLI refuses every mutation in that context — the pre-flight dies, or
+# a driver started here has each worker's attach/complete refused. Drop it once.
+unset HERMES_DELEGATED_CHILD_CONTEXT
+
 usage() {
 cat <<'USAGE'
 mission/start-board.sh --slug <s> [--once] [--timeout-min N]
@@ -69,14 +74,14 @@ for t in json.load(sys.stdin):
     if t['title'].startswith('I1:'): print(t['id']); break")
   [ -n "$ROOT" ] || { echo "no I1 card on board '$SLUG'" >&2; exit 1; }
   hermes kanban --board "$SLUG" unblock "$ROOT" 2>/dev/null || true
-  BOARD="$SLUG" nohup python3 mission/run.py --timeout-min "${TIMEOUT:-240}" >> "$RUNLOG" 2>&1 &
+  BOARD="$SLUG" nohup python3 -u mission/run.py --timeout-min "${TIMEOUT:-240}" >> "$RUNLOG" 2>&1 &
   echo "board '$SLUG' started (one-shot); log: $RUNLOG"
 else
   # Serve mode releases NOTHING: arming a Triage card is the only go signal, so
   # a prefilled board sits until a human says so.
   set -- --serve
   [ -n "$TIMEOUT" ] && set -- "$@" --timeout-min "$TIMEOUT"
-  BOARD="$SLUG" nohup python3 mission/run.py "$@" >> "$RUNLOG" 2>&1 &
+  BOARD="$SLUG" nohup python3 -u mission/run.py "$@" >> "$RUNLOG" 2>&1 &
   echo "board '$SLUG' serving; log: $RUNLOG"
   echo "write an idea into a Triage card and drag it to Todo to start a run."
 fi

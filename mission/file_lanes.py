@@ -9,6 +9,7 @@ import os
 import subprocess
 
 import lanes
+import runs_util
 
 
 def read_board(board_dir):
@@ -22,9 +23,9 @@ def read_board(board_dir):
 
 def kb(board, *args):
     r = subprocess.run(["hermes", "kanban", "--board", board, *args],
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, env=runs_util.cli_env())
     if r.returncode:
-        raise RuntimeError(f"kb {args[:2]}: {r.stderr.strip()[:300]}")
+        raise RuntimeError(f"kb {args[:2]}: {runs_util.cli_error(r.stderr)}")
     return r.stdout
 
 
@@ -41,7 +42,8 @@ REVIEWER_FEED_MAX_RETRIES = 3
 # plan checklist, the toolchain boundary) is written once. A fragment may use the
 # lane placeholders; it may not include another fragment.
 FRAGMENTS = {"<PLAN_CHECKLIST>": "_plan-checklist.txt",
-             "<TOOLCHAIN_BOUNDARY>": "_toolchain-boundary.txt"}
+             "<TOOLCHAIN_BOUNDARY>": "_toolchain-boundary.txt",
+             "<RESULT_FIELD>": "_result-field.txt"}
 
 # Every key a board.json may carry. create-board.sh rejects anything else: a typo
 # in a key is a typo in the board's shape.

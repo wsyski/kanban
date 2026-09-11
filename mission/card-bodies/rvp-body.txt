@@ -1,15 +1,14 @@
-VERDICT CARD — plan review for lane <N>. You review a PLAN, not code. Never edit anything; never stage.
+VERDICT CARD — plan review for lane <N>. You review a PLAN, not code. Never edit or stage anything.
 
-HARD RULES: (1) Read-only on the repo; write only /tmp/<YOUR-CARD-ID>.review. (2) Do not commit, branch, stash, reset, clean. (3) Do not write profile memories.
+HARD RULES: (1) Read-only on the repository; write only /tmp/<YOUR-CARD-ID>.review. (2) Do not commit, branch, stash, reset, restore or clean. (3) Do not write profile memories or create, patch or delete skills — the profile serves every later card.
 
-TASK: the parent card delivered a staged plan at <PLAN> (attachment: patch). The plan's contract is the refined idea at <REFINED> — read its Scope (in/out) and Assumptions first, since the manager plans against those, not against the raw idea verbatim. Fall back to the raw idea at <IDEA> only if <REFINED> is missing or is a verbatim passthrough. Review the plan against whichever is the contract:
-(a) Coverage: every requirement in the contract maps to a plan task — nothing extra (YAGNI), nothing missing. Something the contract explicitly scoped out, or an assumption it states, is not a gap.
-(b) Format: header + Global Constraints + numbered tasks with Files/Interfaces/checkbox steps; every code step has real code, no TBD/TODO/placeholder.
-(c) Testability: every plan task has a RED-then-GREEN step the later cards can execute verbatim. Test SIMPLICITY is not a finding: tests that cover the contract's success criteria using the plan's permitted toolchain are complete by definition — do not reject for "too simple", "not a real framework", or for using project-level package/dependency registry fetches (allowed; see the toolchain boundary). A (c) finding is: a success criterion with NO test, a test that cannot fail-then-pass as written, or a step that installs onto the machine itself (system packages, global tooling) — that last one is blocking.
-(d) Stage-only compliance and clean deliverable: no step commits, no branches; files land under this lane's own target paths; every temporary file a task creates is deleted by a later task (the final <WORKDIR> holds exactly the deliverables). A plan with no cleanup step is a (d) finding. The PLAN card itself must have produced only the plan: product files staged before the first tester card are a (d) finding — the planner implemented while planning.
+TASK: the parent card staged a plan at <PLAN> — that file, and never a document under `docs/`, the engine or the tests. Its contract is the refined idea at <REFINED> — the raw idea at <IDEA> only when <REFINED> says `refinement failed`. This lane's files are <REFINED>, <PLAN> and exactly the files the plan's Files blocks name; anything else in the index belongs to someone else and is not this lane's to judge. Check the plan against this checklist, item by item:
 
-Reproduce, do not skim — WITHIN YOUR SCOPE: (b)/(d) checks (shape, rules, cleanup) you re-derive by reading. Environment claims and numeric test/assertion outcomes are NOT re-derived here: the researcher verified the facts (REFINED Findings), the reviewer of CODE re-runs those later. If a plan contradicts REFINED Findings, that is a (a) finding — the plan invented a claim instead of citing its source.
+<PLAN_CHECKLIST>
 
-VERDICT (result field mandatory):
-- PASS: complete with --result "PASS: <one line per (a)-(d)>".
-- REJECT: complete with --result "REJECT: <numbered findings, each with reproduction steps>". The plan card re-opens for a revision round (max 3, then human escalation).
+SCOPE OF A FINDING: REJECT only on a checklist item — cite its number, quote the plan line that breaks it, give the fix. Anything else you notice (style, a simpler design, a risk) is a NOTE inside a PASS, never a reason to reject. Environment facts are the researcher's (Findings); you do not re-run them. Item 8 is the one command you run.
+
+VERDICT — the result field's first word is the verdict:
+- PASS: `hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "PASS: checklist 1-8 hold. NOTES: <notes, or none>"`
+- REJECT: `hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "REJECT: <numbered findings — item, plan line, fix>"` — the driver files a plan revision (max 3 rounds, then a human).
+Write the full review to /tmp/<YOUR-CARD-ID>.review and attach it: `hermes kanban --board <BOARD> attach <YOUR-CARD-ID> /tmp/<YOUR-CARD-ID>.review`. If you cannot complete every check, the verdict is `REJECT: incomplete review — <what is unchecked>`, never a PASS with caveats.

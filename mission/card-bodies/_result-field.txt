@@ -1,0 +1,1 @@
+THE RESULT FIELD IS THE REPORT: completing this card means putting the line above in the card's `result` — `--result "..."` on the CLI, or the `result` argument if you complete through the `kanban_complete` tool. That tool's own schema prefers `summary`; a card completed with a summary only has reported nothing to the board.

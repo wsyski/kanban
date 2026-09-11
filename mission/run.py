@@ -106,9 +106,9 @@ def lane_options(lane):
 
 def kb(*args, capture=True):
     r = subprocess.run(["hermes", "kanban", "--board", BOARD, *args],
-                       capture_output=capture, text=True)
+                       capture_output=capture, text=True, env=runs_util.cli_env())
     if r.returncode != 0:
-        raise RuntimeError(f"kb {args[:2]}: {r.stderr.strip()[:200]}")
+        raise RuntimeError(f"kb {args[:2]}: {runs_util.cli_error(r.stderr)}")
     return r.stdout
 
 def board():
@@ -186,20 +186,21 @@ def _goal_args(assignee, code):
     return lanes.goal_args(code)
 
 
-def latest_verdict(state, lane, reviewer_prefix, gate_code, final_code=None):
-    """The gate-relevant verdict: the newest review round that has FINISHED
-    and carries a RESULT field.
+def latest_verdict_card(state, lane, reviewer_prefix, final_code=None):
+    """(card, verdict text) of the newest review round that has FINISHED —
+    (None, "") when none has.
 
     Only the card's result field counts — the verdict contract lives there.
     Falling back to run summaries (as this first did) read RVp1's parking
     block summary ('parked: awaiting lane activation') as a verdict and held
     Gp forever. `final_code` extends the scan (RVc is RVa's re-review).
     """
-    del gate_code
     cands = [reviewer_prefix, final_code] if final_code else [reviewer_prefix]
     best_card, best_done = None, -1.0
     for base in [b for b in cands if b]:
-        t, c = title_of_prefix(state, f"{base}{lane}")
+        # The colon pins the base card: a bare "Gi1" also prefixes "Gi1-r2", and
+        # a round listed first and not yet done used to hide the base verdict.
+        t, c = title_of_prefix(state, f"{base}{lane}:")
         if c and c["status"] == "done":
             done = c.get("completed_at") or 0
             if done > best_done:
@@ -211,9 +212,9 @@ def latest_verdict(state, lane, reviewer_prefix, gate_code, final_code=None):
                 if done > best_done:
                     best_card, best_done = c, done
     if not best_card:
-        return ""
+        return None, ""
     if (best_card.get("result") or "").strip():
-        return best_card.get("result")
+        return best_card, best_card.get("result")
     # The card is done but its result field is empty — the reviewer completed
     # with --summary only (E2E-2 did exactly that; e2e-1 used --result). The
     # verdict prose then lives in the CLOSING RUN's summary. Accept ONLY a
@@ -223,8 +224,14 @@ def latest_verdict(state, lane, reviewer_prefix, gate_code, final_code=None):
     closed_ok = [r for r in runs if r.get("outcome") == "completed"]
     if closed_ok:
         last = max(closed_ok, key=lambda r: r.get("ended_at") or 0)
-        return (last.get("summary") or "").strip()
-    return ""
+        return best_card, (last.get("summary") or "").strip()
+    return best_card, ""
+
+
+def latest_verdict(state, lane, reviewer_prefix, gate_code, final_code=None):
+    """The gate-relevant verdict text — see latest_verdict_card."""
+    del gate_code
+    return latest_verdict_card(state, lane, reviewer_prefix, final_code)[1]
 
 
 def rework_hold(state, lane, base, gate_code):
@@ -263,8 +270,15 @@ def _skill_args(code):
     return ["--skill", skill] if skill else []
 
 
+def _full_verdict_pointer(verdict_card_id):
+    if not verdict_card_id:
+        return ""
+    return (f"Full verdict: `hermes kanban --board {BOARD} show {verdict_card_id}` and its "
+            f"attached review file, if any — the excerpt above may be cut.\n")
+
+
 def file_revision(state, lane, round_no, findings, base="P", reviewer_prefix="RVp",
-                  gate_code="Gp", max_rounds=3):
+                  gate_code="Gp", max_rounds=3, verdict_card_id=None):
     """File one rework round: a revision card + its re-gate, linked to the gate.
 
     Serves BOTH loops (ERRORS.md O2): the plan loop (base P, reviewer RVp,
@@ -295,6 +309,7 @@ def file_revision(state, lane, round_no, findings, base="P", reviewer_prefix="RV
     rbody += (f"\nREVISION ROUND {round_no} of {max_rounds} (max {max_rounds}, then human "
               f"escalation).\n\n{sender} sent this back. Address EXACTLY:\n{findings}\n"
               f"Fix only these, re-stage, re-attach, complete with a change summary.\n")
+    rbody += _full_verdict_pointer(verdict_card_id)
     args = ["create", rev_title, "--body", rbody, "--assignee", rev_assignee,
             "--workspace", f"dir:{WORKDIR}", "--max-runtime", runtime, "--max-retries", "1",
             "--idempotency-key", f"{BOARD}-rev-{base}{lane}-{round_no}",
@@ -368,6 +383,49 @@ def verdict_token(text):
     return m.group(1) if m else ""
 
 
+def rejection_findings(text, limit=4000):
+    """The findings after the first REJECT token, whatever punctuation follows it.
+
+    `split("REJECT:")` raised IndexError on a verdict written "REJECT — …" and
+    stalled the lane one traceback per tick; verdict_token already accepts that
+    spelling, so the findings reader must too. The cap keeps a card body sane; the
+    revision card points at the full verdict.
+    """
+    m = re.search(r"\bREJECT\b[\s:—–-]*", text or "")
+    return (text[m.end():] if m else (text or "")).strip()[:limit]
+
+
+def is_rework(text):
+    """The idea gate's send-back: the result's first word is REWORK, in any case."""
+    return bool(re.match(r"\s*REWORK\b", text or "", re.IGNORECASE))
+
+
+def rework_answers(text, limit=4000):
+    return re.sub(r"^\s*REWORK\b[\s:—–-]*", "", text or "", flags=re.IGNORECASE).strip()[:limit]
+
+
+def held_by_verdict(state, kind, lane):
+    """A card behind a verdict waits for the verdict, not only for the card.
+
+    P follows the idea gate and TI the implementation review. Both parents
+    complete whatever they decided, so parents_done() alone let P start on an
+    idea the human had sent back (REWORK) and TI run against code RVa had
+    rejected — in the very tick that filed the rework round, before any hold.
+    """
+    if kind == "p":
+        return is_rework(latest_verdict(state, lane, "Gi", "Gi"))
+    if kind == "ti":
+        return verdict_token(latest_verdict(state, lane, "RVa", "Gc")) != "PASS"
+    return False
+
+
+def md_section(text, name):
+    """Body of the `## name` section of a markdown file, up to the next heading."""
+    m = re.search(rf"^#+[ \t]*{re.escape(name)}\b[^\n]*\n(.*?)(?=^#+[ \t]|\Z)",
+                  text, re.IGNORECASE | re.MULTILINE | re.DOTALL)
+    return m.group(1) if m else ""
+
+
 def gate_action(state, title, kind, lane):
     opts = lane_options(lane) or {}
     auto = bool(opts.get("auto_gates"))
@@ -384,14 +442,13 @@ def gate_action(state, title, kind, lane):
         # not just that the file is non-empty. Missing sections = the researcher
         # skipped its job; the gate holds and says what is missing.
         text = open(refined).read()
-        missing = [s for s in ("## Problem", "## Scope", "## Open questions",
-                               "## Assumptions", "## Findings")
-                   if not re.search(rf"^#+\s*{s[3:]}\b", text, re.IGNORECASE | re.MULTILINE)]
+        missing = [s for s in lanes.REFINED_SECTIONS
+                   if not re.search(rf"^#+\s*{re.escape(s)}\b", text, re.IGNORECASE | re.MULTILINE)]
         if missing:
             return f"waiting: refined idea missing section(s): {', '.join(missing)}"
-        ev = re.search(r"^#+\s*Findings\b(.*)", text, re.IGNORECASE | re.DOTALL | re.MULTILINE)
-        findings = ev.group(1) if ev else ""
-        n_findings = len(re.findall(r"^[-*]\s+\S", findings or "", re.MULTILINE))
+        # Count Findings bullets only: the old scan ran to the end of the file and
+        # counted Success-criteria bullets as environment facts.
+        n_findings = len(re.findall(r"^[-*]\s+\S", md_section(text, "Findings"), re.MULTILINE))
         if n_findings == 0:
             return "waiting: refined idea Findings section is empty — no environment facts to plan against"
         evidence = (f"refined idea present, all sections, "
@@ -513,6 +570,40 @@ def card_log(card):
 _OPENED = set()
 
 
+def clear_lane_outputs(lane):
+    """Delete this lane's OWN output files before its first card runs.
+
+    runs/artifacts/lane-<k>/{refined,plan}.md are the incoming lane's OUTPUT
+    paths, so a copy left behind is a stale contract: the Gi gate checks the
+    refined idea's STRUCTURE, so a previous refined idea passes it and the plan
+    is built on the old idea (ERRORS #31). clear_run_state covers the refile, but
+    a driver restart, a hand-unblocked root or any other continuation from a
+    dirty state skips that path — so the clearance belongs to the lane's first
+    card, which is this call site, immediately before the root is released. It
+    runs once per lane per process (open_lane is guarded by _OPENED), so a retry
+    inside the run keeps what this run already wrote.
+    """
+    hand_offs = (("refined.md", "refined idea"), ("plan.md", "plan"))
+    for name, what in hand_offs:
+        path = os.path.join(RUN_DIR, "artifacts", f"lane-{lane}", name)
+        if os.path.exists(path):
+            os.remove(path)
+            log(f"LANE {lane}: cleared a previous {what} at "
+                f"{os.path.relpath(path, REPO)} before the first card runs")
+    board_rel = os.path.relpath(BOARD_DIR, REPO)
+    pathspec = f":(top){os.path.join(board_rel, 'runs', 'artifacts', f'lane-{lane}')}"
+    try:
+        staged = git("diff", "--cached", "--name-only", "--", pathspec)
+        if staged.strip():
+            git("restore", "--staged", "--worktree", "--", pathspec)
+            log(f"LANE {lane}: cleared the staged index for {pathspec} "
+                f"({len(staged.splitlines())} files)")
+    except RuntimeError as e:
+        # git() runs -C WORKDIR, which reset.sh deletes; the hand-offs above are
+        # already gone, and the next tick reaches the refile's index cleanup.
+        log(f"LANE {lane}: staged-index cleanup skipped ({e})")
+
+
 def open_lane(state, lane):
     """Resolve lane <lane> the moment its turn comes. Once per lane per run.
 
@@ -550,6 +641,7 @@ def open_lane(state, lane):
                 log(f"LANE {lane}: relinked RVa{lane} -> Gc{lane}")
             except RuntimeError as e:
                 log(f"LANE {lane}: link RVa{lane}->Gc{lane} skipped ({e})")
+    clear_lane_outputs(lane)
     # Snapshot BEFORE unblocking: the card bodies already point at this path,
     # and workers must never read the mutable source (spec D8).
     os.makedirs(SNAP_DIR, exist_ok=True)
@@ -570,12 +662,218 @@ def open_lane(state, lane):
     return "open"
 
 
+def rework_rounds(st):
+    """File the next rework round wherever the newest finished verdict sent work back.
+
+    Three loops, one shape: newest verdict → revision card + re-check card, linked
+    to the gate, bounded, then escalation. tick() calls this BEFORE the next
+    promotion pass, so a round's holds exist before a downstream card could start.
+    """
+    for lane in range(1, board_lane_count(st) + 1):
+        # --- plan loop: Gp parked, newest plan-review verdict REJECT ---
+        _, gp_card = title_of_prefix(st, f"Gp{lane}:")
+        if gp_card and gp_card["status"] in ("blocked", "ready", "todo") \
+                and not rework_hold(st, lane, "P", "Gp"):
+            v_card, v = latest_verdict_card(st, lane, "RVp")
+            if verdict_token(v) == "REJECT":
+                rounds = len([t for t in st if t.startswith(f"P{lane}-rev")])
+                if rounds < 3:
+                    file_revision(st, lane, rounds + 1, rejection_findings(v), base="P",
+                                  reviewer_prefix="RVp", gate_code="Gp",
+                                  verdict_card_id=(v_card or {}).get("id"))
+                else:
+                    escalate(gp_card["id"], f"Gp{lane}",
+                             "3 plan revision rounds exhausted — human escalation required")
+        # --- code loop: Gc parked, newest implementation/final-review verdict REJECT ---
+        # (RVa REJECT once had no loop at all: the gate waited forever, found live
+        # 2026-09-09 23:19.)
+        _, gc_card = title_of_prefix(st, f"Gc{lane}:")
+        if gc_card and gc_card["status"] in ("blocked", "ready", "todo") \
+                and not code_rework_hold(st, lane):
+            v_card, v = latest_verdict_card(st, lane, "RVa", final_code="RVc")
+            if verdict_token(v) == "REJECT":
+                rounds = len([t for t in st if t.startswith(f"C{lane}-rev")])
+                if rounds < 2:
+                    file_coder_revision(st, lane, rounds + 1, rejection_findings(v),
+                                        max_rounds=2, verdict_card_id=(v_card or {}).get("id"))
+                else:
+                    escalate(gc_card["id"], f"Gc{lane}",
+                             "2 implementation rework rounds exhausted — human escalation required")
+        # --- idea loop: P parked, newest idea-gate verdict REWORK ---
+        _, p_card = title_of_prefix(st, f"P{lane}:")
+        if p_card and p_card["status"] in ("blocked", "ready", "todo") \
+                and not rework_hold(st, lane, "I", "Gi"):
+            v_card, v = latest_verdict_card(st, lane, "Gi")
+            if is_rework(v):
+                rounds = len([t for t in st if t.startswith(f"I{lane}-rev")])
+                if rounds < 2:      # 2 rounds: an idea needing three human
+                                    # round-trips is a wrong idea (ERRORS.md O2)
+                    file_revision(st, lane, rounds + 1, rework_answers(v), base="I",
+                                  reviewer_prefix="Gi", gate_code="Gi", max_rounds=2,
+                                  verdict_card_id=(v_card or {}).get("id"))
+                else:
+                    escalate(p_card["id"], f"P{lane}",
+                             "2 idea rework rounds exhausted — human escalation required")
+
+
+# --- document chain -----------------------------------------------------------
+# What each card was GIVEN and what it PRODUCED, so the hand-off chain can be
+# checked instead of trusted: a card handed a document older than its own start
+# read a leftover (ERRORS #31), and a worker that attached nothing produced
+# nothing. runs/chain.jsonl is per-run state — rotated and cleared like the rest.
+_CHAIN_STARTED = set()
+_CHAIN_DONE = set()
+WORKER_CODES = ("I", "P", "TW", "C", "TI")
+
+
+def chain_inputs(body, lane):
+    """The lane documents a card's FILED body points at, by role.
+
+    Parsed from the rendered body — evidence of what the card was told, not of
+    what a later edit intended.
+    """
+    body = body or ""
+    return {role.strip("<>"): path for role, path
+            in file_lanes.lane_paths(REPO, BOARD, lane).items() if path in body}
+
+
+def chain_record(event, card, lane, ts=None, **extra):
+    rec = {"ts": (ts or datetime.datetime.now()).isoformat(timespec="seconds"), "event": event,
+           "lane": lane, "code": card["title"].split(":")[0], "card_id": card.get("id"),
+           "title": card["title"], "status": card.get("status")}
+    rec.update(extra)
+    os.makedirs(RUN_DIR, exist_ok=True)
+    with open(os.path.join(RUN_DIR, "chain.jsonl"), "a") as f:
+        f.write(json.dumps(rec) + "\n")
+
+
+def record_chain_start(card, lane, observed=False):
+    """One record per card as it leaves the parked state.
+
+    `observed` marks a card someone else released — `start-board.sh --once`
+    unblocks the lane root itself, and a human can unblock by hand — so the
+    timestamp is the board's claim time rather than this process's unblock call.
+    """
+    if card["id"] in _CHAIN_STARTED:
+        return
+    _CHAIN_STARTED.add(card["id"])
+    body = card.get("body") or ""
+    ts = (datetime.datetime.fromtimestamp(card["started_at"])
+          if isinstance(card.get("started_at"), (int, float)) else None)
+    chain_record("start", card, lane, ts=ts, observed=observed,
+                 inputs=chain_inputs(body, lane),
+                 unresolved=sorted(set(re.findall(r"<[A-Z_]+>", body))))
+
+
+def record_chain_starts(state):
+    """Catch every card that started without a driver unblock: a hand-unblocked
+    root, a resumed board, or a card the dispatcher claimed on its own."""
+    for card in state.values():
+        if card["status"] not in ("ready", "running", "done") or card["id"] in _CHAIN_STARTED:
+            continue
+        lane = card_id_lane(card["title"])
+        if lane is not None:
+            record_chain_start(card, lane, observed=True)
+
+
+def record_chain_done(state):
+    """One record per card the moment it finishes: what it attached, and the
+    staged set at that moment (the lane's visible hand-off)."""
+    for card in state.values():
+        code = card["title"].split(":")[0]
+        if card["status"] != "done" or card["id"] in _CHAIN_DONE:
+            continue
+        lane = card_id_lane(card["title"])
+        if lane is None:
+            continue
+        _CHAIN_DONE.add(card["id"])
+        try:
+            ev = json.loads(kb("show", card["id"], "--json")).get("events", [])
+            attached = [e.get("payload", {}).get("filename") for e in ev
+                        if e.get("kind") == "attached"]
+        except Exception as e:
+            attached = []
+            log(f"chain: attachments for {card['title'][:20]} unavailable ({e})")
+        chain_record("done", card, lane, inputs=chain_inputs(card.get("body"), lane),
+                     attached=[a for a in attached if a],
+                     result=(card.get("result") or "").strip()[:200],
+                     staged=sorted(staged_files()) if code in WORKER_CODES else [])
+
+
+def card_id_lane(title):
+    """The lane a card title belongs to ('P1: …' -> 1), or None."""
+    m = re.match(r"^[A-Za-z]+[a-z]*(\d+):", title)
+    return int(m.group(1)) if m else None
+
+
+_EMPTY_RESULT_NOTED = set()
+
+
+def note_empty_results(state):
+    """Name every finished worker card whose result is empty — once per run.
+
+    The card bodies put the report in the RESULT field, but `kanban_complete`'s
+    own schema prefers `summary`: on the 2026-09-11 run all three worker cards
+    (P1, TW1, C1) landed their report in the summary and left `result` empty, and
+    nothing surfaced it. Read-only: it changes no card.
+    """
+    noted = []
+    for title, card in state.items():
+        if title.split(":")[0].rstrip("0123456789") not in ("I", "P", "TW", "C", "TI"):
+            continue
+        if card["status"] != "done" or (card.get("result") or "").strip():
+            continue
+        if card["id"] in _EMPTY_RESULT_NOTED:
+            continue
+        _EMPTY_RESULT_NOTED.add(card["id"])
+        noted.append(title.split(":")[0])
+    if noted:
+        log(f"NOTE: no --result on {', '.join(sorted(noted))} — their report is "
+            f"in the summary field (see the card bodies' RESULT FIELD rule)")
+    return noted
+
+
+def open_lanes(state):
+    """Open every lane whose turn has come, BEFORE anything is promoted.
+
+    open_lane() used to run only from the root card's promotion branch, and that
+    branch is skipped for any card that is not `blocked` — so a root someone else
+    had already unblocked never opened its lane. `mission/start-board.sh --once`
+    unblocks the root itself, so on an `integration_tests: false` board TI and
+    RVc stayed live and RAN (live, 2026-09-11), and no snapshot was refreshed.
+    Opening here also means the lane's stale outputs are cleared on every entry
+    path — a human continuing from a dirty state included (ERRORS #31).
+    Returns True when the board changed, so the caller re-reads it.
+    """
+    changed = False
+    for lane in range(1, board_lane_count(state) + 1):
+        if lane in _OPENED:
+            continue
+        root = state.get(lanes.card_title(lanes.lane_root_code(True), lane))
+        if not root or root["status"] in ("done", "archived"):
+            continue
+        if lane > 1 and not parents_done(state, [f"Gc{lane - 1}"]):
+            continue
+        if not lane_is_armed(lane):
+            continue
+        if open_lane(state, lane) == "open":
+            changed = True
+    return changed
+
+
 def tick():
     st = state = board()
     record_timing(st)
     if halt_if_exhausted(st):
         return True          # truthy = board finished/stopped; serve loop halts
     graph = lane_graph(st)
+    # 0. open the lanes whose turn has come. Promotion below only ever looks at
+    #    BLOCKED cards, so a root that was already unblocked (--once, or a human)
+    #    would never open its lane — and open_lane is what prunes TI/RVc on an
+    #    integration_tests=false board and refreshes the idea snapshot.
+    if open_lanes(st):
+        st = state = board()
+    note_empty_results(st)
     # 1. handoff promotion: blocked card whose parents are all done -> unblock
     for title, parents, kind, lane in graph:
         card = st.get(title)
@@ -597,60 +895,19 @@ def tick():
             st = state = board()   # archive/link above changed the board
         elif not parents or not parents_done(st, parents):
             continue
+        if held_by_verdict(st, kind, lane):
+            continue
         kb("unblock", card["id"])
+        record_chain_start(card, lane)
         log(f"unblocked {title.split(':')[0]} (parents done)")
     st = state = board()
+    # 1b. the document chain: a start record for every card that left the parked
+    #     state, then one record per card as it finishes.
+    record_chain_starts(st)
+    record_chain_done(st)
     # 2. rework loops — FILE FIRST, so the holds below exist before promotion
-    #    runs on the next card. Both loops are driven by the newest FINISHED
-    #    review/re-gate verdict; gates go ready via unblock, so accept blocked
-    #    and ready — the verdict itself is the trigger.
-    for lane in range(1, board_lane_count(st) + 1):
-        # --- plan loop: Gp parked, latest plan-review verdict REJECT ---
-        _, gp_card = title_of_prefix(st, f"Gp{lane}:")
-        if gp_card and gp_card["status"] in ("blocked", "ready", "todo") \
-                and not rework_hold(st, lane, "P", "Gp"):
-            v = latest_verdict(st, lane, "RVp", "Gp")
-            if verdict_token(v) == "REJECT":
-                m = v.split("REJECT:", 1)[1][:1200]
-                rounds = len([t for t in st if t.startswith(f"P{lane}-rev")])
-                if rounds < 3:
-                    file_revision(st, lane, rounds + 1, m, base="P",
-                                  reviewer_prefix="RVp", gate_code="Gp")
-                else:
-                    escalate(gp_card["id"], f"Gp{lane}",
-                             "3 plan revision rounds exhausted — human escalation required")
-        # --- code loop: Gc parked, latest implementation-review verdict REJECT ---
-        # RVa REJECT had NO loop: the gate waited forever (found live 2026-09-09
-        # 23:19 — 'REJECT: tests not staged' after the index changed under the
-        # lane). Same mirror: file a coder revision + RVa re-review, max 2.
-        _, gc_card = title_of_prefix(st, f"Gc{lane}:")
-        if gc_card and gc_card["status"] in ("blocked", "ready", "todo") \
-                and not code_rework_hold(st, lane):
-            v = latest_verdict(st, lane, "RVa", "Gc", final_code="RVc")
-            if verdict_token(v) == "REJECT":
-                m = v.split("REJECT:", 1)[1][:1200]
-                rounds = len([t for t in st if t.startswith(f"C{lane}-rev")])
-                if rounds < 2:
-                    file_coder_revision(st, lane, rounds + 1, m, max_rounds=2)
-                else:
-                    escalate(gc_card["id"], f"Gc{lane}",
-                             "2 implementation rework rounds exhausted — human escalation required")
-        # --- idea loop: P parked, latest idea-gate verdict REWORK ---
-        _, p_card = title_of_prefix(st, f"P{lane}:")
-        if p_card and p_card["status"] in ("blocked", "ready", "todo") \
-                and not rework_hold(st, lane, "I", "Gi"):
-            v = latest_verdict(st, lane, "Gi", "Gi")
-            if verdict_token(v) == "REJECT":
-                m = v.split("REJECT:", 1)[1] if "REJECT:" in v else v
-                m = m[:1200]
-                rounds = len([t for t in st if t.startswith(f"I{lane}-rev")])
-                if rounds < 2:      # 2 rounds: an idea needing three human
-                                    # round-trips is a wrong idea (ERRORS.md O2)
-                    file_revision(st, lane, rounds + 1, m, base="I",
-                                  reviewer_prefix="Gi", gate_code="Gi", max_rounds=2)
-                else:
-                    escalate(p_card["id"], f"P{lane}",
-                             "2 idea rework rounds exhausted — human escalation required")
+    #    runs on the next card.
+    rework_rounds(st)
     st = state = board()
     # 2b. rework holds: while an idea- or plan-rework round is live, the gate
     # guards its DOWNSTREAM card too — P/TW must not start on work the gate
@@ -699,7 +956,7 @@ def tick():
 
 
 
-def file_coder_revision(state, lane, round_no, findings, max_rounds=2):
+def file_coder_revision(state, lane, round_no, findings, max_rounds=2, verdict_card_id=None):
     """File one implementation-rework round: coder revision + RVa re-review,
     linked to Gc. Mirrors file_revision; findings text is phrased for the coder."""
     rev_title = f"C{lane}-rev-{round_no}: implementation revision round {round_no} - lane {lane}"
@@ -712,6 +969,7 @@ def file_coder_revision(state, lane, round_no, findings, max_rounds=2):
     rbody += (f"\nREVISION ROUND {round_no} of {max_rounds} (max {max_rounds}, then human "
               f"escalation).\n\nThe review returned the work. Address EXACTLY:\n{findings}\n"
               f"Fix only these, re-stage your files, re-attach, complete with a change summary.\n")
+    rbody += _full_verdict_pointer(verdict_card_id)
     args = ["create", rev_title, "--body", rbody, "--assignee", "coder",
             "--workspace", f"dir:{WORKDIR}", "--max-runtime", runtime, "--max-retries", "1",
             "--idempotency-key", f"{BOARD}-rev-C{lane}-{round_no}",
@@ -722,6 +980,12 @@ def file_coder_revision(state, lane, round_no, findings, max_rounds=2):
                f"REJECT left findings on the parent revision card. Re-derive every check in this "
                f"body against the CURRENT staged index, run the suite yourself, and put the "
                f"verdict first in the result field: PASS: or REJECT:.\n")
+    if state.get(lanes.card_title("RVc", lane)):
+        # An RVc REJECT is re-reviewed by this card alone; without this the
+        # lane's final review (full suite, staged set) would never be repeated.
+        rrbody += ("This lane has integration tests, so this re-review is also its final "
+                   "review: run the FULL suite — unit and integration — from a clean run, and "
+                   "check the staged set and the success criteria as the final review does.\n")
     rr_args = ["create", rr_title, "--body", rrbody, "--assignee", "reviewer",
                "--parent", rev_id, "--workspace", f"dir:{WORKDIR}", "--max-runtime", runtime,
                "--max-retries", "1", "--idempotency-key",
@@ -765,8 +1029,8 @@ def halt_if_exhausted(st):
     (a) retries exhausted — dispatcher breaker trips the card into blocked
         (needs_input) with a gave_up run;
     (b) max_runtime reached — the worker is SIGTERMed at its runtime ceiling
-        and the card ends blocked with a timed_out/gave_up run after its
-        retries are spent;
+        (timed_out); that halts only once the card is blocked, i.e. its retries
+        are spent, never while the dispatcher is retrying it;
     (c) rework escalation — escalate() comments ESCALATION on the gate card
         after the revision rounds burn out.
     Any of them means the lane cannot advance by itself: driving on would
@@ -784,7 +1048,11 @@ def halt_if_exhausted(st):
         if c.get("status") in ("done", "archived"):
             continue
         p = _exhaustion_event(c["id"])
-        if p is not None:
+        # gave_up means the retries are spent. A timed_out attempt is final only
+        # once the card sits blocked: while it is ready or running again the
+        # dispatcher is retrying it — halting there cost three manual restarts
+        # on 2026-09-10 (P1 twice, TW1), each on a card with retries left.
+        if p is not None and (p.get("kind") == "gave_up" or c.get("status") == "blocked"):
             reason_txt = str(p.get("reason") or "")
             break
     else:
@@ -850,7 +1118,8 @@ def _exhaustion_event(card_id):
     for e in reversed(ev.get("events", [])):
         if e.get("kind") in EXHAUSTION_KINDS:
             payload = e.get("payload") if isinstance(e.get("payload"), dict) else {}
-            return {"reason": str(payload.get("error")
+            return {"kind": e.get("kind"),
+                    "reason": str(payload.get("error")
                                   or payload.get("outcome")
                                   or e.get("kind"))}
     return None
@@ -1075,10 +1344,10 @@ def hermes_kanban_dir():
 def snapshot_run_evidence(lanes_n):
     """Preserve the finishing run's intermediates + DB snapshot under runs/.
 
-    Called at refile: the incoming run overwrites runs/artifacts/lane-<k>/
-    (refined.md, plan.md), so first rotate the finished run's copies into
-    runs/artifacts/<run-id>/ and copy the board DB, which the dispatcher will
-    soon archive away from boards/. runs/ then reads self-contained without
+    Called at refile: the incoming run writes runs/artifacts/lane-<k>/
+    (refined.md, plan.md) afresh — clear_run_state deletes the old ones — so
+    first rotate the finished run's copies into runs/artifacts/<run-id>/ and copy
+    the board DB, which the dispatcher will soon archive away from boards/. runs/ then reads self-contained without
     drilling into ~/.hermes archived DBs.
     """
     import shutil
@@ -1117,7 +1386,7 @@ def snapshot_run_evidence(lanes_n):
             break
     # Per-run card histories + timing snapshots belong to the rotation dir too:
     # clear_run_state deletes them next, so move (not copy) them now.
-    for name in ("cards", "timing.jsonl"):
+    for name in ("cards", "timing.jsonl", "chain.jsonl"):
         path = os.path.join(RUN_DIR, name)
         if not os.path.exists(path):
             continue
@@ -1156,16 +1425,26 @@ def clear_run_state(lanes_n):
     The finished run's evidence was just rotated into runs/artifacts/<run-id>/
     by snapshot_run_evidence; what remains (per-run state) is now stale:
     per-card JSONLs keyed by card ids the new run won't reuse, the timing
-    snapshot series, the finished run's halt/deadman notices. Clearing them
-    means every file under runs/ outside artifacts/ belongs to exactly the
-    CURRENT run - no mixing, no stale-reading hazard. driver.log keeps
-    appending (it is the live process's stdout target; truncating it would
-    break the running writer's file handle).
+    snapshot series, the finished run's halt/deadman notices — and the per-lane
+    HAND-OFF files, runs/artifacts/lane-<k>/{refined,plan}.md, which are the
+    incoming run's OUTPUT paths. They used to disappear only as a side effect of
+    the staged-index restore below (workers force-stage them), so a hand-off that
+    was never staged survived: the Gi gate checks the refined idea's STRUCTURE,
+    so the previous run's refined idea passed it and the new plan would be built
+    on the old idea (2026-09-11). Clear them explicitly; gate_action already
+    reports the absence as "waiting: no refined idea at …".
+    driver.log keeps appending (it is the live process's stdout target;
+    truncating it would break the running writer's file handle).
     """
     import shutil
     gone = []
-    for name in ("cards", "snapshots", "timing.jsonl", "run-summary.json",
-                 "halt.txt", "deadman.txt"):
+    for lane in range(1, lanes_n + 1):
+        path = os.path.join(RUN_DIR, "artifacts", f"lane-{lane}")
+        if os.path.isdir(path):
+            shutil.rmtree(path)
+            gone.append(f"artifacts/lane-{lane}/")
+    for name in ("cards", "snapshots", "timing.jsonl", "chain.jsonl",
+                 "run-summary.json", "halt.txt", "deadman.txt"):
         path = os.path.join(RUN_DIR, name)
         if os.path.isdir(path):
             shutil.rmtree(path)

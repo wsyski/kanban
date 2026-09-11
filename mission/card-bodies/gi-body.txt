@@ -1,17 +1,17 @@
 IDEA GATE — lane <N>. The driver never commits. Nothing is committed unless a human chooses to commit it.
 
-This is the first gate: it exists so a raw idea reaches the manager only after a person agreed it is the right idea, refined the right way. Everything downstream — plan, tests, code — is built on what you accept here, and it is much cheaper to fix an idea now than a plan later.
+This gate exists so a raw idea reaches the manager only after a person agreed it is the right idea, refined the right way. Everything downstream — plan, tests, code — is built on what you accept here, and an idea is far cheaper to fix now than a plan later.
 
 If this lane runs with human gates (the default), the driver pauses here and logs HUMAN GATE READY. Your options as the gate-holder:
-1. Read <REFINED> against the raw idea at <IDEA> — start with the Open questions section.
-2. Answer the open questions, or edit <REFINED> yourself. Editing it here is legitimate: you are the author of the idea, the researcher only sharpened it.
+1. Read <REFINED> against the raw idea at <IDEA> — start with Open questions, then Success criteria and the Verification recipe (a line marked `manual at Gc` is one you will check yourself at the code gate).
+2. Answer the open questions, or edit <REFINED> yourself. Editing it here is legitimate: you are the author of the idea; the researcher only sharpened it.
 3. Inspect what is staged: git diff --cached --stat
 4. Commit the refined idea if you want it in history — entirely at your discretion, with an explicit pathspec. The flow does not require it.
 5. Complete this card with a verdict in the result:
    hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "..."
 
 VERDICT (result field, first word decides):
-- ACCEPT: --result "ACCEPT: <what you decided>". This is the normal case — completing with anything that is not REWORK also counts as accept, so a plain description still opens the lane.
-- REWORK: --result "REWORK: <what is missing or wrong, with the answers if you have them>". The researcher gets one revision card per round (max 2 rounds), then the lane escalates to a human anyway — you are not saving a round-trip, you are choosing which round-trip happens.
+- ACCEPT: --result "ACCEPT: <what you decided>". The normal case — anything that does not start with REWORK also opens the lane.
+- REWORK: --result "REWORK: <what is missing or wrong, with your answers>". The driver files a researcher revision and a re-gate, and the plan card waits for the re-gate (max 2 rounds, then the lane escalates to a human).
 
-Completing this card is what unblocks the lane's P card, and the manager will treat <REFINED> as the contract. If the refinement is wrong, fix it before opening the gate — or send it back with REWORK above; do not open the gate on a refinement you do not believe.
+Completing this card is what unblocks the lane's plan card, and the manager treats <REFINED> as the contract. Do not open the gate on a refinement you do not believe: fix it first, or send it back with REWORK.

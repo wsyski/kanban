@@ -3,6 +3,9 @@
 The lane builds in this board's own work directory, `boards/portfolio-engineering/work/`,
 and **installs into the Hermes `trader` profile** as its final step.
 
+`board.json` declares `~/.hermes/profiles/trader` as a target root: the cards may
+write there, and the reviewers count the files there as the lane's own.
+
 One precondition, a human action: **pause the profiles autocommit cron.**
 `~/.hermes/profiles` is a git repository with an hourly commit-and-push job
 (`sync-hermes-profiles.sh`) feeding a second workstation. The lane edits that

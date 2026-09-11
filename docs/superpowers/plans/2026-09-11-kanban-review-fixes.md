@@ -12,6 +12,25 @@
 
 **Status (2026-09-11):** Task 1 is implemented and was committed by the operator in `8a59f46`, together with this plan and the spec; its task review has not run. The plan and the spec were then extended in `aefae7c` (HEAD, working tree clean): Tasks 6 and 7, ERRORS.md #23, Task 3's profile-memory rule now covering skills. Resume there, with a review package scoped to Task 1's files: `{ git log --oneline dbe41ae..8a59f46; git diff --stat dbe41ae 8a59f46 -- mission; git diff -U10 dbe41ae 8a59f46 -- mission; }` — Task 1's own task review has not run. Tasks 2–7 have not started.
 
+**Execution (2026-09-11 — every task now done, boxes ticked above):** Tasks 1-7 were
+executed against this repo. `boards/minimal-development` was re-run three times; the
+last run is the reference one: 4m ceiling, 11 cards filed, 9 live after the lane's
+IT cards were archived, every card inside the ceiling (worst 1.12 min), all gates
+PASS, nothing committed, and `mission/doc-chain.py` reports a clean document chain.
+Seven defects were found while executing, not while reading — ERRORS.md #24-#31 —
+and three instruments came out of it: `mission/test.sh` (an interpreter that has
+pytest), `mission/review-package.sh` (a task's scoped diff) and `mission/doc-chain.py`
+(what each card was given and produced, checked against the filesystem).
+Renamed after execution (same day): `boards/roman-evaluator` ->
+`boards/roman-evaluator-js`, and `boards/test-driven-development` ->
+`boards/roman-evaluator-java` with its two lane ideas rewritten from the
+word-count CLI/service to the roman-number CLI/service (same structure, same
+technology, roman domain).
+
+The spec's open question for a 2-lane board is answered by item 4's rule: a
+reviewer judges exactly the files the PLAN's Files blocks name, never "whatever is
+staged", so lane 2 inherits lane 1's staged files without judging them.
+
 ## Global Constraints
 
 - Work on the current branch of `/opt/projects/kanban/main/kanban`. No worktree, no branch, no commit, no stash (operator standing rule). Implementers do not stage anything; the controller stages new files at the very end.
@@ -45,7 +64,7 @@
 - Produces: `file_lanes.file_board(board, repo, workdir, lane_count, key_prefix, max_runtime=None, max_retries=None, targets=None)`.
 - Produces: `run._round_settings(lane) -> (max_runtime: str, render: callable(body_file) -> str)`, `run._skill_args(code) -> list[str]`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `mission/tests/test_render_body.py`:
 
@@ -197,12 +216,12 @@ def test_idea_re_gate_keeps_the_gate_holder_instructions(monkeypatch, board_env)
     assert "as a gate-holder would" in _arg(rr, "--body")
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `/usr/bin/python3 -m pytest -q mission/tests`
 Expected: FAIL — `AttributeError: module 'file_lanes' has no attribute 'render_body'` (and `skill_for`, `targets_text`, `BOARD_KEYS`); the revision tests fail on literal `<REFINED>` in the body and `dir:/opt/projects/kanban/main/kanban` as workspace.
 
-- [ ] **Step 3: Add `skill_for` to `mission/lanes.py`**, directly after `goal_args`:
+- [x] **Step 3: Add `skill_for` to `mission/lanes.py`**, directly after `goal_args`:
 
 ```python
 def skill_for(code):
@@ -213,7 +232,7 @@ def skill_for(code):
     raise KeyError(code)
 ```
 
-- [ ] **Step 4: Add the renderer to `mission/file_lanes.py`**, after `REVIEWER_FEED_MAX_RETRIES = 3`:
+- [x] **Step 4: Add the renderer to `mission/file_lanes.py`**, after `REVIEWER_FEED_MAX_RETRIES = 3`:
 
 ```python
 # Shared text a body includes by name, so a rule two cards must agree on (the
@@ -294,7 +313,7 @@ In `file_ideas`, replace `snapshot = f"{repo}/boards/{board}/runs/snapshots/lane
         snapshot = lane_paths(repo, board, lane)["<IDEA>"]
 ```
 
-- [ ] **Step 5: Render rework rounds in `mission/run.py`**
+- [x] **Step 5: Render rework rounds in `mission/run.py`**
 
 Add these two helpers directly above `file_revision`:
 
@@ -427,7 +446,7 @@ In `adopt_and_refile`, change the `file_lanes.file_board(...)` call to:
                                  targets=cfg.get("targets"))
 ```
 
-- [ ] **Step 6: Update `mission/create-board.sh`**
+- [x] **Step 6: Update `mission/create-board.sh`**
 
 In the first embedded python block, directly after `repo, board_dir, slug, title = sys.argv[1:5]`, add:
 
@@ -476,7 +495,7 @@ into a Hermes profile, say. Cards may write there and reviewers count files
 there as the lane's; git never runs in a target root.
 ```
 
-- [ ] **Step 7: Run the tests to verify they pass**
+- [x] **Step 7: Run the tests to verify they pass**
 
 Run: `/usr/bin/python3 -m pytest -q mission/tests && bash -n mission/create-board.sh`
 Expected: all tests PASS; `bash -n` prints nothing.
@@ -500,7 +519,7 @@ Expected: all tests PASS; `bash -n` prints nothing.
 - Produces: `run.rework_rounds(st) -> None` (step 2 of `tick()`, extracted).
 - Produces: `file_revision(..., verdict_card_id=None)`, `file_coder_revision(..., verdict_card_id=None)`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `mission/tests/test_runs_util.py`:
 
@@ -700,12 +719,12 @@ def test_gave_up_always_halts(monkeypatch, quiet_halt):
     assert run.halt_if_exhausted(st)
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `/usr/bin/python3 -m pytest -q mission/tests`
 Expected: FAIL — `AttributeError` for `cli_error`, `rejection_findings`, `is_rework`, `rework_rounds`, `held_by_verdict`; `TypeError: file_revision() got an unexpected keyword argument 'verdict_card_id'`; `test_a_timeout_with_retries_left_does_not_halt` fails (the driver halts on any timeout).
 
-- [ ] **Step 3: Add `cli_error` to `mission/runs_util.py`** (at the end of the file):
+- [x] **Step 3: Add `cli_error` to `mission/runs_util.py`** (at the end of the file):
 
 ```python
 _UPDATE_BANNER = ("⚠ A previous `hermes update`", "Gateways may still be serving",
@@ -729,7 +748,7 @@ In `mission/file_lanes.py`, add `import runs_util` after `import lanes`, and in 
 
 In `mission/run.py`, in `kb` replace `raise RuntimeError(f"kb {args[:2]}: {r.stderr.strip()[:200]}")` with `raise RuntimeError(f"kb {args[:2]}: {runs_util.cli_error(r.stderr)}")`.
 
-- [ ] **Step 4: Verdict helpers in `mission/run.py`**
+- [x] **Step 4: Verdict helpers in `mission/run.py`**
 
 Replace `latest_verdict` with these two functions:
 
@@ -821,7 +840,7 @@ def held_by_verdict(state, kind, lane):
     return False
 ```
 
-- [ ] **Step 5: Full-verdict pointer and IT-lane re-review**
+- [x] **Step 5: Full-verdict pointer and IT-lane re-review**
 
 Add above `file_revision`:
 
@@ -859,7 +878,7 @@ directly after its `rbody += (f"\nREVISION ROUND ...` statement add `rbody += _f
                    "check the staged set and the success criteria as the final review does.\n")
 ```
 
-- [ ] **Step 6: Extract the rework loops and hold cards behind verdicts in `tick()`**
+- [x] **Step 6: Extract the rework loops and hold cards behind verdicts in `tick()`**
 
 Add above `tick()`:
 
@@ -944,7 +963,7 @@ and replace the whole step-2 block — from the comment `# 2. rework loops — F
     rework_rounds(st)
 ```
 
-- [ ] **Step 7: Halt only when retries are spent**
+- [x] **Step 7: Halt only when retries are spent**
 
 In `_exhaustion_event`, replace the `return {"reason": ...}` statement with:
 
@@ -985,7 +1004,7 @@ and in its docstring replace item (b) with:
         are spent, never while the dispatcher is retrying it;
 ```
 
-- [ ] **Step 8: Run the tests to verify they pass**
+- [x] **Step 8: Run the tests to verify they pass**
 
 Run: `/usr/bin/python3 -m pytest -q mission/tests`
 Expected: all PASS.
@@ -1006,7 +1025,7 @@ Expected: all PASS.
 - Produces: `lanes.REFINED_SECTIONS: tuple[str, ...]` = `("Problem", "Scope", "Open questions", "Assumptions", "Findings", "Verification recipe", "Prior art", "Success criteria")`.
 - Produces: `run.md_section(text: str, name: str) -> str`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Replace `mission/tests/test_card_bodies.py` with:
 
@@ -1212,12 +1231,12 @@ def test_md_section_stops_at_the_next_heading():
     assert run.md_section(text, "Prior art") == ""
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `/usr/bin/python3 -m pytest -q mission/tests`
 Expected: FAIL — `_plan-checklist.txt` missing, `REFINED_SECTIONS`/`md_section` missing, bodies lack `DONE WHEN:` / `<PLAN_CHECKLIST>` / the verdict wording / the skills clause, `LOOP_COMPLETE` and `transient` still present, `I` still carries `brainstorming`.
 
-- [ ] **Step 3: `mission/lanes.py`**
+- [x] **Step 3: `mission/lanes.py`**
 
 In `LANE_CARDS`, change the first row to
 
@@ -1234,7 +1253,7 @@ REFINED_SECTIONS = ("Problem", "Scope", "Open questions", "Assumptions", "Findin
                     "Verification recipe", "Prior art", "Success criteria")
 ```
 
-- [ ] **Step 4: `mission/run.py` — the idea gate reads the template**
+- [x] **Step 4: `mission/run.py` — the idea gate reads the template**
 
 Add above `gate_action`:
 
@@ -1258,7 +1277,7 @@ In `gate_action`'s `kind == "gi"` branch, replace the lines from `missing = [s f
         n_findings = len(re.findall(r"^[-*]\s+\S", md_section(text, "Findings"), re.MULTILINE))
 ```
 
-- [ ] **Step 5: Create the fragments**
+- [x] **Step 5: Create the fragments**
 
 `mission/card-bodies/_toolchain-boundary.txt`:
 
@@ -1280,7 +1299,7 @@ PLAN ACCEPTANCE CHECKLIST — the plan passes when every item holds.
 8. The plan card produced only the plan: `git -C <WORKDIR> diff --cached --name-only` prints nothing but <PLAN> and the lane's <REFINED>, and none of the files the Files blocks name is staged.
 ```
 
-- [ ] **Step 6: Rewrite the card bodies** — each file's whole content becomes exactly the text below.
+- [x] **Step 6: Rewrite the card bodies** — each file's whole content becomes exactly the text below.
 
 `mission/card-bodies/i-body.txt`:
 
@@ -1501,7 +1520,7 @@ If this lane runs with human gates (the default), the driver pauses here. Your o
 Completing this card is what releases the next lane's root card.
 ```
 
-- [ ] **Step 7: Run the tests to verify they pass**
+- [x] **Step 7: Run the tests to verify they pass**
 
 Run: `/usr/bin/python3 -m pytest -q mission/tests && python3 mission/render-flow.py --check`
 Expected: all tests PASS; `render-flow.py --check` exits 0 (bodies do not feed the diagrams).
@@ -1520,7 +1539,7 @@ Expected: all tests PASS; `render-flow.py --check` exits 0 (bodies do not feed t
 **Interfaces:**
 - Consumes: `file_lanes.BOARD_KEYS` (Task 1), `lanes.read_idea`.
 
-- [ ] **Step 1: Write the failing tests** — create `mission/tests/test_shipped_boards.py`:
+- [x] **Step 1: Write the failing tests** — create `mission/tests/test_shipped_boards.py`:
 
 ```python
 import json
@@ -1577,12 +1596,12 @@ def test_no_board_tracks_generated_output():
     assert out.strip() == ""
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `/usr/bin/python3 -m pytest -q mission/tests/test_shipped_boards.py`
 Expected: FAIL — `test_ideas_name_no_board_path` (minimal-development and portfolio-engineering ideas name `boards/…`), `test_no_board_tracks_generated_output` (`boards/minimal-development/work/roman-evaluator.html` is tracked).
 
-- [ ] **Step 3: Create `boards/roman-evaluator/`** — `mkdir boards/roman-evaluator`, then:
+- [x] **Step 3: Create `boards/roman-evaluator/`** — `mkdir boards/roman-evaluator`, then:
 
 `boards/roman-evaluator/board.json`:
 
@@ -1661,7 +1680,7 @@ Technology preferences:
   display.
 ```
 
-- [ ] **Step 4: `boards/minimal-development/`**
+- [x] **Step 4: `boards/minimal-development/`**
 
 `boards/minimal-development/lane-1.md` becomes:
 
@@ -1706,7 +1725,7 @@ satisfies the lines above.
   "lanes": 1,
   "integration_tests": false,
   "auto_gates": true,
-  "max_runtime": "10m",
+  "max_runtime": "4m",
   "max_retries": 2
 }
 ```
@@ -1732,9 +1751,11 @@ pytest is the researcher's to find — a worker's `python3` may not.
 
 `"auto_gates": true` makes the run unattended: the driver completes the three
 gates itself, records the same evidence, and still commits nothing. Set it to
-`false` to see what a human is asked at each gate. `max_runtime` is 10 minutes
-per card — a ceiling, not a target: a timed-out card is retried, and the driver
-halts only once its retries are spent.
+`false` to see what a human is asked at each gate. `max_runtime` is 4 minutes
+per card — a ceiling, not a target: on an idea this small, a card that needs
+longer is a card doing work the idea does not ask for, so the ceiling is also
+the check on the card bodies themselves. A timed-out card is retried, and the
+driver halts only once its retries are spent.
 
     mission/reset.sh --board boards/minimal-development --yes   # after engine changes
     mission/create-board.sh --board boards/minimal-development
@@ -1747,7 +1768,7 @@ The roman-number page that used to live here is its own board now:
 
 Then untrack the stray product: `git rm --cached boards/minimal-development/work/roman-evaluator.html`.
 
-- [ ] **Step 5: `boards/portfolio-engineering/`**
+- [x] **Step 5: `boards/portfolio-engineering/`**
 
 `board.json` becomes:
 
@@ -1789,7 +1810,7 @@ In `README.md`, after the line `and installs into the Hermes `trader` profile** 
 write there, and the reviewers count the files there as the lane's own.
 ```
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [x] **Step 6: Run the tests to verify they pass**
 
 Run: `/usr/bin/python3 -m pytest -q mission/tests`
 Expected: all PASS.
@@ -1804,7 +1825,7 @@ Expected: all PASS.
 - Modify: `README.md`, `ERRORS.md`
 - Test: `mission/tests/test_render_flow.py` (create)
 
-- [ ] **Step 1: Write the failing test** — create `mission/tests/test_render_flow.py`:
+- [x] **Step 1: Write the failing test** — create `mission/tests/test_render_flow.py`:
 
 ```python
 import os
@@ -1825,12 +1846,12 @@ def test_the_generic_diagram_names_no_build_tool():
     assert "failsafe" not in text
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `/usr/bin/python3 -m pytest -q mission/tests/test_render_flow.py`
 Expected: FAIL on `test_the_generic_diagram_names_no_build_tool` (`TI2<br/>failsafe ITs`).
 
-- [ ] **Step 3: `mission/render-flow.py`**
+- [x] **Step 3: `mission/render-flow.py`**
 
 In `SHORT`, change `"TI": "failsafe ITs"` to `"TI": "integration tests"`.
 Replace the `WHO = {...}` literal with:
@@ -1855,7 +1876,7 @@ Replace the `rework` cell in `drawio()` with:
 
 Run: `python3 mission/render-flow.py` — expected output `wrote README.md, mission/flow.drawio, mission/flow.mmd`.
 
-- [ ] **Step 4: `README.md`** — apply each replacement exactly:
+- [x] **Step 4: `README.md`** — apply each replacement exactly:
 
 (a) Replace the table row
 
@@ -1994,7 +2015,7 @@ with
 
 (m) In §7, replace `not just one idea. See `boards/` for two worked examples.` with `not just one idea. See `boards/` for four worked examples.`, and after item 1 of the numbered list add the sentence `   Write paths relative to the board's work directory, so the idea stays portable between boards.` as a continuation line of item 1.
 
-- [ ] **Step 5: `ERRORS.md`**
+- [x] **Step 5: `ERRORS.md`**
 
 Insert directly above `## Fixed (2026-09-09, third round — the /loop sweep)`:
 
@@ -2122,7 +2143,7 @@ run).
 
 ```
 
-- [ ] **Step 6: Run the tests and the diagram check**
+- [x] **Step 6: Run the tests and the diagram check**
 
 Run: `/usr/bin/python3 -m pytest -q mission/tests && python3 mission/render-flow.py --check`
 Expected: all PASS; `--check` exits 0 with no `stale:` lines.
@@ -2138,7 +2159,7 @@ The override paragraph `ca09514` added to the five kanban profiles' SOUL.md lets
 
 **Interfaces:** none. Hermes reads SOUL.md from the profile home each time it builds a session's system prompt (`agent/prompt_builder.py`, `load_soul_md`), so the next card session picks the change up without a gateway restart. It scans the file first and, on a threat-pattern hit, loads `[BLOCKED: SOUL.md …]` instead of the whole file — Step 3 runs that scanner.
 
-- [ ] **Step 1: Back up the five files** (Backups rule)
+- [x] **Step 1: Back up the five files** (Backups rule)
 
 ```bash
 B=/opt/backup/agents/$(date +%Y%m%d-%H%M%S)-soul-card-override
@@ -2148,7 +2169,7 @@ done
 echo "$B" | tee /tmp/soul-override-backup
 ```
 
-- [ ] **Step 2: Replace the paragraph**
+- [x] **Step 2: Replace the paragraph**
 
 Write this text, exactly, to `/tmp/soul-override.txt`:
 
@@ -2188,7 +2209,7 @@ for path, text in texts.items():
 EOF
 ```
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
 
 ```bash
 B=$(cat /tmp/soul-override-backup)
@@ -2217,7 +2238,7 @@ done
 ```
 Expected: `All invariants held.` for all five. Check 13 compares each managed block with `~/.agents/RULES.md`, so this proves the edit stayed outside the blocks.
 
-- [ ] **Step 4: Leave the commit to the autocommit**
+- [x] **Step 4: Leave the commit to the autocommit**
 
 Do not commit or push by hand (operator rule): the profiles repo's autocommit on zeus records the five files, and apollo receives them on its next pull. Report the backup directory from Step 1.
 
@@ -2227,10 +2248,12 @@ Do not commit or push by hand (operator rule): the profiles repo's autocommit on
 
 The project's own rule: run `minimal-development` after any change to `mission/`.
 
-- [ ] **Step 1:** Back up the previous run's evidence: `cp -a boards/minimal-development/runs /opt/backup/agents/<ts>-minimal-development-runs/` (Backups rule), then `mission/reset.sh --board boards/minimal-development --yes`. reset.sh unstages every staged path under `work/` — which restores the index entry Task 4 removed — so repeat `git rm --cached -q boards/minimal-development/work/roman-evaluator.html` afterwards. (The removal sticks only once committed; the controller asks.)
-- [ ] **Step 2:** `mission/create-board.sh --board boards/minimal-development` — expected: `filed 11 cards in 1 lane(s), all parked (max-runtime: 10m)` and `raw ideas in triage: lane(s) 1`.
-- [ ] **Step 3:** `date -u +%Y-%m-%dT%H:%M:%S > /tmp/smoke-start`, then `mission/start-board.sh --slug minimal-development --once` in the background; follow `boards/minimal-development/runs/driver.log` until `ALL GATES COMPLETE` or `BOARD HALTED`.
-- [ ] **Step 4:** Read the evidence: RVp1's result (first-attempt PASS is the target), RVa1's result, every card's `runs` (no timeouts expected at 10m), the refined idea's headings and the plan's checklist conformance, `runs/run-summary.json`, the timing report. Then check that no card session wrote a skill into its profile — expected: no output:
+**Files:** none in the repository — the run writes only `boards/minimal-development/{work,runs}/` (gitignored scratch, staged by the cards themselves) and `/tmp/smoke-start`. This task stages and commits nothing.
+
+- [x] **Step 1:** Back up the previous run's evidence: `cp -a boards/minimal-development/runs /opt/backup/agents/<ts>-minimal-development-runs/` (Backups rule), then `mission/reset.sh --board boards/minimal-development --yes`. reset.sh may re-stage the index entry Task 4 removed; leave it alone if it does. Re-running `git rm --cached` puts a FOREIGN staged deletion in `git diff --cached --name-only`, which is checklist item 8's one command — the run above lost ~4 minutes of plan review to a reviewer auditing the repository instead of the plan (ERRORS.md #29). The removal reaches history when the operator commits it.
+- [x] **Step 2:** First drop the previous board from the registry — a re-run meets `board 'minimal-development' already exists — refusing` (Task 7's first pass met the opposite, a board in no registry at all): `hermes kanban boards rm minimal-development`. Then `mission/create-board.sh --board boards/minimal-development` — expected: `filed 11 cards in 1 lane(s), all parked (max-runtime: 4m)` and `raw ideas in triage: lane(s) 1`.
+- [x] **Step 3:** `date -u +%Y-%m-%dT%H:%M:%S > /tmp/smoke-start`, then `mission/start-board.sh --slug minimal-development --once` in the background; follow `boards/minimal-development/runs/driver.log` until `ALL GATES COMPLETE` or `BOARD HALTED`.
+- [x] **Step 4:** Read the evidence: RVp1's result (first-attempt PASS is the target), RVa1's result, every card's `runs` (no timeouts expected at 4m — and no card over it: a card past 4 minutes on this idea is a card body doing too much), the refined idea's headings and the plan's checklist conformance, `runs/run-summary.json`, the timing report. Then check that no card session wrote a skill into its profile — expected: no output:
 
 ```bash
 python3 - <<'EOF'
@@ -2257,3 +2280,5 @@ An `agent` row means a card ignored its hard rule. A `curator` row means Hermes'
 - Placeholder scan: every code and text step carries its full content; Task 4 Step 3's lane-1.md is an exact edit list against a named source file; Task 6 Step 3 reads the backup path Step 1 wrote.
 - Dry runs (2026-09-11, read-only on the profiles): Task 6's paragraph through Hermes's `scan_for_threats(scope="context")` for all five would-be SOUL.md files — clean; Task 6 Step 2's script and Step 3's hunk count on scratch copies — five updates, one hunk each; Task 7 Step 4's script with an early start time — exactly the three kanban-session patches #23 cites.
 - Type consistency: `render_body(body_file, *, repo, board, workdir, lane, targets=(), bodies_dir=None)`, `lane_paths(repo, board, lane)`, `latest_verdict_card(state, lane, reviewer_prefix, final_code=None)`, `held_by_verdict(state, kind, lane)`, `rework_rounds(st)`, `file_revision(..., verdict_card_id=None)`, `file_coder_revision(..., verdict_card_id=None)`, `REFINED_SECTIONS`, `md_section(text, name)` — used with the same names and arguments in every task that consumes them.
+- Execution gaps found while implementing (all three fixed in the tree, recorded in ERRORS.md #24-#26): Task 2 Step 1 missed the `test_latest_verdict_does_not_read_run_summaries` retarget from `run.runs_result` to `run.runs_util.board_runs`; Task 7's commands need `env -u HERMES_DELEGATED_CHILD_CONTEXT -u HERMES_HOME` (a leaked child-context marker makes the kanban CLI refuse every mutation); and `test_no_board_tracks_generated_output` read the git index, so the suite went red for a healthy run that staged its hand-off. A fourth was found by the run itself: `open_lane()` was called only from the root card's promotion branch, so `--once` (which unblocks the root itself) never pruned `TI`/`RVc` on this `integration_tests: false` board and `TI1` ran — fixed by opening lanes first in `tick()`, ERRORS.md #27. And a fifth, from the same run's card data: every worker card landed its report in `summary`, not `result`, because the `kanban_complete` tool's own schema prefers `summary` while the bodies ask for `--result` — now one `<RESULT_FIELD>` fragment plus a `note_empty_results()` log line, ERRORS.md #28.
+- Checklist conformance of this document: Tasks 6 and 7 are controller-only, carry no `[TW]`/`[C]` steps, and Task 7 now names its writing surface; the rest conform.
