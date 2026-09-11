@@ -312,9 +312,10 @@ runs, all on the shape this README describes:
 | 12 (22:43) | 11.1 min | 5.5 min | 5.6 min | RVa1 1.67 min | 0 errors, 0 warnings |
 | 13 (23:07) | 10.8 min | 5.0 min | 5.8 min | RVa1 1.33 min | 4 errors — caches left in `work/` (fixed: E16) |
 | 14 (23:19) | 10.9 min | 5.0 min | 5.9 min | RVp1 1.27 min | 0 errors, 0 warnings |
+| 15 (23:31) | 10.4 min | 5.0 min | 5.4 min | I1 1.33 min | 0 errors, 0 warnings — the run that certifies this README |
 
-Per card, run 14: I1 0.93, Gi1 0.00, P1 0.87, RVp1 1.27, Gp1 0.00, TW1 0.55,
-C1 0.45, RVa1 0.98, Gc1 0.00 — 5.0 minutes of agent work in 9 cards, every gate
+Per card, run 15: I1 1.33, Gi1 0.00, P1 0.87, RVp1 0.58, Gp1 0.00, TW1 0.62,
+C1 0.38, RVa1 1.22, Gc1 0.00 — 5.0 minutes of agent work in 9 cards, every gate
 free because the driver completes them itself. Reading it:
 
 - **Overhead is the cost centre, not the cards.** Nearly half of the wall clock
@@ -325,8 +326,9 @@ free because the driver completes them itself. Reading it:
   1.7 minutes against 4 — 2-10× headroom. A card that needs longer is a card doing
   work the idea does not ask for, which is how the plan review's repository audit
   got caught (ERRORS #29).
-- **The spread is model latency.** On the same revision: I1 0.77-1.12, P1
-  0.87-1.12, RVp1 0.52-1.27, RVa1 0.98-1.67. Nothing here tunes that.
+- **The spread is model latency.** Over runs 12-15, on one revision: I1
+  0.77-1.33, P1 0.87-1.12, RVp1 0.52-1.27, RVa1 0.98-1.67. Nothing here tunes
+  that.
 - **A rework round is cheap and bounded.** The board's only rejection (run 4) cost
   about 3 extra minutes and two cards; the loop allows two rounds before a human
   is asked.
