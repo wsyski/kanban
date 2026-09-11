@@ -94,6 +94,55 @@ def test_serve_mode_leaves_an_unarmed_lane_alone(monkeypatch, tmp_path):
     run._OPENED.clear()
 
 
+def test_nothing_under_runs_stays_in_the_index(monkeypatch, tmp_path):
+    """unstage_run_paths() restores the board's runs/ paths, and stays quiet
+    when the index is already clean."""
+    calls = []
+    _board_env(monkeypatch, tmp_path, calls)
+    staged = "boards/b/runs/artifacts/lane-1/plan.md"
+
+    def git(*a):
+        calls.append(a)
+        return staged if a[:2] == ("diff", "--cached") else ""
+
+    monkeypatch.setattr(run, "git", git)
+    run.unstage_run_paths()
+    rel = os.path.relpath(run.RUN_DIR, run.REPO)
+    assert ("restore", "--staged", "--", rel) in calls, calls
+
+    calls.clear()
+    monkeypatch.setattr(run, "git", lambda *a: calls.append(a) or "")
+    run.unstage_run_paths()
+    assert not [a for a in calls if a[0] == "restore"]
+
+
+def test_an_assigned_card_escalated_to_triage_halts_the_driver(monkeypatch, tmp_path):
+    """A worker that cannot complete its card returns it to Triage for a human.
+    Polling forever hides that; the board halts and says so instead."""
+    calls = []
+    _board_env(monkeypatch, tmp_path, calls)
+    st = _state()
+    st[lanes.card_title("I", 1)].update(status="triage", assignee="researcher")
+    monkeypatch.setattr(run, "board", lambda: st)
+    run._HALTED["reason"] = None
+    assert run.tick() is True
+    assert "Triage" in (run._HALTED["reason"] or "")
+    assert [c for c in calls if c[0] == "comment"], calls
+
+
+def test_an_unassigned_idea_in_triage_is_not_a_halt(monkeypatch, tmp_path):
+    """Serve mode sits with the idea card in Triage until a human promotes it —
+    that is the design, and it must never halt the board."""
+    calls = []
+    _board_env(monkeypatch, tmp_path, calls)
+    st = _state()
+    st["Idea 1: is_even"] = {"id": "id-idea", "status": "triage", "title": "Idea 1: is_even"}
+    monkeypatch.setattr(run, "board", lambda: st)
+    run._HALTED["reason"] = None
+    assert run.tick() is False
+    assert run._HALTED["reason"] is None
+
+
 def test_a_finished_lane_is_never_reopened(monkeypatch, tmp_path):
     calls = []
     _board_env(monkeypatch, tmp_path, calls)

@@ -876,11 +876,37 @@ def open_lanes(state):
     return changed
 
 
+def unstage_run_paths():
+    """Every path under this board's runs/ stays unstaged (user rule).
+
+    The lane's hand-offs are read by path, so the index is not how they travel;
+    a card that stages one anyway (older bodies did) only puts scratch in front
+    of every later `git diff --cached` — the operator sees it and asks who did
+    it. One git call per tick, and only when something is actually staged.
+    """
+    rel = os.path.relpath(RUN_DIR, REPO)
+    try:
+        staged = git("diff", "--cached", "--name-only", "--", rel)
+    except Exception:
+        return
+    if not staged.strip():
+        return
+    git("restore", "--staged", "--", rel)
+    log(f"unstaged {len(staged.split())} path(s) under {rel} "
+        f"(nothing run-generated stays in the index)")
+
+
 def tick():
     st = state = board()
     record_timing(st)
     if halt_if_exhausted(st):
         return True          # truthy = board finished/stopped; serve loop halts
+    esc_title, esc_card = escalated_to_triage(st)
+    if esc_card is not None:
+        escalate(esc_card["id"], esc_title.split(":")[0],
+                 "the board escalated this card to Triage for a human — the lane "
+                 "cannot advance by itself")
+        return True
     graph = lane_graph(st)
     # 0. open the lanes whose turn has come. Promotion below only ever looks at
     #    BLOCKED cards, so a root that was already unblocked (--once, or a human)
@@ -972,6 +998,9 @@ def tick():
         last = lane
     if last == 0:
         return False
+    # 4. last thing in the tick, so a card that just finished staging its
+    #    hand-off does not leave it in the index for the operator to find.
+    unstage_run_paths()
     _, gc = title_of_prefix(st, f"Gc{last}:")
     return bool(gc and gc["status"] == "done")
 
@@ -1041,6 +1070,24 @@ def escalate(card_id, code, reason):
                 f.write(f"{BOARD} halted: {_HALTED['reason']}\n")
         except OSError:
             pass
+
+
+def escalated_to_triage(state):
+    """An ASSIGNED lane card sitting in Triage — the board's own escalation.
+
+    The card that carries an idea into a lane is unassigned by design: that is
+    what keeps the dispatcher from claiming it while a human is still typing.
+    Every LANE card has an assignee. So an assigned card in triage is a card its
+    worker could not complete and the board parked for a person
+    (`block_loop_detected`, recurrences >= 2) — the lane cannot advance by
+    itself, and the old behaviour was to poll forever with the last log line
+    minutes old, which reads as a stall and hides the reason (2026-09-11: a
+    stale gateway rejected every goal-mode completion, and the driver waited).
+    """
+    for title, card in state.items():
+        if card.get("status") == "triage" and card.get("assignee"):
+            return title, card
+    return None, None
 
 
 def halt_if_exhausted(st):

@@ -15,6 +15,28 @@ The stopping rule for this round is mechanical: `mission/run-audit.py` exits 0
 only when a run has **no errors and no warnings**, and every cycle re-runs the
 board until it does.
 
+### 37. The hand-off cards staged their own runs/ paths
+
+The operator noticed `boards/minimal-development/runs/artifacts/lane-1/refined.md`
+sitting in `git status` as staged and asked who did it. The bodies did: the
+researcher's HARD RULE (2) said "Write only `<REFINED>`; stage it with `git add
+-f -- <REFINED>` (runs/ is gitignored, so -f is required)", and the planner's said
+the same for `<PLAN>` — staging was the only way they knew to give their
+per-card patch something to carry. It costs the whole board, not just the two
+cards: `git diff --cached` lists the index, so every later card — and every
+reviewer checking the staged set — is handed scratch that is not theirs to judge
+(the class behind #29 and O7).
+
+Fixed on three levels. The two bodies now say the opposite ("every path under
+runs/ stays UNSTAGED … the hand-off reaches the next card through this body's
+path, never through the index") and attach the DOCUMENT itself, `cp <REFINED>
+/tmp/<card>.refined.md`, so the patch convention stops mattering for hand-offs.
+The driver sweeps the index once per tick (`unstage_run_paths`), so a card that
+stages a runs/ path anyway cannot leave it there. `run-audit.py` enforces it as
+E14 — a staged path under a board's runs/ is an ERROR — which is the operator's
+rule expressed where the loop can see it. Tests: the two bodies, the sweep (with
+and without staged paths), and E14 against a real scratch repository.
+
 ### 36. `--once` released the lane root before the lane was prepared
 
 `run-audit.py` on the sixth run reported `F2 I1 lane 1: IDEA written 21:39:31
@@ -582,6 +604,36 @@ Not bugs — ways to lose an afternoon.
   card row.
 
 ---
+
+### O10. A stale gateway rejected every goal-mode completion, and the driver waited forever
+
+Run 9 (22:18) prepared its lane, released `I1`, and then sat for 17 minutes with
+`unblocked I1 (parents done)` as its last line. The card log holds the reason:
+the researcher produced its deliverable, attached it, and could not complete,
+because `auxiliary.goal_judge` → `deepseek-v4.1-flash` on `opencode-go` answered
+
+    BadRequestError 400 MissingSessionID: Request is missing x-opencode-session
+
+reproduced outside the card, and `hermes_cli/kanban.py:842` refuses every
+goal-mode handoff without a verdict. The repeated block was then escalated by
+the board's own loop detector (`block_loop_detected`, `kind: needs_input`,
+`recurrences: 2`) — to `triage`, for a human, which is the design.
+
+Two things were wrong, and only one is the board's. The harness fault is a
+half-finished update: the running gateway serves pre-update modules while the
+on-disk code (and its docs) put `x-opencode-session` on every OpenCode request
+"on every transport plus auxiliary calls"; the CLI itself printed the warning
+into the card log. Remedy is the user's: `hermes gateway restart` (or point
+`auxiliary.goal_judge` at a provider that does not need the header) — a service
+change, so it is not made from here.
+
+The board's half is that a stalled lane looked exactly like a working one. An
+assigned card in Triage is the board's escalation and cannot advance by itself,
+so the driver now halts on it (`escalated_to_triage` → `escalate` → one comment,
+`BOARD HALTED`, `runs/halt.txt`) instead of polling with a stale log. The
+unassigned idea card in Triage — serve mode's normal resting place — is
+explicitly not a halt. `run-audit.py` reports an assigned card left in triage as
+E12. Tests in `test_open_lane.py`.
 
 ### O9. A guard whose last command is an `echo` always exits 0
 

@@ -203,6 +203,14 @@ including what is still open:
   board state, and the operator is a writer on it: unstaging a lane's files
   mid-run makes the next reviewer REJECT correct work (2026-09-11, run 4 —
   a spurious rework round; `ERRORS.md` O7).
+- **Nothing under a board's `runs/` is ever staged.** The hand-offs (the refined
+  idea, the plan) travel by path; the cards attach the document itself and the
+  driver sweeps the index every tick, because a staged hand-off is handed to
+  every later card's `git diff --cached` and to the operator's `git status`
+  (`ERRORS.md` #37). `run-audit.py` fails a run that leaves one staged (E14).
+- **An assigned card in Triage is an escalation, and it halts the board.** A
+  worker that cannot complete returns its card there for a human; the driver used
+  to poll forever with a stale log, which reads as a stall (`ERRORS.md` O10).
 - **The index is board state, and `git diff --cached --name-only` lists all of
   it** — not just the directory you run it from. A pending entry from anywhere (a
   repo cleanup, another board's `git add -f`) is handed to every card that checks

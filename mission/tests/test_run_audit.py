@@ -32,7 +32,7 @@ def fixture(tmp_path, log=None, gates=None, cards=None, restarts=False,
     """A board directory with one run inside it."""
     board = tmp_path / "boards" / "b"
     runs = board / "runs"
-    runs.mkdir(parents=True)
+    runs.mkdir(parents=True, exist_ok=True)
     (board / "board.json").write_text(json.dumps(
         {"slug": "b", "auto_gates": True, "max_runtime": ceiling} if ceiling
         else {"slug": "b", "auto_gates": True}))
@@ -152,8 +152,8 @@ def test_a_held_gate_warns_on_an_auto_gated_board_but_not_a_human_one(tmp_path, 
 
 
 def test_dirt_in_the_repo_root_is_an_error(tmp_path, monkeypatch):
-    """The real board_findings: only its subprocess calls are stubbed."""
-    monkeypatch.setattr(ra.subprocess, "run", _NoProcesses)
+    """The real repo_findings: only the CLI/pgrep probe is stubbed."""
+    clean_probe(monkeypatch)
     monkeypatch.setattr(ra, "REPO", str(tmp_path))
     (tmp_path / "boards" / "runs").mkdir(parents=True)
     findings, _rows, _s = ra.audit(fixture(tmp_path / "tree", chain_recs=worker_chain()))
@@ -208,6 +208,69 @@ def test_an_in_flight_worker_is_not_called_empty_result(tmp_path, monkeypatch):
     findings, rows, _s = ra.audit(fixture(tmp_path, chain_recs=recs))
     assert "E7" not in codes(findings, "WARNING")
     assert rows and rows[0]["done"] == ""
+
+
+def test_a_verdict_reporting_warnings_is_a_warning(tmp_path, monkeypatch):
+    clean_probe(monkeypatch)
+    findings, _rows, _s = ra.audit(fixture(
+        tmp_path, chain_recs=worker_chain(result="PASS: 4 passed, 2 warnings (deprecation)")))
+    assert "E11" in codes(findings, "WARNING")
+
+
+def test_null_warnings_are_not_findings(tmp_path, monkeypatch):
+    """'no warnings', '0 warnings', '0 failed, 0 errors' are all clean."""
+    clean_probe(monkeypatch)
+    for text in ("PASS: 4 passed, 0 warnings", "PASS: no warnings, 0 errors",
+                 "PASS: 4 passed, zero warnings"):
+        findings, _rows, _s = ra.audit(fixture(tmp_path, chain_recs=worker_chain(result=text)))
+        assert "E11" not in codes(findings), (text, findings)
+
+
+def test_a_warning_in_a_card_log_is_a_warning(tmp_path, monkeypatch):
+    clean_probe(monkeypatch)
+    runs = fixture(tmp_path, chain_recs=worker_chain())
+    home = tmp_path / "home" / "kanban" / "boards" / "b" / "logs"
+    home.mkdir(parents=True)
+    (home / "t_c.log").write_text("ok\npytest: warning: fixture 'x' uses deprecated API\n")
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(ra.os.path, "expanduser", lambda p: str(tmp_path / "home"))
+    findings, _rows, _s = ra.audit(runs)
+    assert "E13" in codes(findings, "WARNING")
+
+
+def test_a_card_log_from_an_earlier_run_is_ignored(tmp_path, monkeypatch):
+    clean_probe(monkeypatch)
+    runs = fixture(tmp_path, chain_recs=worker_chain())
+    home = tmp_path / "home" / "kanban" / "boards" / "b" / "logs"
+    home.mkdir(parents=True)
+    log = home / "t_old.log"
+    log.write_text("warning: from the previous run\n")
+    old = 1_000_000.0
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(ra.os.path, "getmtime", lambda p: old if str(p) == str(log) else 9e18)
+    findings, _rows, _s = ra.audit(runs)
+    assert "E13" not in codes(findings), findings
+
+
+def test_a_staged_path_under_runs_is_an_error(tmp_path, monkeypatch):
+    """Everything under a board's runs/ stays unstaged — the rule the operator
+    stated, enforced mechanically by the auditor."""
+    import subprocess as sp
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    sp.run(["git", "init", "-q"], cwd=repo, check=True)
+    sp.run(["git", "config", "user.email", "t@t"], cwd=repo, check=True)
+    sp.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+    runs = fixture(repo, chain_recs=worker_chain())
+    rel = os.path.relpath(runs, repo)
+    hand_off = repo / rel / "artifacts" / "lane-1" / "plan.md"
+    hand_off.parent.mkdir(parents=True, exist_ok=True)
+    hand_off.write_text("# the plan\n")
+    sp.run(["git", "add", "-f", f"{rel}/artifacts/lane-1/plan.md"], cwd=repo, check=True)
+    monkeypatch.setattr(ra, "REPO", str(repo))
+    clean_probe(monkeypatch)      # the CLI/pgrep probe only; repo_findings is real
+    findings, _rows, _s = ra.audit(runs)
+    assert "E14" in codes(findings, "ERROR"), findings
 
 
 def test_the_ceiling_parser():

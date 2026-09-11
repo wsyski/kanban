@@ -59,6 +59,12 @@ ERROR_VOCAB = re.compile(
     r"skipped|not found)\b")
 DONE_STATES = ("done", "archived", "triage")
 
+# Warnings the board's other voice prints: CLI-shaped lines, never prose. The
+# RED test phase legitimately prints ModuleNotFoundError, so an error vocabulary
+# here would fire on every healthy run; "0 warnings" in a verdict is not one.
+WARN_LINE = re.compile(r"(?i)(^warning\b|(^|\s)warnings?\s*:|deprecat\w+)")
+WARN_TEXT = re.compile(r"(?i)(?<!no )(?<!\b0 )(?<!\bzero )warnings?\b")
+
 
 def _driver_alive():
     """Is a driver still running? Distinguishes "audited too early" from a run
@@ -146,12 +152,71 @@ def result_findings(rows):
     return out
 
 
-def board_findings(slug, runs_dir):
-    """The board's end state and the repo's own hygiene."""
+def card_log_findings(slug, started):
+    """Scan the cards' own session logs for warnings, from this run only.
+
+    The board keeps one log per card across runs, so a log older than the run's
+    first chain record belongs to somebody else's run.
+    """
+    out = []
+    for home in (os.environ.get("HERMES_HOME"), os.path.expanduser("~/.hermes")):
+        if not home:
+            continue
+        logs = os.path.join(home, "kanban", "boards", slug, "logs")
+        if not os.path.isdir(logs):
+            continue
+        for name in sorted(os.listdir(logs)):
+            path = os.path.join(logs, name)
+            try:
+                if started and os.path.getmtime(path) < started:
+                    continue
+                text = open(path, errors="replace").read()
+            except OSError:
+                continue
+            for line in text.splitlines():
+                if WARN_LINE.search(line):
+                    out.append(("WARNING", "E13", f"{name}: {line.strip()[:90]}"))
+        break
+    return out
+
+
+def result_text_findings(rows):
+    out = []
+    for row in rows:
+        if not row.get("done"):
+            continue
+        text = row.get("result") or ""
+        if WARN_TEXT.search(text):
+            out.append(("WARNING", "E11",
+                        f"{row['code']} reported a warning: {text[:80]}"))
+    return out
+
+
+def repo_findings(runs_dir):
+    """The repo's own hygiene: no scratch in the root, no runs/ path staged."""
     out = []
     dirt = os.path.join(REPO, "boards", "runs")
     if os.path.isdir(dirt):
         out.append(("ERROR", "E9", f"the run wrote into the repo root: {dirt}"))
+    # Nothing under a board's runs/ belongs in the index: the hand-offs travel by
+    # path, and a staged one is what the operator sees in `git status` and asks
+    # about.
+    rel = os.path.relpath(os.path.abspath(runs_dir), REPO)
+    try:
+        staged = subprocess.run(["git", "-C", REPO, "diff", "--cached",
+                                 "--name-only", "--", rel],
+                                capture_output=True, text=True).stdout
+    except Exception:
+        staged = ""
+    for line in staged.splitlines():
+        if line.strip():
+            out.append(("ERROR", "E14", f"staged, but {rel} must stay unstaged: {line.strip()}"))
+    return out
+
+
+def board_findings(slug, runs_dir):
+    """The board's end state: a card the run did not finish, a live worker."""
+    out = []
     if slug:
         try:
             raw = subprocess.run(["hermes", "kanban", "--board", slug, "list", "--json"],
@@ -159,8 +224,11 @@ def board_findings(slug, runs_dir):
             cards = json.loads(raw.stdout) if raw.returncode == 0 else []
         except Exception:
             cards = []
+        # `triage` is where the UNASSIGNED idea card rests until a human
+        # promotes it; an assigned card there is a card the board escalated.
         left = [(c.get("title"), c.get("status")) for c in cards
-                if c.get("status") not in DONE_STATES]
+                if c.get("status") not in DONE_STATES
+                or (c.get("status") == "triage" and c.get("assignee"))]
         for title, status in left:
             out.append(("ERROR", "E12",
                         f"{title} is still {status} — the board did not finish"))
@@ -207,6 +275,18 @@ def audit(runs_dir, board_dir=None):
     for f in chain_findings:
         findings.append(("ERROR", "E3", f))
     findings += result_findings(rows)
+    findings += result_text_findings(rows)
+    started = None
+    for rec in reversed(recs or []):
+        ts = rec.get("ts")
+        if ts:
+            try:
+                started = min(started or 1e18,
+                              __import__("datetime").datetime.fromisoformat(ts).timestamp())
+            except ValueError:
+                pass
+    findings += card_log_findings(slug, started)
+    findings += repo_findings(runs_dir)
     findings += board_findings(slug, runs_dir)
     return findings, rows, stats
 

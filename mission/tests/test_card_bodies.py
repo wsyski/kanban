@@ -90,6 +90,18 @@ def test_card_sessions_leave_their_profile_alone():
         assert "Do not write profile memories or create, patch or delete skills" in read(body), body
 
 
+def test_the_hand_off_cards_never_stage_a_runs_path():
+    """The researcher and planner hand-offs live under runs/, and every path
+    there stays unstaged: they attach the document itself. A staged hand-off is
+    what the operator sees in `git status` and asks about."""
+    for name, path in (("i", "<REFINED>"), ("p", "<PLAN>")):
+        with open(os.path.join(BODIES, f"{name}-body.txt")) as fh:
+            body = fh.read()
+        assert "git add -f" not in body, f"{name}-body still stages its hand-off"
+        assert "UNSTAGED" in body
+        assert f"cp {path}" in body and "attach" in body
+
+
 def test_patch_attach_commands_carry_a_pathspec():
     """A bare `git diff --cached > patch` bundles EVERYTHING earlier cards
     staged — the E2E coder patch carried the refined idea, the plan and the
