@@ -1,21 +1,22 @@
 # Kanban Review Fixes Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-
 **Goal:** Make the generic kanban's prompts and driver agree with each other, so a plan written by the manager card can pass the plan review on its first attempt and every rework round runs on correctly rendered cards.
 
 **Architecture:** One renderer (`file_lanes.render_body`) resolves every placeholder and shared fragment for filed cards and rework rounds alike. The driver's verdict handling becomes robust (REWORK, REJECT without a colon, holds behind verdicts, halts only on spent retries). The card bodies are rewritten around one shared plan-acceptance checklist and a refined-idea template the idea gate checks. Boards and docs follow.
 
-**Tech Stack:** Python 3 standard library, pytest (`python3 -m pytest -q mission/tests` from the repo root), bash (`mission/create-board.sh`), the `hermes kanban` CLI (never called from tests).
+**Tech Stack:** Python 3 standard library, pytest (`/usr/bin/python3 -m pytest -q mission/tests` from the repo root — the shell's `python3` is the Hermes venv and has no pytest, ERRORS.md O6), bash (`mission/create-board.sh`), the `hermes kanban` CLI (never called from tests).
 
 **Spec:** docs/superpowers/specs/2026-09-11-kanban-review.md
 
-**Status (2026-09-11):** Task 1 is implemented and was committed by the operator in `8a59f46`, together with this plan and the spec; its task review has not run. Resume there, with a package scoped to Task 1's files (`scripts/review-package` takes no pathspec, and the range also adds this plan and the spec): `{ git log --oneline dbe41ae..8a59f46; git diff --stat dbe41ae 8a59f46 -- mission; git diff -U10 dbe41ae 8a59f46 -- mission; }`. Tasks 2–7 have not started. Added after `8a59f46`: Task 3's profile-memory hard rule covers skills too, Task 5's ERRORS.md gains #23, Task 6 (profiles) is new, and the smoke run is now Task 7.
+**Step tags:** written before `_plan-checklist.txt` existed, this plan uses `Step N` where the checklist now asks for `[TW]`/`[C]`/`[TI]` tags; the tags land with the first card filed under the checklist.
+
+**Status (2026-09-11):** Task 1 is implemented and was committed by the operator in `8a59f46`, together with this plan and the spec; its task review has not run. The plan and the spec were then extended in `aefae7c` (HEAD, working tree clean): Tasks 6 and 7, ERRORS.md #23, Task 3's profile-memory rule now covering skills. Resume there, with a review package scoped to Task 1's files: `{ git log --oneline dbe41ae..8a59f46; git diff --stat dbe41ae 8a59f46 -- mission; git diff -U10 dbe41ae 8a59f46 -- mission; }` — Task 1's own task review has not run. Tasks 2–7 have not started.
 
 ## Global Constraints
 
 - Work on the current branch of `/opt/projects/kanban/main/kanban`. No worktree, no branch, no commit, no stash (operator standing rule). Implementers do not stage anything; the controller stages new files at the very end.
-- The suite `python3 -m pytest -q mission/tests` must pass at the end of every task.
+- The suite `/usr/bin/python3 -m pytest -q mission/tests` must pass at the end of every task.
+- `/usr/bin/python3` is the interpreter to run them with (pytest 9.0.2, Python 3.14.4): the shell's default `python3` is the Hermes venv, which has no pytest — the failure ERRORS.md O6 records. A refined idea that names another present interpreter wins.
 - Tests never call the real `hermes` CLI and never touch `~/.hermes`: monkeypatch `run.kb`, `file_lanes.kb`, `run.runs_util.board_runs`, `run._exhaustion_event`.
 - Card bodies and fragments stay generic: no language or build-tool names (`test_card_bodies.BANNED`), placeholders only from `<WORKDIR> <BOARD> <N> <IDEA> <REFINED> <PLAN> <TARGETS> <PLAN_CHECKLIST> <TOOLCHAIN_BOUNDARY>`. `<YOUR-CARD-ID>` stays literal — the worker fills it in.
 - The driver never commits. Nothing in this plan changes that.
@@ -198,7 +199,7 @@ def test_idea_re_gate_keeps_the_gate_holder_instructions(monkeypatch, board_env)
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `python3 -m pytest -q mission/tests`
+Run: `/usr/bin/python3 -m pytest -q mission/tests`
 Expected: FAIL — `AttributeError: module 'file_lanes' has no attribute 'render_body'` (and `skill_for`, `targets_text`, `BOARD_KEYS`); the revision tests fail on literal `<REFINED>` in the body and `dir:/opt/projects/kanban/main/kanban` as workspace.
 
 - [ ] **Step 3: Add `skill_for` to `mission/lanes.py`**, directly after `goal_args`:
@@ -477,7 +478,7 @@ there as the lane's; git never runs in a target root.
 
 - [ ] **Step 7: Run the tests to verify they pass**
 
-Run: `python3 -m pytest -q mission/tests && bash -n mission/create-board.sh`
+Run: `/usr/bin/python3 -m pytest -q mission/tests && bash -n mission/create-board.sh`
 Expected: all tests PASS; `bash -n` prints nothing.
 
 ---
@@ -701,7 +702,7 @@ def test_gave_up_always_halts(monkeypatch, quiet_halt):
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `python3 -m pytest -q mission/tests`
+Run: `/usr/bin/python3 -m pytest -q mission/tests`
 Expected: FAIL — `AttributeError` for `cli_error`, `rejection_findings`, `is_rework`, `rework_rounds`, `held_by_verdict`; `TypeError: file_revision() got an unexpected keyword argument 'verdict_card_id'`; `test_a_timeout_with_retries_left_does_not_halt` fails (the driver halts on any timeout).
 
 - [ ] **Step 3: Add `cli_error` to `mission/runs_util.py`** (at the end of the file):
@@ -986,7 +987,7 @@ and in its docstring replace item (b) with:
 
 - [ ] **Step 8: Run the tests to verify they pass**
 
-Run: `python3 -m pytest -q mission/tests`
+Run: `/usr/bin/python3 -m pytest -q mission/tests`
 Expected: all PASS.
 
 ---
@@ -1213,7 +1214,7 @@ def test_md_section_stops_at_the_next_heading():
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `python3 -m pytest -q mission/tests`
+Run: `/usr/bin/python3 -m pytest -q mission/tests`
 Expected: FAIL — `_plan-checklist.txt` missing, `REFINED_SECTIONS`/`md_section` missing, bodies lack `DONE WHEN:` / `<PLAN_CHECKLIST>` / the verdict wording / the skills clause, `LOOP_COMPLETE` and `transient` still present, `I` still carries `brainstorming`.
 
 - [ ] **Step 3: `mission/lanes.py`**
@@ -1276,7 +1277,7 @@ PLAN ACCEPTANCE CHECKLIST — the plan passes when every item holds.
 5. Every code step holds the real code — no TBD, no TODO, no "similar to Task N", no undefined names. A fact the spec does not cover is written "UNVERIFIED — executor confirms by: <command>"; that is allowed and is not a placeholder, but never for a Tech Stack tool.
 6. Stage-only: no step commits, branches, pushes or stashes, and no step carries card mechanics (attach, complete, card ids).
 7. Scratch lives in /tmp. The deliverables are exactly the files the Files blocks name, tests included; nothing else is created under <WORKDIR>.
-8. The plan card produced only the plan: none of the files the Files blocks name is staged yet (`git -C <WORKDIR> diff --cached --name-only`).
+8. The plan card produced only the plan: `git -C <WORKDIR> diff --cached --name-only` prints nothing but <PLAN> and the lane's <REFINED>, and none of the files the Files blocks name is staged.
 ```
 
 - [ ] **Step 6: Rewrite the card bodies** — each file's whole content becomes exactly the text below.
@@ -1325,7 +1326,7 @@ INPUT: the refined idea at <REFINED> — accepted by a human at the idea gate an
 
 HARD RULES: (1) Do not commit, branch, stash, reset, restore or clean — work ends staged. (2) Work in <WORKDIR>. Write only <PLAN>; stage it with `git add -f -- <PLAN>` (runs/ is gitignored, so -f is required). (3) Attach your own patch only: `git diff --cached -- <PLAN> > /tmp/<YOUR-CARD-ID>.patch`, then `hermes kanban --board <BOARD> attach <YOUR-CARD-ID> /tmp/<YOUR-CARD-ID>.patch`. (4) Do not write profile memories or create, patch or delete skills — the profile serves every later card. (5) PLAN ONLY: create no product file — no deliverable, prototype, fixture or test on disk; code in the plan is text inside <PLAN>. (6) No environment probes: cite Findings by number. A load-bearing fact they lack goes in your result, where the plan gate sees it; if no plan is possible without it, block: `hermes kanban --board <BOARD> block --kind needs_input <YOUR-CARD-ID> "<the missing fact>"`.
 
-FORMAT: the writing-plans format with three changes for this lane — omit the "For agentic workers" header line, write no Commit steps (the cards stage their own work), and skip the Execution Handoff. Tech Stack comes only from tools Findings show present: honour a stated preference when Findings show it available, otherwise take the present alternative they name. The later cards execute your steps verbatim by tag: TW runs every [TW] step, C every [C] step, TI every [TI] step. Plan [TI] steps only when card TI<N> is live on the board (`hermes kanban --board <BOARD> list`) — an archived TI<N> means this lane runs without integration tests.
+FORMAT: the writing-plans format with three changes for this lane — omit the "For agentic workers" header line, write no Commit steps (the cards stage their own work), and skip the Execution Handoff. Tech Stack comes only from tools Findings show present: honour a stated preference when Findings show it available, otherwise take the present alternative they name. The later cards execute your steps verbatim by tag: TW runs every [TW] step, C every [C] step, TI every [TI] step. Plan [TI] steps only when card TI<N> is live on the board (`hermes kanban --board <BOARD> list`) — an archived TI<N> means this lane runs without integration tests. Every path in a Files block says which root it is under — under <WORKDIR>, or under the declared target root <TARGETS>; the reviewers check the two differently.
 
 <TOOLCHAIN_BOUNDARY>
 
@@ -1399,7 +1400,7 @@ HARD RULES: (1) Read-only on the repository; write only /tmp/<YOUR-CARD-ID>.revi
 TASK: review what this lane staged, against the plan at <PLAN> and the lane's contract at <REFINED> — the raw idea at <IDEA> only when <REFINED> says `refinement failed`. This lane's files are <REFINED>, <PLAN> and exactly the files the plan's Files blocks name, under <WORKDIR> or a declared target root (<TARGETS>); anything else in the index belongs to someone else and is not this lane's to judge. Check:
 (a) Every [C] step is implemented, and nothing beyond the plan is.
 (b) The tests exercise the behaviour they claim to: run the suite yourself, with the plan's Run commands.
-(c) Every file the plan names is staged (`git -C <WORKDIR> diff --cached --name-only`), and the TW<N> and C<N> patches touch nothing the plan does not name. No commits, no branches.
+(c) Every file the plan names under <WORKDIR> is staged (`git -C <WORKDIR> diff --cached --name-only`); a file the plan names under a declared target root (<TARGETS>) is outside the repository, so verify it by path — it exists and holds what the plan names — and list it in the result. The TW<N> and C<N> patches touch nothing the plan does not name. No commits, no branches.
 (d) Errors are not silently swallowed.
 (e) The tester's tests are unchanged by the coder: diff the staged test files against the patch attached to card TW<N>.
 Reproduce, do not skim: every PASS is re-derived, every REJECT carries reproduction steps.
@@ -1435,7 +1436,7 @@ HARD RULES: (1) Read-only on the repository; write only /tmp/<YOUR-CARD-ID>.revi
 
 TASK: the last check before the gate, against the plan at <PLAN> and the contract at <REFINED>. This lane's files are <REFINED>, <PLAN> and exactly the files the plan's Files blocks name, under <WORKDIR> or a declared target root (<TARGETS>). Reproduce, do not skim:
 (a) The whole suite — unit and integration — passes from a clean run: run it yourself with the plan's Run commands; never trust an earlier card's totals.
-(b) Every file the plan names is staged, and the TW<N>, C<N> and TI<N> patches touch nothing the plan does not name.
+(b) Every file the plan names under <WORKDIR> is staged; a file the plan names under a declared target root (<TARGETS>) is verified by path and listed in the result. The TW<N>, C<N> and TI<N> patches touch nothing the plan does not name.
 (c) The integration tests exercise real behaviour, not mocks of the thing under test.
 (d) Every success criterion in <REFINED> is covered by a passing test, or marked `manual at Gc` for the human at the code gate.
 
@@ -1502,7 +1503,7 @@ Completing this card is what releases the next lane's root card.
 
 - [ ] **Step 7: Run the tests to verify they pass**
 
-Run: `python3 -m pytest -q mission/tests && python3 mission/render-flow.py --check`
+Run: `/usr/bin/python3 -m pytest -q mission/tests && python3 mission/render-flow.py --check`
 Expected: all tests PASS; `render-flow.py --check` exits 0 (bodies do not feed the diagrams).
 
 ---
@@ -1578,7 +1579,7 @@ def test_no_board_tracks_generated_output():
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `python3 -m pytest -q mission/tests/test_shipped_boards.py`
+Run: `/usr/bin/python3 -m pytest -q mission/tests/test_shipped_boards.py`
 Expected: FAIL — `test_ideas_name_no_board_path` (minimal-development and portfolio-engineering ideas name `boards/…`), `test_no_board_tracks_generated_output` (`boards/minimal-development/work/roman-evaluator.html` is tracked).
 
 - [ ] **Step 3: Create `boards/roman-evaluator/`** — `mkdir boards/roman-evaluator`, then:
@@ -1790,7 +1791,7 @@ write there, and the reviewers count the files there as the lane's own.
 
 - [ ] **Step 6: Run the tests to verify they pass**
 
-Run: `python3 -m pytest -q mission/tests`
+Run: `/usr/bin/python3 -m pytest -q mission/tests`
 Expected: all PASS.
 
 ---
@@ -1826,7 +1827,7 @@ def test_the_generic_diagram_names_no_build_tool():
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `python3 -m pytest -q mission/tests/test_render_flow.py`
+Run: `/usr/bin/python3 -m pytest -q mission/tests/test_render_flow.py`
 Expected: FAIL on `test_the_generic_diagram_names_no_build_tool` (`TI2<br/>failsafe ITs`).
 
 - [ ] **Step 3: `mission/render-flow.py`**
@@ -2123,7 +2124,7 @@ run).
 
 - [ ] **Step 6: Run the tests and the diagram check**
 
-Run: `python3 -m pytest -q mission/tests && python3 mission/render-flow.py --check`
+Run: `/usr/bin/python3 -m pytest -q mission/tests && python3 mission/render-flow.py --check`
 Expected: all PASS; `--check` exits 0 with no `stale:` lines.
 
 ---
