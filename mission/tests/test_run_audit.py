@@ -238,6 +238,21 @@ def test_a_warning_in_a_card_log_is_a_warning(tmp_path, monkeypatch):
     assert "E13" in codes(findings, "WARNING")
 
 
+def test_prose_about_a_deprecated_field_is_not_a_warning(tmp_path, monkeypatch):
+    """Card logs are transcripts: a worker quoting the tool schema is not the run
+    emitting a warning."""
+    clean_probe(monkeypatch)
+    runs = fixture(tmp_path, chain_recs=worker_chain())
+    home = tmp_path / "home" / "kanban" / "boards" / "b" / "logs"
+    home.mkdir(parents=True)
+    (home / "t_c.log").write_text(
+        "Also need the result field. kanban_complete's `result` param is "
+        "deprecated legacy; prefer summary.\n")
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "home"))
+    findings, _rows, _s = ra.audit(runs)
+    assert "E13" not in codes(findings), findings
+
+
 def test_a_card_log_from_an_earlier_run_is_ignored(tmp_path, monkeypatch):
     clean_probe(monkeypatch)
     runs = fixture(tmp_path, chain_recs=worker_chain())

@@ -62,7 +62,12 @@ DONE_STATES = ("done", "archived", "triage")
 # Warnings the board's other voice prints: CLI-shaped lines, never prose. The
 # RED test phase legitimately prints ModuleNotFoundError, so an error vocabulary
 # here would fire on every healthy run; "0 warnings" in a verdict is not one.
-WARN_LINE = re.compile(r"(?i)(^warning\b|(^|\s)warnings?\s*:|deprecat\w+)")
+# Real warning FORMS (Python/CLI), never the word in prose: the card logs are
+# transcripts, so a worker quoting the tool schema ("`result` is a deprecated
+# legacy field") is not a warning the run emitted — it was flagged as one on
+# 2026-09-11 and the run was clean.
+WARN_LINE = re.compile(r"(^warning\b|(^|\s)warnings?\s*:|DeprecationWarning|"
+                       r"RuntimeWarning|UserWarning|FutureWarning)")
 WARN_TEXT = re.compile(r"(?i)(?<!no )(?<!\b0 )(?<!\bzero )warnings?\b")
 
 

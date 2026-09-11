@@ -303,6 +303,37 @@ board's own end state, then prints the per-card table and wall/agent/overhead.
 A warning alone fails it. The loop is: run, audit, fix, run again — no cycle is
 done while the auditor reports anything.
 
+**What a run costs** — `minimal-development`, one lane, 9 live cards, 4-minute
+ceiling, auto-gates, goal mode off. The three runs below are 2026-09-11's last
+runs, all on the shape this README describes:
+
+| run | wall | agent work | overhead | worst card | audit |
+|-----|------|-----------|----------|-----------|-------|
+| 12 (22:43) | 11.1 min | 5.5 min | 5.6 min | RVa1 1.67 min | 0 errors, 0 warnings |
+| 13 (23:07) | 10.8 min | 5.0 min | 5.8 min | RVa1 1.33 min | 4 errors — caches left in `work/` (fixed: E16) |
+| 14 (23:19) | 10.9 min | 5.0 min | 5.9 min | RVp1 1.27 min | 0 errors, 0 warnings |
+
+Per card, run 14: I1 0.93, Gi1 0.00, P1 0.87, RVp1 1.27, Gp1 0.00, TW1 0.55,
+C1 0.45, RVa1 0.98, Gc1 0.00 — 5.0 minutes of agent work in 9 cards, every gate
+free because the driver completes them itself. Reading it:
+
+- **Overhead is the cost centre, not the cards.** Nearly half of the wall clock
+  is not agent work: it is the dispatcher claiming a card, the poll interval
+  (20 s) and provider latency. Cheaper cards would not shorten the run much; a
+  tighter loop or a faster provider would.
+- **The ceiling is a detector, not a target.** Working cards land between 0.4 and
+  1.7 minutes against 4 — 2-10× headroom. A card that needs longer is a card doing
+  work the idea does not ask for, which is how the plan review's repository audit
+  got caught (ERRORS #29).
+- **The spread is model latency.** On the same revision: I1 0.77-1.12, P1
+  0.87-1.12, RVp1 0.52-1.27, RVa1 0.98-1.67. Nothing here tunes that.
+- **A rework round is cheap and bounded.** The board's only rejection (run 4) cost
+  about 3 extra minutes and two cards; the loop allows two rounds before a human
+  is asked.
+- **What the audits said:** every review PASS (`RVp1/Gp1/RVa1/Gc1`), the document
+  chain `OK: 0 findings`, nothing under `runs/` staged, and `work/` holding
+  exactly the two deliverables.
+
 Reset and re-create it after engine changes:
 
     mission/reset.sh --board boards/minimal-development --yes
