@@ -11,8 +11,12 @@ what is actually present; a missing runtime stops the lane at the researcher
 card with an install recommendation — nothing is installed.
 
 The page's behaviour — a row per evaluation, the alert, Reset — is marked for a
-human at the code gate: no card here drives a browser. Keep the default human
-gates; auto-gates would skip that check.
+human at the code gate: no card here drives a browser. This board runs
+auto-gated: the driver completes each gate itself once its evidence is
+satisfied, so no card here waits on a person. The page check that `--dump-dom`
+cannot make is therefore the OPERATOR's, performed with a browser after the
+run; the driver still commits nothing, and the human commit at the gate stays
+the authorization record.
 
     mission/create-board.sh --board boards/roman-evaluator-js
     mission/start-board.sh --slug roman-evaluator-js   # then drag Triage → Todo

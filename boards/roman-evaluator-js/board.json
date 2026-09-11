@@ -3,6 +3,6 @@
   "title": "Roman Evaluator JS",
   "lanes": 1,
   "integration_tests": false,
-  "auto_gates": false,
-  "max_runtime": "20m"
+  "auto_gates": true,
+  "max_runtime": "10m"
 }

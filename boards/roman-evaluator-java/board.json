@@ -6,5 +6,6 @@
     false,
     true
   ],
-  "auto_gates": false
+  "auto_gates": true,
+  "max_runtime": "10m"
 }
