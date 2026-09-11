@@ -5,12 +5,16 @@ the machinery — arm an idea, watch the researcher refine it, act on the gates,
 see force-staged code (work/ is scratch, never committed) and a timing report — for as close to nothing as a full run can
 cost. Run it after any change to `mission/`, and before trusting a real board.
 
-Everything about the idea is chosen for speed: one function, four test cases,
-no build tool, no dependencies, no ambiguity for any card to resolve. The lane
+Everything about the idea is chosen for speed: one parsing module, a handful
+of unit tests, no build step, no ambiguity for any card to resolve. The lane
 files 11 cards and drops to 9 when it activates: `integration_tests` is false,
 so `TI` and `RVc` are archived and `Gc` is re-linked to `RVa`.
 
-Toolchain: Python 3 and pytest. Nothing else.
+Toolchain: whatever the workstation already has — the idea prefers Node.js
+with npm (Jest, optionally Bootstrap, fetched into `work/`) and Google Chrome;
+the same page files run from any static web server, or from `file://` in
+Chrome launched with `--allow-file-access-from-files`. A missing runtime stops the lane at the
+researcher card with an install recommendation; nothing is installed.
 
     mission/create-board.sh --board boards/minimal-development
     mission/start-board.sh --slug minimal-development
