@@ -17,7 +17,7 @@ the board runs them in order. See §3.
 
 ## The boards (current state)
 
-Four board directories ship as runnable examples; two of them have run.
+Six board directories ship as runnable examples; two of them have run.
 
 | board | idea | lanes | gates | last run |
 |---|---|---|---|---|
@@ -25,6 +25,8 @@ Four board directories ship as runnable examples; two of them have run.
 | `roman-evaluator-js` | a browser page: `roman-evaluator.html`, a DOM-free parsing module with unit tests, `run.sh`, two launch modes | 1 | auto, **10 min/card** | **run 1** — 2026-09-11 23:58 → 2026-09-12 00:16 (§4) |
 | `roman-evaluator-java` | the same problem twice: a roman CLI (`roman-cli/`) then a spec-first Spring Boot service (`roman-service/`) consuming lane 1's rule; needs JDK 17, Maven, a warm `~/.m2` | 2 | auto, 60 min/card (default) | never run |
 | `portfolio-engineering` | a GPW small-cap research pipeline installed into the Hermes `trader` profile | 1 | auto, 60 min/card (default) | never run |
+| `minimal-goal-mode` | the same shape as `minimal-development` (one Python function, `sign`) with **`goal_mode: true`** — the cheap probe for whether this machine's goal judge works at all | 1 | auto, 6 min/card | never run — **red test: manifest uses the proposed naming (`IDEA.md` item 2), engine refuses it** |
+| `blade-workspace` | a documentation pass on an **external** project: `default-workdir` points at a repository this repo does not contain | 1 | auto, 10 min/card | never run — **red test: manifest uses the proposed naming (`IDEA.md` item 2), engine refuses it** |
 
 The output of a finished run lives beside the board: `boards/<slug>/work/` — the
 deliverable, **tracked**, so the human's commit at a gate puts it in history and
@@ -299,12 +301,17 @@ including what is still open:
 gate the driver records the evidence; you commit at your discretion, or not at
 all. With auto-gates on, nothing is committed at all.
 
-Four ready-to-run examples ship as board directories:
+Six ready-to-run examples ship as board directories:
 
     mission/create-board.sh --board boards/minimal-development
     mission/create-board.sh --board boards/roman-evaluator-java
     mission/create-board.sh --board boards/portfolio-engineering
     mission/create-board.sh --board boards/roman-evaluator-js
+    # these two are RED TESTS: their manifests carry the proposed key names
+    # (IDEA.md item 2), so create-board.sh refuses them and the suite fails on
+    # them until that lands. Do not edit them to match the engine.
+    mission/create-board.sh --board boards/minimal-goal-mode
+    mission/create-board.sh --board boards/blade-workspace   # edit its workdir first
 
 Reset and re-create a board after engine changes:
 
@@ -722,4 +729,4 @@ To run new work:
 
 Only touch `mission/card-bodies/` or `mission/lanes.py` when the card graph
 itself needs to change (a new role, a new gate) — that changes every board,
-not just one idea. See `boards/` for four worked examples.
+not just one idea. See `boards/` for six worked examples.

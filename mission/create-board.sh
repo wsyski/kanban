@@ -27,32 +27,46 @@ nothing about it lives under mission/:
         runs/artifacts/lane-<k>/   intermediates: refined.md, plan.md
         runs/snapshots/     driver-written idea snapshots, gitignored
 
+Every board.json is validated against the schema before the board is created.
+`python3 mission/board_schema.py --schema` prints the option table; this is the
+same set:
+
     {
       "slug": "my-board",              # optional; defaults to the dir name
-      "title": "My Board",
-      "workdir": "/path/to/repo",      # where lanes stage; default: this repo
+      "name": "My Board",
+      "default-workdir": "/path/to/repo",   # where lanes stage; default: this repo
       "lanes": 2,
-      "integration_tests": [false, true],
-      "auto_gates": false,
-      "max_runtime": "60m",
-      "max_retries": 1,
-      "targets": ["~/.hermes/profiles/trader"],   # optional: write roots outside workdir
+      "unit-tests": true,
+      "integration-tests": [false, true],
+      "auto-gates": false,
+      "goal": false,
+      "max-runtime": "60m",
+      "max-retries": 1,
+      "targets": ["~/.hermes/profiles/trader"],  # optional: write roots outside it
     }
 
-`max_runtime` and `max_retries` are the per-card worker runtime ceiling
-("45m", "90m", …) and retry budget, applied to every card the board files —
-per card, not shared. Omitted means the defaults, 60m and 1. Cards whose next
-step is a reviewer card get 3 retries regardless of `max_retries` (a REJECT →
+An option that reaches Hermes keeps HERMES's spelling of its name — `max-runtime`
+because the flag is `--max-runtime`, `name` because it is `--name`, `goal` because
+it is `--goal`, `default-workdir` because it is `--default-workdir`. A name
+invented for a parameter Hermes already named is a name nobody can grep for. The
+template's own options take the same hyphenated convention.
+
+`max-runtime` and `max-retries` are the per-card worker runtime ceiling
+("45m", "90m", "1h30m", …) and retry budget, applied to every card the board
+files — per card, not shared. Omitted means the defaults, 60m and 1. Cards whose
+next step is a reviewer card get 3 retries regardless of `max-retries` (a REJECT →
 revision cycle is an attempt; failing there is judgment, not a wedged worker).
 
-`targets` lists extra write roots outside the workdir — a lane that installs
-into a Hermes profile, say. Cards may write there and reviewers count files
-there as the lane's; git never runs in a target root.
+`targets` lists extra write roots outside the work directory — a lane that
+installs into a Hermes profile, say. Cards may write there and reviewers count
+files there as the lane's; git never runs in a target root.
 
-`integration_tests` and `auto_gates` take one value for every lane, or a list
-with exactly one value per lane — `[false, true]` reads as "lane 1 without
-integration cards, lane 2 with". A per-idea `<!-- integration-tests: -->`
-header still wins over both.
+`unit-tests`, `integration-tests` and `auto-gates` are the per-lane options: each
+takes one value for every lane, or a list with exactly one value per lane —
+`[false, true]` reads as "lane 1 without integration cards, lane 2 with". A
+per-idea header (`<!-- integration-tests: false -->`) still wins over both, and
+the header set IS the per-lane set — there is no option a board may set per lane
+that an idea may not override.
 
 The idea file is the ONE copy. There is no import step and no second copy
 under mission/: the file you edit is the file the board reads, and it stays
@@ -97,6 +111,23 @@ if [ -n "$BOARD_DIR" ]; then
   BOARD_DIR="$(cd "$BOARD_DIR" && pwd)"
 elif [ -z "$SLUG" ] || [ -z "$TITLE" ]; then
   echo "--slug and --title are required without --board" >&2; exit 2
+fi
+
+# SCHEMA VALIDATION, before anything exists. A board that does not validate is a
+# board that does not get created: no cards filed, no row in the engine's board
+# registry, nothing to clean up. It runs here rather than behind a flag because a
+# check somebody has to remember is a check that reports nothing on the night it
+# would have mattered — same reasoning as the dispatcher-lock pre-flight above.
+# mission/board_schema.py is the one declaration of the option set; it prints
+# EVERY problem and exits non-zero.
+# The idea files go through the SAME schema: a header is the per-lane form of a
+# manifest option, so board_schema judges both against one table.
+if [ -n "$BOARD_DIR" ]; then
+  python3 "$REPO/mission/board_schema.py" "$BOARD_DIR/board.json" || exit 2
+  for idea in "$BOARD_DIR"/lane-*.md; do
+    [ -e "$idea" ] || continue
+    python3 "$REPO/mission/board_schema.py" "$idea" || exit 2
+  done
 fi
 
 # Read the manifest once, in python, and hand the shell exactly what it needs.

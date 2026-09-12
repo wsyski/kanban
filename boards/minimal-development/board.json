@@ -2,6 +2,7 @@
   "slug": "minimal-development",
   "title": "Minimal Development",
   "lanes": 1,
+  "unit_tests": true,
   "integration_tests": false,
   "auto_gates": true,
   "goal_mode": false,

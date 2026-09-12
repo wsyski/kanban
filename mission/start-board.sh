@@ -8,6 +8,18 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 # a driver started here has each worker's attach/complete refused. Drop it once.
 unset HERMES_DELEGATED_CHILD_CONTEXT
 
+# The second door. create-board.sh validates the manifest and the ideas before the
+# board exists, but both files are edited afterwards — so validate again before a
+# driver reads them, or a hand-edit is discovered by a run instead of by a person.
+validate_board_files() {
+  local d="$REPO/boards/$1" idea
+  python3 "$REPO/mission/board_schema.py" "$d/board.json" || exit 2
+  for idea in "$d"/lane-*.md; do
+    [ -e "$idea" ] || continue
+    python3 "$REPO/mission/board_schema.py" "$idea" || exit 2
+  done
+}
+
 usage() {
 cat <<'USAGE'
 mission/start-board.sh --slug <s> [--once] [--timeout-min N]
@@ -50,6 +62,7 @@ done
 [ -n "$SLUG" ] || { echo "--slug required" >&2; exit 2; }
 [ -f "$REPO/boards/$SLUG/board.json" ] || {
   echo "no board at boards/$SLUG — create it first" >&2; exit 2; }
+validate_board_files "$SLUG"
 
 cd "$REPO"
 RUNLOG=${RUNLOG:-$REPO/boards/$SLUG/runs/driver.log}

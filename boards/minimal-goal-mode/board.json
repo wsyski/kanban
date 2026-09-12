@@ -1,0 +1,10 @@
+{
+  "slug": "minimal-goal-mode",
+  "name": "Minimal Goal Mode",
+  "lanes": 1,
+  "integration-tests": false,
+  "auto-gates": true,
+  "goal": true,
+  "max-runtime": "6m",
+  "max-retries": 1
+}

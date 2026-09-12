@@ -1,0 +1,12 @@
+{
+  "slug": "blade-workspace",
+  "name": "Blade Workspace (external project)",
+  "lanes": 1,
+  "default-workdir": "/home/playground/liferay/workspaces/blade-workspace",
+  "unit-tests": false,
+  "integration-tests": false,
+  "auto-gates": true,
+  "goal": false,
+  "max-runtime": "10m",
+  "max-retries": 2
+}
