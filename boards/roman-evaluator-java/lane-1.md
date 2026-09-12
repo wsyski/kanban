@@ -21,6 +21,20 @@ above — `IIII`, `VX`, `IXX`, empty input, a lowercase or non-roman character, 
 numeral that would exceed 3999. Test the stdin-to-stdout path separately from
 the rule itself, so a failure tells you which of the two broke.
 
+### The work directory may not be empty
+
+The driver never clears it, so `roman-cli/` may already be there from an earlier
+run — **the previous version of this project**, and this idea's input. Read it
+before planning: if the module exists, this idea is a request to improve or fix
+it, and the smallest correct change to what is there beats a rewrite. If the
+directory is empty, build it from nothing. Both are this idea.
+
+A sibling `roman-service/` from lane 2 may also be present. It is not this
+lane's, and it is not litter either — leave it alone. Nothing is deleted to
+"start clean": clearing the work directory is a human decision
+(`mission/reset.sh`), and a card that removes what it did not plan to replace
+destroys the only copy of the last run's work.
+
 This lane exists to exercise the board end to end on a problem small enough
 that a wrong answer is obvious. Prefer the boring solution: no framework, no
 argument parser, no configurability nobody asked for.

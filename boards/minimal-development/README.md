@@ -9,21 +9,21 @@ and before trusting a real board.
 
 Everything about the idea is chosen for speed: one function, four test cases, no
 build tool, no dependencies, no ambiguity for any card to resolve. The lane files
-11 cards and drops to 9 when it activates: `integration_tests` is false, so `TI`
+11 cards and drops to 9 when it activates: `integration-tests` is false, so `TI`
 and `RVc` are archived and `Gc` is re-linked to `RVa`.
 
 Toolchain: Python 3 and pytest. Which interpreter on this machine actually has
 pytest is the researcher's to find — a worker's `python3` may not.
 
-`"auto_gates": true` makes the run unattended: the driver completes the three
+`"auto-gates": true` makes the run unattended: the driver completes the three
 gates itself, records the same evidence, and still commits nothing. Set it to
-`false` to see what a human is asked at each gate. `max_runtime` is 4 minutes
+`false` to see what a human is asked at each gate. `max-runtime` is 4 minutes
 per card — a ceiling, not a target: on an idea this small, a card that needs
 longer is a card doing work the idea does not ask for, so the ceiling is also
 the check on the card bodies themselves. A timed-out card is retried, and the
 driver halts only once its retries are spent.
 
-`"goal_mode": false` — this board files no card under the goal judge. The judge
+`"goal": false` — this board files no card under the goal judge. The judge
 is a worker self-check that needs a REACHABLE auxiliary model, and on 2026-09-11
 this machine's judge was reachable but failing (`400 MissingSessionID` from the
 OpenCode provider): `judge_goal` reports a transport failure as the verdict
@@ -41,5 +41,4 @@ harness treats a transport failure as "cannot judge".
 Then audit it — `mission/run-audit.py --runs boards/minimal-development/runs`
 exits 0 only at 0 errors and 0 warnings.
 
-The roman-number page that used to live here is its own board now:
-`boards/roman-evaluator-js/`.
+The roman-number page is a separate board: `boards/roman-evaluator-js/`.

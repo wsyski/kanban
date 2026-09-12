@@ -3,29 +3,39 @@
 Build a research pipeline that proposes *new* Polish small-cap investment
 candidates with a written thesis, and that can be measured after the fact.
 
-### Where the work happens, and where it lands
+### You are working in the profile, on what is already there
 
-These are two different places and the split is deliberate.
+The work directory **is** the `trader` profile. Not a staging copy of it — the
+tree itself, with its six running cron jobs, its `shared_lib/`, its `scripts/` and
+its own git history. This idea is a change to a system that runs, made in place,
+the way you would make it by hand.
 
-**The work happens in this board's own work directory** — the board's
-`workdir`, inside the kanban repository. Every card stages there: the module,
-its tests, its config, its build descriptor. Nothing this board generates lands
-anywhere else in the repository, so deleting the work directory is a clean start.
+So there is no copying, no install step and no second version to keep in sync.
+The existing job is not prior art to be read and reimplemented elsewhere; it is
+the code you are editing. Work with the skills, scripts and modules that are
+there: `shared_lib/stock_cache.py` already caches, `shared_analytics.py` already
+shares one bar fetch per symbol per day, `insights.py` is already the rule engine,
+`llm.py` is already the model client. Reach for a new module only where the
+existing ones genuinely cannot carry the change, and say why in the plan.
 
-**The result updates the Hermes `trader` profile, and doing so is part of this
-idea** — not a follow-up, not a document for someone else to act on. The lane
-installs the module into `~/.hermes/profiles/trader/`, registers the cron job,
-and wires the watchdog. It is finished when the job runs there, not when the
-code compiles here.
+The tree is git-backed, which is what makes this safe to work in: every change is
+an ordinary staged diff, reviewers read `git diff --cached` here as they would in
+any repository, and the gate commit lands in the profile's own history. The two
+things that follow:
 
-One rule governs that second tree: **the driver never runs git in it.**
-`~/.hermes/profiles` is a git repository with an hourly autocommit-and-push
-cron (`sync-hermes-profiles.sh`) feeding a second workstation. Work there is
-file edits only — no `git add`, no commit, no branch. Pause that cron before
-starting this board (see this board's `README.md`).
+- **The index must be clean before the board is armed, and yours to leave alone
+  while it runs.** `git diff --cached` lists the whole index, so a pending edit of
+  your own becomes this lane's evidence and a reviewer will judge the lane on it.
+- **The autocommit cron must be paused for the board's lifetime.**
+  `sync-hermes-profiles.sh` commits and pushes hourly; the driver's staged index is
+  board state, and a cron that commits it takes the gate's decision away and
+  pushes a half-finished change to the second workstation. This is the board's one
+  human precondition — see its `README.md`.
 
-So the module must be self-contained and configured from outside, with no
-assumption about where it sits on disk.
+Nothing here is ever cleared or rebuilt. Six jobs run in this tree and this idea
+owns one of them: improve that job, add what the plan named, and leave everything
+else exactly as it was. No tool in the template deletes a work directory, so
+nothing will undo a mistake for you — git in this repository is the only way back.
 
 ### What exists today
 
@@ -92,8 +102,9 @@ been right — which means it cannot be wrong either.
   cost nothing and need no keys. `MASSIVE_API_KEY` is referenced by
   `intl_summary.py:475` and absent from `.env`, so that path already skips.
 - **`shared_lib` is coupled by absolute `sys.path.insert`** from every entry
-  point. The new module must not add a seventh caller to that pattern — reuse
-  the profile's ideas, not its import graph.
+  point. That is the house pattern here and this idea is not a refactor of it:
+  follow it if the change needs a new entry point, and leave the existing six
+  callers alone. Fixing the coupling is separate work.
 - **The watchdog is registration-based.** `cron_watchdog.py` monitors four job
   slugs by name and is blind to anything not listed, so an unregistered weekly
   job that silently stops leaves an unexplained gap.
@@ -149,12 +160,12 @@ been right — which means it cannot be wrong either.
   stated horizons.
 - The universe question is answered either way: NewConnect names are in, or
   the reason they are not is written down with the fallback.
-- The module's test suite is green and it imports without any `sys.path`
-  manipulation.
-- The job is installed in the trader profile, listed by
-  `hermes --profile trader cron list`, and has produced one verified run
-  against scratch run state.
+- The change's tests are green, run the way the profile already runs its own.
+- The job is registered and listed by `hermes --profile trader cron list`, and has
+  produced one verified run against scratch run state.
+- Every existing job still works: the five this idea does not touch are unchanged,
+  and the one it does still runs.
 - `cron_watchdog.py` alerts when the new job's heartbeat is missing, verified
   by running the watchdog with it absent.
-- No git command was run in `~/.hermes/profiles`, and every change made there
-  is written down with its undo.
+- The staged diff is this lane's work and nothing else — no unrelated file, no
+  autocommit in the middle of it. What the gate commits is what the plan named.

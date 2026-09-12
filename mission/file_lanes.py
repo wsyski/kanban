@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 
+import board_schema
 import lanes
 import runs_util
 
@@ -45,20 +46,79 @@ FRAGMENTS = {"<PLAN_CHECKLIST>": "_plan-checklist.txt",
              "<TOOLCHAIN_BOUNDARY>": "_toolchain-boundary.txt",
              "<RESULT_FIELD>": "_result-field.txt"}
 
-# Every key a board.json may carry. create-board.sh rejects anything else: a typo
-# in a key is a typo in the board's shape.
-BOARD_KEYS = frozenset({"slug", "title", "workdir", "lanes", "integration_tests",
-                        "auto_gates", "max_runtime", "max_retries", "targets",
-                        "goal_mode"})
+# Every key a board.json may carry, from the one declaration: board_schema knows
+# each option's type and default too, and validates them. A second copy here is
+# what let the manifest and the idea header spell the same option two ways.
+BOARD_KEYS = board_schema.BOARD_KEYS
 
 
-def lane_paths(repo, board, lane):
-    """Absolute paths of one lane's hand-off files. Absolute because workers run in
-    the board's workdir, where a repo-relative path resolves somewhere else."""
+def run_dir(repo, board, run_id):
+    """One run's directory. Every path a card is given resolves inside it, so a
+    card can only ever write into the run it was filed for — a worker orphaned by
+    an earlier run cannot reach this one's hand-offs (F2), and a fresh run cannot
+    inherit a stale refined idea (#31), because these are new paths rather than
+    cleared ones."""
     runs = os.path.join(os.path.abspath(repo), "boards", board, "runs")
-    return {"<IDEA>": os.path.join(runs, "snapshots", f"lane-{lane}.md"),
-            "<REFINED>": os.path.join(runs, "artifacts", f"lane-{lane}", "refined.md"),
-            "<PLAN>": os.path.join(runs, "artifacts", f"lane-{lane}", "plan.md")}
+    return os.path.join(runs, run_id) if run_id else runs
+
+
+def lane_paths(repo, board, lane, run_id=None):
+    """Absolute paths of one lane's hand-off files. Absolute because workers run in
+    the board's workdir, where a repo-relative path resolves somewhere else.
+
+    Never through runs/current: these strings are baked into card bodies at filing
+    time and swept from the git index by pathspec, and an alias would resolve at
+    write time — into whichever run happens to be current when the worker writes.
+    """
+    run = run_dir(repo, board, run_id)
+    return {"<IDEA>": os.path.join(run, "snapshots", f"lane-{lane}.md"),
+            "<REFINED>": os.path.join(run, "artifacts", f"lane-{lane}", "refined.md"),
+            "<PLAN>": os.path.join(run, "artifacts", f"lane-{lane}", "plan.md")}
+
+
+def workdir_state_path(repo, board, lane, run_id=None):
+    """Where the driver writes this lane's reading of its work directory.
+
+    `-at-open` is in the name deliberately: it is a reading taken when the lane
+    opened, not a live view. Within the lane the tree then changes — the coder
+    builds, the tester adds files — and the reviewer would otherwise read it as
+    though it still described the directory.
+    """
+    return os.path.join(run_dir(repo, board, run_id), "snapshots",
+                        f"lane-{lane}-workdir-at-open.md")
+
+
+def workdir_state(workdir, board_dir=None):
+    """One line describing the tree a lane is opening on.
+
+    The card graph is handed `<WORKDIR>` and, without this, no way to tell an empty
+    directory from the last run's product from a project with years of history. So
+    a brownfield task gets planned as if it were greenfield and the first card
+    overwrites its own input. This is the cheapest thing that removes the
+    assumption: state what is there, and let the researcher survey before refining.
+    """
+    if not os.path.isdir(workdir):
+        return "empty — this directory does not exist yet; the lane creates it"
+    entries = [e for e in os.listdir(workdir) if e not in (".git",)]
+    if not entries:
+        return "empty — nothing has been built here yet"
+    files = sum(len(fs) for _r, _d, fs in os.walk(workdir))
+    own = bool(board_dir) and os.path.abspath(workdir).startswith(
+        os.path.abspath(board_dir) + os.sep)
+    what = ("a PREVIOUS RUN's product on this board" if own
+            else "an EXISTING PROJECT this board did not create")
+    head = subprocess.run(["git", "-C", workdir, "rev-parse", "--abbrev-ref", "HEAD"],
+                          capture_output=True, text=True)
+    if head.returncode == 0:
+        tracked = subprocess.run(["git", "-C", workdir, "ls-files"],
+                                 capture_output=True, text=True).stdout.split()
+        detail = (f"{len(tracked)} tracked file(s), {files} file(s) on disk, "
+                  f"git branch {head.stdout.strip()}")
+    else:
+        detail = f"{files} file(s) on disk, not under git"
+    return (f"NOT empty — {what}: {detail}. Its contents are this idea's input: "
+            f"read them before planning, and change the smallest thing that "
+            f"satisfies the idea rather than rebuilding it")
 
 
 def targets_text(targets):
@@ -68,7 +128,8 @@ def targets_text(targets):
     return ", ".join(os.path.expanduser(t) for t in targets)
 
 
-def render_body(body_file, *, repo, board, workdir, lane, targets=(), bodies_dir=None):
+def render_body(body_file, *, repo, board, workdir, lane, targets=(), bodies_dir=None,
+                run_id=None):
     """A card body with every placeholder resolved.
 
     The one renderer: board filing and the driver's rework rounds both call it, so
@@ -82,14 +143,21 @@ def render_body(body_file, *, repo, board, workdir, lane, targets=(), bodies_dir
         if placeholder in text:
             with open(os.path.join(bodies_dir, name)) as f:
                 text = text.replace(placeholder, f.read().strip())
-    values = {"<WORKDIR>": os.path.abspath(workdir), "<BOARD>": board,
+    values = {"<WORKDIR>": os.path.abspath(workdir),
+              # A PATH, not the reading itself: every lane's cards are filed in
+              # one moment, so a string frozen here tells lane 2 what the tree
+              # looked like before lane 1 built anything in it. The driver writes
+              # this file when the lane OPENS, beside the idea snapshot and under
+              # the same guarantee — before the lane's root is unblocked.
+              "<WORKDIR-STATE>": workdir_state_path(repo, board, lane, run_id),
+              "<BOARD>": board,
               "<N>": str(lane), "<TARGETS>": targets_text(targets),
               # The board's run state, as a body names it. Deliberately NOT a
               # lane document (lane_paths): scratch lives here, and the chain
               # checks hand-offs — a directory that changes while a card works
               # would read as a document written after the card started.
-              "<RUNS>": os.path.join(os.path.abspath(repo), "boards", board, "runs"),
-              **lane_paths(repo, board, lane)}
+              "<RUNS>": run_dir(repo, board, run_id),
+              **lane_paths(repo, board, lane, run_id)}
     for placeholder, value in values.items():
         text = text.replace(placeholder, value)
     return text
@@ -98,19 +166,23 @@ def render_body(body_file, *, repo, board, workdir, lane, targets=(), bodies_dir
 def _retries_for(card_id, cards_by_id):
     """3 when the card's child (next step) is a reviewer card, else 1."""
     for c in cards_by_id:
-        if c["parent"] == card_id and c["assignee"] == "reviewer":
+        # `role`, not `assignee`: a board may remap reviewer -> its own profile
+        # (board.json `assignees`), and comparing the remapped name would silently
+        # drop the reviewer-feed retry budget for exactly the boards that renamed it.
+        if c["parent"] == card_id and c.get("role") == "reviewer":
             return REVIEWER_FEED_MAX_RETRIES
     return DEFAULT_MAX_RETRIES
 
 
 def _board_cfg(board_dir):
-    """This board's manifest — max_runtime comes from board.json (`max_runtime`,
-    e.g. "45m" or "90m"); the default applies when omitted."""
+    """This board's manifest — the per-card ceiling comes from board.json
+    (`max-runtime`, e.g. "45m" or "90m"); the default applies when omitted."""
     return read_board(board_dir)
 
 
 def file_board(board, repo, workdir, lane_count, key_prefix, max_runtime=None,
-               max_retries=None, targets=None, goal_mode=None):
+               max_retries=None, targets=None, goal_mode=None, run_id=None,
+               goal_max_turns=None, assignees=None):
     """File lane_count full lanes, every card parked. Returns id map.
 
     Every lane is filed IT-complete; pruning happens at unblock time, when the
@@ -138,22 +210,23 @@ def file_board(board, repo, workdir, lane_count, key_prefix, max_runtime=None,
     workdir = os.path.abspath(workdir)
     runtime = max_runtime or DEFAULT_MAX_RUNTIME
     max_retries = int(max_retries) if max_retries is not None else DEFAULT_MAX_RETRIES
-    # Filing is where a card's goal_mode is decided, so the board's switch has to
+    # Filing is where a card's goal mode is decided, so the board's switch has to
     # be read HERE, not only in run.py's rework/revision path: a manifest that
-    # says `"goal_mode": false` and a card filed with --goal anyway is how
-    # 2026-09-11's run 10 wedged (ERRORS O10).
+    # says `"goal": false` and a card filed with --goal anyway is how
+    # 2026-09-11's run 10 wedged.
     if goal_mode is None:
         try:
             goal_mode = bool(_board_cfg(os.path.join(repo, "boards", board))
-                             .get("goal_mode", True))
+                             .get("goal", board_schema.OPTIONS["goal"][1]))
         except Exception:
             goal_mode = True      # unreadable manifest: keep the documented default
     made = {}
     for lane in range(1, lane_count + 1):
-        cards = lanes.lane_cards(lane, integration_tests=True)
+        cards = lanes.lane_cards(lane, integration_tests=True,
+                                 assignees=assignees)
         for card in cards:
             body = render_body(card["body"], repo=repo, board=board, workdir=workdir,
-                               lane=lane, targets=targets or ())
+                               lane=lane, targets=targets or (), run_id=run_id)
             retries = REVIEWER_FEED_MAX_RETRIES \
                 if _retries_for(card["id"], cards) > DEFAULT_MAX_RETRIES \
                 else max_retries
@@ -164,7 +237,8 @@ def file_board(board, repo, workdir, lane_count, key_prefix, max_runtime=None,
                     "--created-by", "manager", "--json"]
             if card["skill"]:
                 args += ["--skill", card["skill"]]
-            args += lanes.goal_args(card["code"], enabled=goal_mode)
+            args += lanes.goal_args(card["code"], enabled=goal_mode,
+                                    max_turns=goal_max_turns)
             cid = json.loads(kb(board, *args))["id"]
             made[card["id"]] = cid
             kb(board, "block", "--kind", "needs_input", cid,
@@ -186,7 +260,7 @@ def idea_title(text, lane):
     return f"Idea {lane}"
 
 
-def _options_line(repo, board, lane, text):
+def _options_line(repo, board, lane, text, workdir=None):
     """The lane's RESOLVED options, in prose, for the triage card.
 
     The options themselves live in the idea as `<!-- integration-tests: false -->`,
@@ -203,8 +277,7 @@ def _options_line(repo, board, lane, text):
     except Exception as exc:      # never let a display line stop a board filing
         return f"Lane options: unavailable ({exc})"
     def src(key):
-        cfg_key = key.replace("-", "_")
-        per_lane = isinstance(defaults.get(cfg_key), list)
+        per_lane = isinstance(defaults.get(key), list)
         if key not in headers:
             return f"board default, lane {lane}" if per_lane else "board default"
         # Both places may state the same fact — the idea for the reader, the board
@@ -212,7 +285,7 @@ def _options_line(repo, board, lane, text):
         # they do not, the header silently wins and the board file lies. So say it
         # here, on the card the human actually reads.
         try:
-            board_value = lanes._board_default(defaults, cfg_key, lane, None)
+            board_value = lanes._board_default(defaults, key, lane, None)
         except Exception:
             board_value = None
         header_value = str(headers[key]).strip().lower() == "true"
@@ -220,12 +293,15 @@ def _options_line(repo, board, lane, text):
             return (f"idea header — CONFLICTS with the board file, which says "
                     f"{str(board_value).lower()} for lane {lane}; the header wins")
         return "idea header"
-    return (f"Lane options: integration-tests="
-            f"{str(opts['integration_tests']).lower()} ({src('integration-tests')}), "
-            f"auto-gates={str(opts['auto_gates']).lower()} ({src('auto-gates')}).")
+    state = (workdir_state(workdir, os.path.join(os.path.abspath(repo), "boards",
+                                                 board)) if workdir else "")
+    return ((f"Work directory: {state}\n" if state else "")
+            + "Lane options: " + ", ".join(
+        f"{key}={str(opts[key]).lower()} ({src(key)})" for key in sorted(opts)) + ".")
 
 
-def file_ideas(board, repo, ideas_dir, lane_count, key_prefix):
+def file_ideas(board, repo, ideas_dir, lane_count, key_prefix, run_id=None,
+               workdir=None):
     """One TRIAGE card per entered idea — the board's "Raw ideas" column.
 
     Triage is hermes's own intake state ("a specifier will flesh out the spec"),
@@ -245,9 +321,9 @@ def file_ideas(board, repo, ideas_dir, lane_count, key_prefix):
         text = open(path).read()
         if not text.strip():
             continue
-        snapshot = lane_paths(repo, board, lane)["<IDEA>"]
+        snapshot = lane_paths(repo, board, lane, run_id)["<IDEA>"]
         body = (f"RAW IDEA for lane {lane} — human input, not a work card.\n\n"
-                f"{_options_line(repo, board, lane, text)}\n"
+                f"{_options_line(repo, board, lane, text, workdir)}\n"
                 f"Source: {os.path.join(ideas_dir, f'lane-{lane}.md')}\n"
                 f"The driver snapshots this to {snapshot} when it activates lane "
                 f"{lane}; lane {lane}'s cards read the snapshot, never the source.\n"

@@ -1,36 +1,43 @@
 #!/usr/bin/env bash
-# Reset ONE board: delete its work directory and archive its live cards.
+# Reset ONE board: stop its workers, clear its stale index entries, archive its cards.
 #
 # Usage:
 #   mission/reset.sh --board boards/<slug>        # interactive
 #   mission/reset.sh --board boards/<slug> --yes  # unattended
 #
-# The blast radius is one board. Everything a board generates lives in
-# boards/<slug>/work, so removing that directory is the clean start — no
-# `git reset`, no `git clean`, and never a force-push. Other boards, the
-# engine and your other work are untouched.
+# NOTHING IS DELETED, by this script or any other. The work directory holds the
+# board's product and runs/<run-id>/ holds each run's evidence; both are a human's
+# to keep or delete. A new idea may be a fix of what the last run built, and last
+# week's run log is how you find out why it wedged — no tool here has an opinion
+# about when either stops being useful. Want them gone? `rm` them yourself.
 #
-# The board DEFINITION survives: board.json, the lane-<k>.md ideas and this
-# board's README are input, not output. Only work/ and the cards go.
+# So the blast radius is the board's CARDS and the git index: archive the cards,
+# stop the workers still holding them, and unstage what a dead run left pending.
+# No `git reset`, no `git clean`, never a force-push.
+#
+# The board DEFINITION survives too: board.json, the lane-<k>.md ideas and this
+# board's README are input, not output.
 set -euo pipefail
 
 usage() {
 cat <<'USAGE'
-mission/reset.sh — reset ONE board: delete its work directory, archive its cards
+mission/reset.sh — reset ONE board: archive its cards, unstage its run state
 
   --board <dir>   board directory (required)
   --yes           do not ask
   -h, --help      this text
 
-Everything a board generates lives in boards/<slug>/work, so removing that
-directory is the clean start — no `git reset`, no `git clean`, never a
-force-push. Other boards, the engine and your other work are untouched.
+NOTHING IS DELETED — not the work directory, not the run directories. What a
+board built is yours to keep or delete, and so is every runs/<run-id>/ holding an
+earlier run's log, timing and hand-offs. There is no flag that clears either.
+`rm` them yourself when you mean to.
 
-The board DEFINITION survives: board.json, the lane-<k>.md ideas and the
-board's README are input, not output. Only work/, runs/ and the cards go.
+What this does: archive the board's cards, stop the workers still holding them,
+and unstage what a dead run left in the git index. No `git reset`, no
+`git clean`, never a force-push.
 
-A board whose manifest sets an explicit workdir outside its own directory is
-refused — that path was chosen deliberately and may be another repository.
+The board DEFINITION survives: board.json, the lane-<k>.md ideas and the board's
+README are input, not output.
 USAGE
 }
 
@@ -63,36 +70,36 @@ repo, board_dir = sys.argv[1:3]
 cfg = json.load(open(os.path.join(board_dir, "board.json")))
 slug = cfg.get("slug") or os.path.basename(board_dir)
 print(slug)
-print(os.path.abspath(cfg.get("workdir") or os.path.join(board_dir, "work")))
+print(os.path.abspath(cfg.get("default-workdir")
+                      or os.path.join(board_dir, "work")))
 PY
 )
 EOF
 
-# A workdir outside the board directory was set deliberately and may be a whole
-# other repository — deleting it is not this script's call.
-case "$WORKDIR" in
-  "$BOARD_DIR"/*) ;;
-  *) echo "refusing: $SLUG's workdir is $WORKDIR, outside $BOARD_DIR." >&2
-     echo "It was set explicitly in board.json — clean it yourself." >&2; exit 3 ;;
-esac
-
-echo "board:   $SLUG"
-echo "removing: $WORKDIR"
+# No guard on where the work directory points, because nothing here deletes it.
+# The refusal this script used to carry — "your workdir is outside the board
+# directory, clean it yourself" — took the run state and the card archival down
+# with it, so a board pointing at another repository could not be reset at all.
+echo "board:    $SLUG"
+echo "archiving: this board's cards; unstaging its leftover index entries"
+echo "KEEPING:  $WORKDIR (the product)"
+echo "KEEPING:  $BOARD_DIR/runs (every run's evidence) — both yours to rm, never this script's"
 echo "keeping:  $BOARD_DIR/board.json, lane-*.md, README.md"
-[ "$YES" = 1 ] || { read -rp "Delete that work directory and archive ALL live cards on '$SLUG'? [y/N] " a
+[ "$YES" = 1 ] || { read -rp "Archive ALL live cards on '$SLUG' and unstage its run state? [y/N] " a
                     [ "$a" = y ] || exit 1; }
 
-rm -rf "$WORKDIR" "$BOARD_DIR/runs"
-echo "work directory removed"
+# Nothing is deleted here — not the work directory and not the run directories
+# either. Each run's evidence lives under runs/<run-id>/ and stays there: it is
+# gitignored, nothing later reads it, and deciding it has outlived its usefulness
+# is a human's call, made with rm. What this script does is stop the workers,
+# unstage what a dead run left in the index, and archive the cards.
 
-# The index is board state too. work/ is the board's PRODUCT — tracked, and
-# committed by the human at a gate — so deleting it here must also STAGE the
-# removal, or HEAD keeps a deliverable whose files are gone. Whatever a run
-# staged and never committed leaves the index too: the next lane would inherit
-# those entries, `git diff --cached` gate evidence would list them, and a worker
-# can waste its budget working out where a blob it never wrote came from. Only
-# this board's own paths — never a blanket reset, which would throw away work the
-# human staged elsewhere.
+# The index is board state too. Whatever the last run staged and never committed
+# is still in it: the next lane would inherit those entries, `git diff --cached`
+# gate evidence would list them, and a worker can waste its budget working out
+# where a blob it never wrote came from. So unstage this board's own generated
+# paths — never a blanket reset, which would throw away work the human staged
+# elsewhere, and never a `git rm`: the files stay, only the pending entry goes.
 if git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1; then
   REL="${BOARD_DIR#$REPO/}"
   # board.json, lane-<k>.md and README.md are the board's definition — this
@@ -100,19 +107,14 @@ if git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1; then
   # Restore exactly the paths that HAVE staged entries. Passing a pathspec git
   # knows nothing about (runs/ is gitignored, so it never has one) fails the
   # WHOLE restore with "pathspec did not match" — silently, under `|| true`.
+  # runs/ wholesale: nothing under it should ever be staged, and per-run
+  # directories make a narrower pathspec both wrong and fragile (a glob that
+  # matches no tracked path fails the WHOLE restore, silently, under `|| true`).
   staged=$(git -C "$REPO" diff --cached --name-only \
-             -- "$REL/work" "$REL/runs/artifacts/*" 2>/dev/null)
+             -- "$REL/work" "$REL/runs" 2>/dev/null)
   if [ -n "$staged" ]; then
     printf '%s\n' "$staged" | xargs -r -d '\n' git -C "$REPO" restore --staged --
     echo "unstaged $(printf '%s\n' "$staged" | wc -l) generated path(s) under $REL"
-  fi
-  # THEN stage the removal of what HEAD still carries: the unstage above would
-  # otherwise undo these D entries. The worktree copies are already gone (rm -rf
-  # above), so --cached is the whole job.
-  committed=$(git -C "$REPO" ls-tree -r --name-only HEAD -- "$REL/work" 2>/dev/null)
-  if [ -n "$committed" ]; then
-    git -C "$REPO" rm -q -r --cached --ignore-unmatch -- "$REL/work" 2>/dev/null || true
-    echo "staged removal of $(printf '%s\n' "$committed" | wc -l) committed path(s) under $REL/work"
   fi
 fi
 
@@ -126,8 +128,10 @@ for t in json.load(sys.stdin):
     # A worker the dispatcher spawned does NOT die with its driver: it keeps the
     # card's workspace and writes to the lane's shared output paths
     # (runs/artifacts/lane-<k>/refined.md …), so an orphan outliving a killed
-    # run can overwrite the documents of the NEXT run after clear_lane_outputs
-    # has already run (observed 2026-09-11; the chain log reports it as F2).
+    # run used to overwrite the documents of the NEXT run (observed 2026-09-11;
+    # the chain log reports it as F2). Per-run directories make that impossible —
+    # the orphan writes to its own run's paths — but it is still burning a
+    # worker slot and a budget on an archived card.
     # Stop this board's workers before archiving its cards.
     for id in $ids; do
       pkill -f "work kanban task $id" 2>/dev/null && echo "stopped the live worker for $id" || true

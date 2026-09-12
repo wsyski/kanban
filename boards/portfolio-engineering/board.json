@@ -1,8 +1,8 @@
 {
   "slug": "portfolio-engineering",
-  "title": "Portfolio Engineering",
+  "name": "Portfolio Engineering",
   "lanes": 1,
-  "integration_tests": false,
-  "auto_gates": false,
-  "targets": ["~/.hermes/profiles/trader"]
+  "default-workdir": "/home/wos/.hermes/profiles/trader",
+  "integration-tests": false,
+  "auto-gates": false
 }

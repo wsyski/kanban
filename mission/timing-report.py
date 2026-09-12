@@ -52,10 +52,26 @@ def _args(argv):
                 jsonl = argv[i + 1]
             i += 2
             continue
-        raise SystemExit(f"unknown arg: {a}")
+        if a in ("-h", "--help"):
+            print(__doc__.strip())
+            raise SystemExit(0)
+        raise SystemExit(f"unknown arg: {a} (try --help)")
     if not board:
         raise SystemExit("--board <slug> is required (or set BOARD=<slug>)")
-    return board, jsonl or os.path.join(REPO, "boards", board, "runs", "timing.jsonl")
+    if jsonl:
+        return board, jsonl
+    # Each run keeps its own series under runs/<run-id>/; runs/current names the
+    # live one. An explicit --jsonl still points at any earlier run's file, which
+    # is how two runs get compared.
+    runs = os.path.join(REPO, "boards", board, "runs")
+    try:
+        with open(os.path.join(runs, "current")) as f:
+            run_id = f.read().strip()
+        if run_id and os.path.isdir(os.path.join(runs, run_id)):
+            runs = os.path.join(runs, run_id)
+    except OSError:
+        pass                      # a pre-per-run board: the flat layout still reads
+    return board, os.path.join(runs, "timing.jsonl")
 
 
 BOARD, JSONL = _args(sys.argv[1:])

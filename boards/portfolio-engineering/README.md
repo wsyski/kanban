@@ -1,20 +1,46 @@
 # portfolio-engineering — before you start
 
-The lane builds in this board's own work directory, `boards/portfolio-engineering/work/`,
-and **installs into the Hermes `trader` profile** as its final step.
+**The work directory is the `trader` profile itself** —
+`"default-workdir": "/home/wos/.hermes/profiles/trader"` — absolute, as that
+option always is, and therefore host-local: edit it on another machine. The lane edits the live tree: no
+staging copy, no install step, no second version. The existing cron job, the
+`shared_lib/` modules and the scripts around them are what it changes, using what
+is already there.
 
-`board.json` declares `~/.hermes/profiles/trader` as a target root: the cards may
-write there, and the reviewers count the files there as the lane's own.
+That works because the profile is a git repository. Every change is an ordinary
+staged diff, reviewers read `git diff --cached` in that repo, and the gate commit
+lands in the profile's own history — the same authorization chain every other
+board has, in a different repository.
 
-One precondition, a human action: **pause the profiles autocommit cron.**
-`~/.hermes/profiles` is a git repository with an hourly commit-and-push job
-(`sync-hermes-profiles.sh`) feeding a second workstation. The lane edits that
-tree without git, so an autocommit firing mid-lane would commit and push a
-half-installed job. Pause it for the board's lifetime and resume afterwards.
+## Two human preconditions
+
+**Pause the profiles autocommit cron for the board's lifetime.**
+`~/.hermes/profiles` has an hourly commit-and-push job (`sync-hermes-profiles.sh`,
+feeding a second workstation). The driver's staged index is board state: a cron
+that commits it takes the gate's decision away and pushes a half-finished change.
+Pause it before arming, resume when the board is done.
+
+**Start from a clean index, and stay off it while the board runs.**
+`git diff --cached` lists the whole index, so your own pending edits become the
+lane's evidence and a reviewer will judge the lane on them. Check
+`git -C ~/.hermes/profiles status` first — the doors refuse a dirty index, and once
+the run is live a path you stage there is reported and fails the audit (E17). It is
+reported, not unstaged: the board will not throw away your pending work.
+
+## Cleaning up
+
+    mission/reset.sh --board boards/portfolio-engineering
+
+Clears `runs/` and archives the cards. **It does not touch the profile** — nothing
+in this template clears a work directory, which matters more here than anywhere
+else: this one is a live tree with six running jobs. The only thing that undoes
+work here is git, in that repository.
+
+## Running it
 
 Toolchain: Python 3 and a reachable local LLM endpoint (the profile's
-`shared_lib/llm.py` points at `http://localhost:8081/v1`). Nothing else.
+`shared_lib/llm.py` points at `http://localhost:8081/v1`). Nothing else — the
+profile brings its own.
 
-    rm -rf boards/portfolio-engineering/work     # clean start, if re-running
     mission/create-board.sh --board boards/portfolio-engineering
     mission/start-board.sh --slug portfolio-engineering

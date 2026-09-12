@@ -7,8 +7,8 @@ refined idea, or a leftover?" is a command, not a transcript dig:
 
   - F1 a document the card's filed body names does not exist;
   - F2 a document the card READS was written AFTER it started (it cannot have read it yet);
-  - F3 it predates the run's first card (a previous run's leftover — ERRORS #31);
-  - F4 the filed body still carried an unresolved <PLACEHOLDER> (ERRORS #22);
+  - F3 it predates the run's first card (a previous run's leftover);
+  - F4 the filed body still carried an unresolved <PLACEHOLDER>;
   - F5 a worker card finished having attached nothing and staged nothing.
 
 Usage: mission/doc-chain.py --runs <board-runs-dir> [--json]
@@ -72,7 +72,7 @@ def analyze(recs):
             # card writes PLAN, so PLAN appearing after its start is the job, not
             # a stale read. What still matters for an output path is F3 — a
             # leftover from an earlier run sitting where this card will write
-            # (exactly how a refined idea used to survive a refile, ERRORS #31).
+            # (a refined idea surviving into a later run).
             is_output = PRODUCED_BY.get(role) == code.rstrip("0123456789")
             if not os.path.exists(path):
                 if not is_output:
@@ -153,22 +153,43 @@ def history(runs_dir):
     return "\n".join(out)
 
 
+
+def resolve_run_dir(path):
+    """A board's runs/ resolves to the run its `current` file names; a run
+    directory is taken as given.
+
+    Per-run directories mean `--runs boards/<slug>/runs` is ambiguous, and asking
+    every caller to paste a timestamp would make auditing the live run harder than
+    it was. So: point it at runs/ for the current run, or at runs/<run-id> for any
+    earlier one — which is the whole reason the older ones are kept.
+    """
+    import os
+    current = os.path.join(path, "current")
+    if os.path.isfile(current):
+        with open(current) as f:
+            run_id = f.read().strip()
+        if run_id and os.path.isdir(os.path.join(path, run_id)):
+            return os.path.join(path, run_id)
+    return path
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--runs", required=True, help="the board's runs/ directory")
+    ap.add_argument("--runs", required=True,
+                    help="the board's runs/ dir (uses the current run) or one runs/<run-id>")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--quiet", action="store_true", help="findings only")
     ap.add_argument("--history", action="store_true",
                     help="the board's whole verdict ledger, not just this run")
     a = ap.parse_args(argv)
-    recs = load(a.runs)
+    runs = resolve_run_dir(a.runs)
+    recs = load(runs)
     if recs is None:
-        print(f"no chain log at {os.path.join(a.runs, 'chain.jsonl')} — "
+        print(f"no chain log at {os.path.join(runs, 'chain.jsonl')} — "
               f"written by run.py for runs started since this landed", file=sys.stderr)
         return 2
     rows, findings = analyze(recs)
     if a.history:
-        print(history(a.runs))
+        print(history(runs))
         return 1 if findings else 0
     reworks = [r for r in recs if r["event"] == "rework"]
     verdicts = [r for r in rows if r.get("verdict")]

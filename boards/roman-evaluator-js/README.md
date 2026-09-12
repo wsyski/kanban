@@ -21,4 +21,7 @@ the authorization record.
     mission/create-board.sh --board boards/roman-evaluator-js
     mission/start-board.sh --slug roman-evaluator-js   # then drag Triage → Todo
 
-A clean start is `rm -rf boards/roman-evaluator-js/work`.
+Only run state is ever cleared — `mission/reset.sh --board boards/roman-evaluator-js`.
+Nothing here touches the work directory, so a re-run finds the last run's page and
+treats it as the previous version to improve. Delete it by hand if you want a
+blank start.

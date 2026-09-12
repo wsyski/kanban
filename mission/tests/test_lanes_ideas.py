@@ -19,8 +19,32 @@ def test_parse_idea_extracts_headers_and_body():
 
 
 def test_parse_idea_rejects_unknown_key():
-    with pytest.raises(ValueError, match="unknown idea header"):
+    with pytest.raises(ValueError, match="unknown option"):
         lanes.parse_idea("## X\n<!-- integraton-tests: false -->\n\ntext\n")
+
+
+def test_parse_idea_rejects_a_header_shaped_line_it_cannot_read():
+    """The strict key class is [A-Za-z0-9-], so an underscored key matches nothing
+    and would be kept as prose — the option silently ignored, and invisible in any
+    rendered view. board_schema judges anything SHAPED like a header, so this is an
+    error with the spelling to use."""
+    with pytest.raises(ValueError, match="write 'auto-gates'"):
+        lanes.parse_idea("## X\n<!-- auto_gates: true -->\n\ntext\n")
+
+
+def test_parse_idea_rejects_trailing_text_after_a_header():
+    with pytest.raises(ValueError, match="whole line"):
+        lanes.parse_idea("## X\n<!-- auto-gates: true --> keep\n\ntext\n")
+
+
+def test_parse_idea_rejects_a_bad_value_at_the_header():
+    with pytest.raises(ValueError, match="expected true or false"):
+        lanes.parse_idea("## X\n<!-- auto-gates: yes -->\n\ntext\n")
+
+
+def test_parse_idea_rejects_a_board_level_option_as_a_header():
+    with pytest.raises(ValueError, match="board-level option"):
+        lanes.parse_idea("## X\n<!-- max-runtime: 10m -->\n\ntext\n")
 
 
 def test_parse_idea_ignores_ordinary_html_comments():
@@ -47,17 +71,18 @@ def test_read_idea_treats_missing_and_empty_alike(tmp_path):
 
 
 def test_resolve_prefers_header_over_board_default():
-    defaults = {"integration_tests": True, "auto_gates": False}
+    defaults = {"integration-tests": True, "auto-gates": False}
     opts = lanes.resolve_lane_options(
         defaults, {"integration-tests": "false", "auto-gates": "true"})
-    assert opts == {"integration_tests": False, "auto_gates": True}
+    assert opts == {"integration-tests": False, "unit-tests": True,
+                    "auto-gates": True}
 
 
 def test_resolve_falls_back_to_board_default():
-    defaults = {"integration_tests": False, "auto_gates": True}
+    defaults = {"integration-tests": False, "auto-gates": True}
     opts = lanes.resolve_lane_options(defaults, {})
-    assert opts["integration_tests"] is False
-    assert opts["auto_gates"] is True
+    assert opts["integration-tests"] is False
+    assert opts["auto-gates"] is True
 
 
 def test_bool_values_are_exactly_true_or_false():
@@ -68,7 +93,7 @@ def test_bool_values_are_exactly_true_or_false():
 
 
 def test_resolve_rejects_a_suite_header():
-    with pytest.raises(ValueError, match="unknown idea header"):
+    with pytest.raises(ValueError, match="unknown option"):
         lanes.parse_idea("## X\n<!-- suite: mvn -q verify -->\n\ntext\n")
 
 

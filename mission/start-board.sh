@@ -64,6 +64,18 @@ done
   echo "no board at boards/$SLUG — create it first" >&2; exit 2; }
 validate_board_files "$SLUG"
 
+# The board may set its own driver cap; --timeout-min on the command line wins.
+if [ -z "${TIMEOUT:-}" ]; then
+  TIMEOUT=$(python3 -c "
+import json, sys
+try:
+    v = json.load(open('$REPO/boards/$SLUG/board.json')).get('timeout-min')
+except Exception:
+    v = None
+print(v if v else '')
+" 2>/dev/null)
+fi
+
 cd "$REPO"
 RUNLOG=${RUNLOG:-$REPO/boards/$SLUG/runs/driver.log}
 LOCK="$REPO/boards/$SLUG/runs/driver.lock"
@@ -87,7 +99,7 @@ if [ "$ONCE" = 1 ]; then
   # claim the root before that tick ran, so the researcher started 9 seconds
   # BEFORE the snapshot its body is told to read existed (the chain reports it
   # as F2; live 2026-09-11). The lane root is the RESEARCHER card, not the plan
-  # card: a raw idea goes to refinement first (ERRORS #36).
+  # card: a raw idea goes to refinement first.
   BOARD="$SLUG" nohup python3 -u mission/run.py --timeout-min "${TIMEOUT:-240}" >> "$RUNLOG" 2>&1 &
   echo "board '$SLUG' started (one-shot); log: $RUNLOG"
 else

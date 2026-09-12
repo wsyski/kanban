@@ -119,6 +119,12 @@ def summary_findings(summary, ceiling):
     out = []
     if summary is None:
         return [("ERROR", "E4", "no run-summary.json — the run wrote no summary")], {}
+    # The work directory moved under a live run: a branch switch, a commit or reset
+    # by something else, or a staged path that is not this lane's. The driver reports
+    # these as it sees them; a warning alone fails this auditor, which is what turns
+    # "the log said so" into "the run did not pass".
+    for finding in summary.get("workdir_drift") or []:
+        out.append(("ERROR", "E17", finding))
     gates = summary.get("gates") or {}
     if not gates:
         out.append(("ERROR", "E4", "no gate evidence in the summary"))
@@ -206,7 +212,10 @@ def repo_findings(runs_dir):
     # Nothing under a board's runs/ belongs in the index: the hand-offs travel by
     # path, and a staged one is what the operator sees in `git status` and asks
     # about.
-    rel = os.path.relpath(os.path.abspath(runs_dir), REPO)
+    # The whole runs/ tree, not just this run: no run directory is ever deleted,
+    # so an older run's staged leftover is still in the index and still reaches
+    # every later `git diff --cached`.
+    rel = os.path.relpath(runs_root(runs_dir), REPO)
     try:
         staged = subprocess.run(["git", "-C", REPO, "diff", "--cached",
                                  "--name-only", "--", rel],
@@ -219,11 +228,19 @@ def repo_findings(runs_dir):
     return out
 
 
-def work_noise_findings(runs_dir):
+def work_noise_findings(runs_dir, workdir=None):
     """`work/` holds the idea's output for a human — a cache or a harness in
-    there is neither, and it reaches the reviewer's staged-set check."""
+    there is neither, and it reaches the reviewer's staged-set check.
+
+    Board-owned trees only. A board whose manifest sets default-workdir builds in
+    another project, where a pre-existing cache is that project's business and
+    flagging it would fail every run of that board for litter it did not create.
+    """
     out = []
-    work = os.path.join(os.path.dirname(os.path.abspath(runs_dir)), "work")
+    board = board_dir_for(runs_dir)
+    work = os.path.abspath(workdir) if workdir else os.path.join(board, "work")
+    if not work.startswith(os.path.abspath(board) + os.sep):
+        return out
     for root, dirs, files in os.walk(work):
         for d in dirs:
             if d in ("__pycache__", ".pytest_cache"):
@@ -266,16 +283,16 @@ def board_findings(slug, runs_dir):
 
 
 def audit(runs_dir, board_dir=None):
-    board_dir = board_dir or os.path.dirname(os.path.abspath(runs_dir))
+    board_dir = board_dir or board_dir_for(runs_dir)
     cfg = {}
     cfg_path = os.path.join(board_dir, "board.json")
     if os.path.exists(cfg_path):
         cfg = json.load(open(cfg_path))
     slug = cfg.get("slug") or os.path.basename(board_dir)
-    ceiling = ceiling_minutes(cfg.get("max_runtime"))
+    ceiling = ceiling_minutes(cfg.get("max-runtime"))
 
     findings, stats = driver_findings(read(os.path.join(runs_dir, "driver.log")),
-                                     bool(cfg.get("auto_gates")))
+                                     bool(cfg.get("auto-gates")))
     if any(c == "E1" and "did not finish" in t for _s, c, t in findings):
         # Mid-flight: one line beats a cascade of E4/E7/E12 that all mean the
         # same thing (the auditor was run too early), and the cause is a person
@@ -309,7 +326,7 @@ def audit(runs_dir, board_dir=None):
                 pass
     findings += card_log_findings(slug, started)
     findings += repo_findings(runs_dir)
-    findings += work_noise_findings(runs_dir)
+    findings += work_noise_findings(runs_dir, cfg.get("default-workdir"))
     findings += board_findings(slug, runs_dir)
     return findings, rows, stats
 
@@ -342,20 +359,59 @@ def report(findings, rows, stats, ceiling):
     return 1 if findings else 0
 
 
+
+def runs_root(runs_dir):
+    """The board's runs/ tree, given either it or one run inside it."""
+    import os
+    p = os.path.abspath(runs_dir)
+    return os.path.dirname(p) if os.path.basename(os.path.dirname(p)) == "runs" \
+        else p
+
+
+def board_dir_for(runs_dir):
+    """The board directory above a runs/ tree or a runs/<run-id> inside it.
+
+    `dirname(runs_dir)` was enough while runs/ was flat; a per-run directory is one
+    level deeper, and getting this wrong is SILENT — board.json goes unread, so the
+    per-card ceiling and auto-gates both default and the audit still prints a clean
+    table."""
+    import os
+    return os.path.dirname(runs_root(runs_dir))
+
+
+def resolve_run_dir(path):
+    """A board's runs/ resolves to the run its `current` file names; a run
+    directory is taken as given.
+
+    Per-run directories mean `--runs boards/<slug>/runs` is ambiguous, and asking
+    every caller to paste a timestamp would make auditing the live run harder than
+    it was. So: point it at runs/ for the current run, or at runs/<run-id> for any
+    earlier one — which is the whole reason the older ones are kept.
+    """
+    import os
+    current = os.path.join(path, "current")
+    if os.path.isfile(current):
+        with open(current) as f:
+            run_id = f.read().strip()
+        if run_id and os.path.isdir(os.path.join(path, run_id)):
+            return os.path.join(path, run_id)
+    return path
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--runs", required=True, help="the board's runs/ directory")
+    ap.add_argument("--runs", required=True,
+                    help="the board's runs/ dir (uses the current run) or one runs/<run-id>")
     ap.add_argument("--board", help="the board directory (default: runs/..)")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
-    findings, rows, stats = audit(a.runs, a.board)
+    findings, rows, stats = audit(resolve_run_dir(a.runs), a.board)
     if a.json:
         print(json.dumps({"findings": findings, "rows": rows, "stats": stats}, indent=2))
         return 1 if findings else 0
     cfg_path = os.path.join(a.board or os.path.dirname(os.path.abspath(a.runs)), "board.json")
     ceiling = None
     if os.path.exists(cfg_path):
-        rt = json.load(open(cfg_path)).get("max_runtime")
+        rt = json.load(open(cfg_path)).get("max-runtime")
         ceiling = ceiling_minutes(rt)
     return report(findings, rows, stats, ceiling)
 

@@ -1,15 +1,14 @@
-"""The refile must not clear `work/` (user rule, 2026-09-12).
+"""The refile deletes nothing (user rule, 2026-09-12) — not `work/`, not a run.
 
 The next idea on a board may be a FIX of what the previous run built, so the
-directory a new run inherits IS that task's input. Clearing it is a human
-decision, taken when the human knows what the next task is — `mission/reset.sh`
-wipes it and stages the removal of the committed paths. A driver that wiped it at
-the refile would destroy the baseline between two runs, and the failure is
-silent: the lane simply starts from an empty directory and plans a from-scratch
-build for a fix task.
+directory a new run inherits IS that task's input. A driver that wiped it at the
+refile would destroy the baseline between two runs, and the failure is silent: the
+lane simply starts from an empty directory and plans a from-scratch build for a fix
+task.
 
-So `snapshot_run_evidence` clears run state and the hand-off paths under
-`runs/artifacts`, and touches nothing under `work/`.
+The same now holds for run state. The refile MINTS `runs/<run-id>/` instead of
+clearing the last run's files, so the incoming run starts on empty paths because
+they are new, and the finished run stays readable for the auditor.
 """
 import os
 import sys
@@ -18,53 +17,52 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import run
 
 
-def _refile_fixture(monkeypatch, tmp_path):
+def _fixture(monkeypatch, tmp_path):
     repo = tmp_path / "repo"
     board = repo / "boards" / "b"
     work = board / "work"
     (work / "src").mkdir(parents=True)
     (work / "src" / "existing.py").write_text("what the previous run built\n")
     runs = board / "runs"
-    (runs / "artifacts" / "lane-1").mkdir(parents=True)
-    (runs / "artifacts" / "lane-1" / "refined.md").write_text("previous idea\n")
-    calls = []
-
-    def fake_git(*args):
-        calls.append(args)
-        if args[0] == "diff" and args[1] == "--cached":
-            return "boards/b/runs/artifacts/lane-1/refined.md\n"
-        return ""
-
+    previous = runs / "b-20260912-090000"
+    (previous / "artifacts" / "lane-1").mkdir(parents=True)
+    (previous / "artifacts" / "lane-1" / "refined.md").write_text("previous idea\n")
+    (previous / "chain.jsonl").write_text('{"kind":"run"}\n')
+    (runs / "current").write_text("b-20260912-090000\n")
     monkeypatch.setattr(run, "REPO", str(repo))
     monkeypatch.setattr(run, "BOARD_DIR", str(board))
-    monkeypatch.setattr(run, "RUN_DIR", str(runs))
     monkeypatch.setattr(run, "WORKDIR", str(work))
-    monkeypatch.setattr(run, "BOARD", "b")
-    monkeypatch.setattr(run, "git", fake_git)
+    monkeypatch.setattr(run, "RUNS_ROOT", str(runs))
+    monkeypatch.setattr(run, "CURRENT_RUN", str(runs / "current"))
     monkeypatch.setattr(run, "log", lambda msg: None)
-    return work, runs, calls
+    run.use_run("b-20260912-090000")
+    return work, runs, previous
 
 
-def test_the_refile_leaves_a_previous_runs_work_directory_intact(monkeypatch, tmp_path):
-    work, _runs, calls = _refile_fixture(monkeypatch, tmp_path)
-    run.snapshot_run_evidence(1)
-    assert (work / "src" / "existing.py").read_text() == "what the previous run built\n", \
-        "a fix task inherits the previous run's directory — the driver must not clear it"
-    assert not [c for c in calls if c[0] == "rm"], calls
-    assert not [c for c in calls if any("boards/b/work" in a for a in c)], \
-        "the refile issued no git command against work/ at all"
+def test_minting_the_next_run_leaves_the_work_directory_intact(monkeypatch, tmp_path):
+    work, _runs, _prev = _fixture(monkeypatch, tmp_path)
+    run.mint_run("b-20260912-100000")
+    assert (work / "src" / "existing.py").read_text() == "what the previous run built\n"
 
 
-def test_the_refile_still_clears_the_prerun_hand_offs(monkeypatch, tmp_path):
-    """runs/artifacts/lane-<k>/* are the INCOMING run's output paths, so a leftover
-    refined idea passes the idea gate's structural check (ERRORS #31). The refile
-    rotates them into runs/artifacts/<run-id>/ and clears their staged entries;
-    clear_run_state deletes the working copies next."""
-    _work, runs, calls = _refile_fixture(monkeypatch, tmp_path)
-    run.snapshot_run_evidence(1)
-    assert [c for c in calls if c[0] == "restore"
-            and "boards/b/runs/artifacts" in " ".join(c)], calls
-    rotated = [d for d in (runs / "artifacts").iterdir()
-               if d.is_dir() and d.name != "lane-1"]
-    assert rotated and (rotated[0] / "lane-1" / "refined.md").exists(), \
-        "the finished run's hand-off must be rotated before the state is cleared"
+def test_the_incoming_run_cannot_see_the_previous_hand_offs(monkeypatch, tmp_path):
+    """What `clear_lane_outputs` used to guarantee by deleting: the Gi gate checks
+    the refined idea's STRUCTURE, so a leftover from the last run passes it and the
+    plan is built on the old idea. The path simply differs."""
+    _work, _runs, previous = _fixture(monkeypatch, tmp_path)
+    run.mint_run("b-20260912-100000")
+    incoming = os.path.join(run.RUN_DIR, "artifacts", "lane-1", "refined.md")
+    assert not os.path.exists(incoming)
+    assert (previous / "artifacts" / "lane-1" / "refined.md").exists()
+
+
+def test_the_previous_runs_evidence_survives_the_refile(monkeypatch, tmp_path):
+    _work, _runs, previous = _fixture(monkeypatch, tmp_path)
+    run.mint_run("b-20260912-100000")
+    assert (previous / "chain.jsonl").read_text() == '{"kind":"run"}\n'
+
+
+def test_current_names_the_new_run(monkeypatch, tmp_path):
+    _work, runs, _prev = _fixture(monkeypatch, tmp_path)
+    run.mint_run("b-20260912-100000")
+    assert (runs / "current").read_text().strip() == "b-20260912-100000"

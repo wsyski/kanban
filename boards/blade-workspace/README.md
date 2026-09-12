@@ -1,13 +1,5 @@
 # blade-workspace
 
-> **This board is a red test.** Its `board.json` is written in the proposed
-> naming convention (`IDEA.md` item 2: every Hermes parameter keeps Hermes's
-> spelling — `max-runtime`, `name`, `goal`, `default-workdir`), which today's
-> `BOARD_KEYS` does not accept. So `create-board.sh` refuses it and
-> `mission/test.sh` is red on it, on purpose: the manifest is the specification
-> and the engine is what has not caught up. It goes green when items 1, 2 and 7
-> land, and it is not to be edited to satisfy the engine in the meantime.
-
 **The external-project board.** Every other board builds into
 `boards/<slug>/work/`, a directory the board created and owns. This one points
 `default-workdir` at a repository that already existed, that this repo does not contain,
@@ -41,9 +33,12 @@ lock):
   reviewer will judge the lane on them. Check `git -C <workdir> status` before
   arming.
 - **You know which branch it is on, and you accept work being staged there.**
-  The board stages into whatever branch it finds. Nothing is committed —
-  auto-gates are on and the driver commits nothing at all — so the run leaves
-  staged changes for you to inspect, keep or throw away.
+  The board stages into whatever branch it finds, and pins it: the run records that
+  repository, branch and HEAD when its first lane opens, and reports a branch
+  switch, a commit made under the run, or a path you staged that is not the lane's.
+  Those fail `run-audit.py` (E17). Nothing is committed and no branch is moved —
+  staging and unstaging are the board's only git writes — so the run leaves staged
+  changes for you to inspect, keep or throw away.
 - **The project's own agent instructions are in play.** Workers run in the work
   directory, so an `AGENTS.md` or `CLAUDE.md` there is read alongside the card
   bodies. For a documentation idea that is usually what you want. Read them
@@ -57,29 +52,30 @@ so no JDK, no Gradle daemon and no warm dependency cache are needed.
 - **A lane that opens on an existing tree.** The idea cannot be satisfied
   without surveying first: the deliverable is a description of what is already
   there, so a card that assumes an empty directory produces a README about
-  nothing. This is the brownfield case the template has never run.
+  nothing. Every board's idea now says the work directory may hold the previous
+  version; this is the board where it is the whole task.
 - **An idea with no unit-test surface.** Rewriting a README has nothing to test,
   so the manifest says `"unit-tests": false` and the idea repeats it as a header,
-  the same way `integration-tests` works on both sides. The engine has neither
-  (`IDEA.md` item 1), which is the second reason this board is red: today `TW`
-  would be filed anyway and would have to talk itself out of its job. Both files
-  state the intent; the engine has to catch up.
+  the same way `integration-tests` works on both sides. The lane opens with 8
+  cards instead of 9: `TW` is archived and `C` is reparented to the plan gate. The
+  code review still runs — `RVa` reviews the change, not the tests, and it is the
+  only review before the code gate.
 
 ## Cleaning up
 
-`mission/reset.sh --board boards/blade-workspace` **refuses** and exits 3: the
-work directory is outside the board directory, so deleting it is not the
-script's call. Correct, and also more than intended — it takes the run state and
-the card archival down with it (`IDEA.md` item 4). Until those separate:
+    mission/reset.sh --board boards/blade-workspace
 
-    rm -rf boards/blade-workspace/runs          # run state only
-    hermes kanban boards rm blade-workspace     # then archive/remove the board
+That archives the cards and unstages what the last run left in the index. It works
+here exactly as on any other board, because **nothing deletes a work directory** —
+pointing one at another repository costs nothing. The run directories under `runs/`
+stay too; `rm` them yourself when you want them gone.
 
-and clean the work directory yourself, in that repository, with its own git.
+Whether the Liferay workspace keeps this board's changes is that repository's
+business, decided with its own git.
 
 ## Timing
 
-`max_runtime` is 10 minutes per card, not the 4 that `minimal-development` uses.
+`max-runtime` is 10 minutes per card, not the 4 that `minimal-development` uses.
 The deliverable is small but the researcher and the manager have a real tree to
 read first, and a survey that runs out of budget produces a plan about an empty
 directory.

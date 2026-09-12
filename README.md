@@ -19,20 +19,23 @@ the board runs them in order. See §3.
 
 Six board directories ship as runnable examples; two of them have run.
 
-| board | idea | lanes | gates | last run |
+| board | idea | lanes | gates | last run (details: [docs/RUNS.md](docs/RUNS.md)) |
 |---|---|---|---|---|
-| `minimal-development` | one Python function (`is_even`) and its tests — the cheap smoke board, no build tool, no dependencies | 1 | auto, **4 min/card** | **run 15** — 2026-09-11 23:32 → 23:42 (§4) |
-| `roman-evaluator-js` | a browser page: `roman-evaluator.html`, a DOM-free parsing module with unit tests, `run.sh`, two launch modes | 1 | auto, **10 min/card** | **run 1** — 2026-09-11 23:58 → 2026-09-12 00:16 (§4) |
+| `minimal-development` | one Python function (`is_even`) and its tests — the cheap smoke board, no build tool, no dependencies | 1 | auto, **4 min/card** | **run 15** — 2026-09-11 23:32 → 23:42  |
+| `roman-evaluator-js` | a browser page: `roman-evaluator.html`, a DOM-free parsing module with unit tests, `run.sh`, two launch modes | 1 | auto, **10 min/card** | **run 1** — 2026-09-11 23:58 → 2026-09-12 00:16  |
 | `roman-evaluator-java` | the same problem twice: a roman CLI (`roman-cli/`) then a spec-first Spring Boot service (`roman-service/`) consuming lane 1's rule; needs JDK 17, Maven, a warm `~/.m2` | 2 | auto, 60 min/card (default) | never run |
 | `portfolio-engineering` | a GPW small-cap research pipeline installed into the Hermes `trader` profile | 1 | auto, 60 min/card (default) | never run |
-| `minimal-goal-mode` | the same shape as `minimal-development` (one Python function, `sign`) with **`goal_mode: true`** — the cheap probe for whether this machine's goal judge works at all | 1 | auto, 6 min/card | never run — **red test: manifest uses the proposed naming (`IDEA.md` item 2), engine refuses it** |
-| `blade-workspace` | a documentation pass on an **external** project: `default-workdir` points at a repository this repo does not contain | 1 | auto, 10 min/card | never run — **red test: manifest uses the proposed naming (`IDEA.md` item 2), engine refuses it** |
+| `minimal-goal-mode` | the same shape as `minimal-development` (one Python function, `sign`) with **`goal: true`** — the cheap probe for whether this machine's goal judge works at all | 1 | auto, 6 min/card | never run |
+| `blade-workspace` | a documentation pass on an **external** project: `default-workdir` points at a repository this repo does not contain | 1 | auto, 10 min/card | never run |
 
 The output of a finished run lives beside the board: `boards/<slug>/work/` — the
 deliverable, **tracked**, so the human's commit at a gate puts it in history and
 a clone carries it — and `boards/<slug>/runs/` (per-run state: driver log,
 timing, card JSONLs, `run-summary.json`, the document chain, the hand-offs and
-the per-card patches), which is gitignored scratch and never committed. A board's
+the per-card patches), which is gitignored scratch and never committed. Each run
+gets its **own** directory there — `runs/<run-id>/`, minted when an idea is armed
+— and nothing ever deletes one, so last week's run is still readable while this
+one is running. A board's
 tracked files are therefore its definition — `board.json`, `lane-<k>.md`,
 `README.md` — **plus what it builds**; only `node_modules/` and tool caches under
 `work/` are ignored.
@@ -42,9 +45,12 @@ Template: `mission/lanes.py` (card graph + idea parsing),
 (driver launch), `mission/run.py` (the driver), `mission/test.sh` (the suite,
 through an interpreter that has pytest — the shell's `python3` does not),
 `mission/review-package.sh` (one task's scoped commits + diff, for a review),
-`mission/run-audit.py` (the per-run auditor, §4), `mission/doc-chain.py`
-(what each card was given and produced), `mission/timing-report.py`
-(per-card agent time vs dispatch gap). Board instances live in
+`mission/board_schema.py` (the board's options: one declaration, and the validator
+all three doors run), `mission/run-audit.py` (the per-run auditor, §4),
+`mission/doc-chain.py` (what each card was given and produced),
+`mission/timing-report.py` (per-card agent time vs dispatch gap),
+`mission/runs-report.py` (what `runs/` holds and costs — reports, deletes nothing).
+Board instances live in
 `boards/<slug>/`.
 
 ---
@@ -57,7 +63,11 @@ through an interpreter that has pytest — the shell's `python3` does not),
 |---|---|
 | Workers STAGE only (`git add -- own paths`), never commit/push | card bodies hard-rules block (first section); reviewed by reviewers |
 | Per-card patch = OWN paths only (`git diff --cached -- <own paths>`) | card bodies; a bare diff bundles every earlier card's staged files |
-| Nobody commits before the gate — not even the driver | gate cards + auto_gates (board.json) complete gates with "NOTHING COMMITTED" |
+| The board's only git writes are stage and unstage | `mission/run.py` — `git add` by workers, one `restore --staged` for its own leftovers. Never commit, branch, checkout, reset or push: a work directory that moves under a live run is REPORTED, not corrected |
+| Nothing is deleted — not `work/`, not a run directory | `mission/reset.sh` archives cards and unstages; deleting either tree is a human's own `rm`. Sole exception: regenerable tool caches under `work/` (`__pycache__/`, `.pytest_cache/`, `*.pyc`), swept before the code gate so the evidence is the lane's own work (E16) |
+| One run, one directory — `runs/<run-id>/`, minted when an idea is armed | `mission/run.py` `mint_run`; `runs/current` names the live run, and an earlier one stays auditable |
+| A board's options are validated before anything is filed — manifest and idea headers alike | `mission/board_schema.py`, at all three doors: `create-board.sh`, `start-board.sh`, and the driver when a Triage card is armed (the finding goes back as a comment on that card) |
+| Nobody commits before the gate — not even the driver | gate cards + `auto-gates` (board.json) complete gates with "NOTHING COMMITTED" |
 | `git add`/`git diff` always allowed (provenance patches) | card bodies |
 | Lane N+1's root parented to lane N's gate card | `mission/lanes.py` — the board itself is the sequencer |
 | The manager never sees a raw idea | `mission/lanes.py` — `I` is the lane root, `Gi` stands between it and `P` |
@@ -110,13 +120,20 @@ nothing about it lives under `mission/`:
 
     boards/<slug>/
         README.md             this board's preconditions and toolchain
-        board.json            slug, title, workdir, lanes, integration_tests, auto_gates,
-                              max_runtime, max_retries, targets, goal_mode
+        board.json            the board's options — `mission/board_schema.py --schema`
+                              prints the set; validated before the board exists
         lane-1.md             the idea for lane 1 — the one copy, edited in place
-        runs/artifacts/lane-<k>/refined.md  written by the researcher, edited at Gi
-        runs/artifacts/lane-<k>/plan.md     written by the manager
         work/                 what the lane builds — code, tests, build files
-        runs/snapshots/       driver-written, gitignored
+        runs/current          a file naming the live run
+        runs/driver.log       the DRIVER's log and lock — board-level, because one
+        runs/driver.lock      serve-mode driver answers many ideas
+        runs/<run-id>/        one armed idea's run, minted then never touched:
+            artifacts/lane-<k>/refined.md   by the researcher, edited at Gi
+            artifacts/lane-<k>/plan.md      by the manager
+            snapshots/lane-<k>.md           the idea as the lane opened on it
+            snapshots/lane-<k>-workdir-at-open.md   what the tree held then
+            driver.log, chain.jsonl, verdicts.jsonl, timing.jsonl, cards/,
+            run-summary.json, scratch/<card-id>/
 
     $EDITOR boards/<s>/lane-1.md              # optional: prefill the idea
     mission/create-board.sh --board boards/<s>
@@ -136,8 +153,11 @@ the board from `http://127.0.0.1:9119/kanban`:
 
 1. Write the idea into the board's Triage card — edit it right there.
 2. **Drag it from Triage to Todo.** That is the go signal, and the only one.
-3. The driver adopts the card's text into `boards/<slug>/lane-<k>.md`, archives
-   the previous run's cards, files a fresh lane set, and drives it.
+3. The driver validates the card's headers and the board's manifest, then adopts
+   the text into `boards/<slug>/lane-<k>.md`, mints `runs/<run-id>/`, archives the
+   previous run's cards, files a fresh lane set, and drives it. If either does not
+   validate it files nothing and comments the findings on the card you just
+   dragged — fix the text there and the next tick re-reads it.
 4. Act on the gates as they open — or, on an auto-gated board, watch them
    close. When the last closes the driver goes idle and waits for the next idea.
 
@@ -160,11 +180,15 @@ your idea before the researcher ever read it. Drag it.
 For tests and recovery, not for daily use.
 
 **Nothing a board generates leaks outside `boards/<slug>/work/`.** That is the
-board's `workdir`: the only tree the driver runs git in, and where every card
-stages. So `rm -rf boards/<slug>/work` is a clean start, and the template repo
-never accumulates one board's build files, modules or plans. A board that must
-build somewhere else — another repository entirely — sets `workdir` in its
-manifest and the default is not used.
+board's `default-workdir`: the only tree the driver runs git in, and where every card
+stages, so the template repo never accumulates one board's build files, modules or
+plans. A board that must
+build somewhere else — another repository entirely — sets `default-workdir` in its
+manifest and the default is not used. That option is always an ABSOLUTE path
+(`board_schema` refuses anything else: a relative one resolves against whichever
+current directory happens to ask, and `~` is never expanded); omitted, a board
+builds in its own `work/` exactly as before. `boards/blade-workspace` and
+`boards/portfolio-engineering` are the two that set it.
 
 A lane that must also write outside its workdir — installing into a Hermes
 profile, say — names those roots in `targets`. Cards may write there, reviewers
@@ -177,7 +201,7 @@ without them; a lane whose idea is missing stops the chain anyway.
 The board file takes a scalar or a per-lane array, and a per-idea header
 overrides it for that lane:
 
-    "integration_tests": [false, true]     # boards/<slug>/board.json — lane 1 without, lane 2 with
+    "integration-tests": [false, true]     # boards/<slug>/board.json — lane 1 without, lane 2 with
     <!-- integration-tests: false -->      # boards/<slug>/lane-<k>.md — this lane only
     <!-- auto-gates: true -->
 
@@ -196,20 +220,42 @@ A board directory is **tracked for its definition and for its product**:
 ignored). `boards/*/runs/` — the refined idea, the plan, the patches, timing, the
 document chain — is per-run state: never staged, never committed, because the
 hand-offs travel by path.
-The **driver never clears `work/`** (user rule, 2026-09-12): a new idea may be a
-**fix** of what the previous run built, so the directory a run inherits is that
-task's input, and only a human decides when it goes — `mission/reset.sh --board
-boards/<slug>` wipes it and stages the removal of the committed paths, so the
-clearing and the next product can land in one commit. A refile clears run state
-only: the hand-offs under `runs/artifacts`, the card JSONLs, the timing series.
-Workers read the immutable snapshot the driver writes when the lane opens, never
-the file you are editing — so you can write lane 3's idea while lane 1 is still
-running.
+**Nothing here deletes anything.** Not `work/`, and not a run directory.
+
+`work/` holds the board's product. A new idea may be a **fix** of what the
+previous run built, so the directory a run inherits is that task's input, and
+deciding it has stopped being that is a human's job done by hand.
+
+`runs/<run-id>/` holds one run's evidence, and a run is minted when an idea is
+armed — so the incoming run starts on empty paths because they are NEW paths, not
+because anything cleared them. Two consequences the board depends on: a leftover
+`refined.md` cannot pass the Gi gate's structure check, because it is not on the
+incoming run's path; and a worker orphaned by a dead driver
+cannot reach the next run's documents, because its card body names its own run
+(F2). And **an earlier run stays auditable** —
+`run-audit.py --runs boards/<slug>/runs/<run-id>` — which is what the "run, audit,
+fix, run again" loop needs to compare anything.
+
+There is no flag that clears either tree and no command that offers one; `rm` them
+yourself when you mean to. Nothing under `runs/` is tracked, so this is disk only,
+and `scratch/<card-id>/` under each run is the part that grows without bound, since
+a worker may write anything there. `mission/runs-report.py --board <slug>` prints
+each run's size and age, marks the current one, and prints the `rm` for the finished
+ones without running it.
+
+**The one exception is regenerable tool caches under `work/`**, which the driver
+sweeps before the code gate reads the index: `__pycache__/`, `.pytest_cache/`,
+`*.pyc`. They are neither deliverable nor evidence, and `run-audit.py` fails a run
+that leaves one (E16), so the sweep is what keeps the gate's evidence to the
+lane's own work. Nothing else under `work/` is ever removed.
+
+The board's tools take either form: `--runs boards/<slug>/runs` reads the run
+`runs/current` names, `--runs boards/<slug>/runs/<run-id>` reads that one.
 
 ### Known traps
 
-Found by running the flow, not by reading it. `ERRORS.md` has the full set,
-including what is still open:
+Found by running the flow, not by reading it. Each is current behaviour unless it
+says otherwise:
 
 - **A worker that cannot complete its card is told the wrong reason.**
   `kanban_complete` refuses an unsatisfied-parent card with *"unknown id or
@@ -236,51 +282,60 @@ including what is still open:
 - **A commit made while a driver is live is suspect.** The repo is edited live
   from outside the session (an IDE changelist commit has no pathspec, so it takes
   whatever the run has staged): one such commit brought two generated
-  `runs/artifacts` files into HEAD and the next deleted `ERRORS.md`, the plan and
-  the spec — restored from the last good commit (`ERRORS.md` O8). Check
+  generated files into HEAD and the next deleted tracked documents — restored from
+  the last good commit. Check
   `git log --stat` for `boards/*/work|runs` additions and for missing documents;
   untrack generated paths with `git rm --cached`.
-- **While a driver is live, do not stage, unstage or commit.** The index is
-  board state, and the operator is a writer on it: unstaging a lane's files
-  mid-run makes the next reviewer REJECT correct work (`ERRORS.md` O7).
+- **While a driver is live, do not stage, unstage or commit.** The index is board
+  state, and the operator is a writer on it: unstaging a lane's files mid-run makes
+  the next reviewer REJECT correct work. In a board-owned work directory this is
+  still only advice — the pathspecs scope a gate's evidence and the rest of the
+  index is your ordinary work. In an EXTERNAL work directory it is checked: a path
+  staged there that is not the lane's, a branch switch, or a commit under the run
+  are reported and fail the audit (E17). Reported, not corrected — the board's only
+  git writes are stage and unstage.
 - **Nothing under a board's `runs/` is ever staged.** The hand-offs (the refined
   idea, the plan) travel by path; the cards attach the document itself and the
   driver sweeps the index every tick, because a staged hand-off is handed to
   every later card's `git diff --cached` and to the operator's `git status`
-  (`ERRORS.md` #37). `run-audit.py` fails a run that leaves one staged (E14).
-- **A board can run its workers without the goal judge** (`"goal_mode": false`
+ . `run-audit.py` fails a run that leaves one staged (E14).
+- **A board can run its workers without the goal judge** (`"goal": false`
   in `board.json`). The judge is a self-check that needs a REACHABLE auxiliary
   model, and a reachable-but-failing one reports its transport error as the
   verdict `continue`, i.e. "not done yet", which no evidence can satisfy — every
-  goal-mode card wedges (`ERRORS.md` O10). The switch has to reach the FILING
+  goal-mode card wedges. The switch has to reach the FILING
   path (`create-board.sh` → `file_board`), because that is where a card's
-  `goal_mode` is decided.
+  `goal` is decided.
 - **An assigned card in Triage is an escalation, and it halts the board.** A
   worker that cannot complete returns its card there for a human; the driver used
-  to poll forever with a stale log, which reads as a stall (`ERRORS.md` O10).
+  to poll forever with a stale log, which reads as a stall.
 - **The index is board state, and `git diff --cached --name-only` lists all of
   it** — not just the directory you run it from. A pending entry from anywhere (a
   repo cleanup, another board's staged entry) is handed to every card that checks
-  the index, and two cards went off-contract chasing one (`ERRORS.md` #29).
-  Nothing here commits, so a previous run's staged files outlive its work
-  directory unless `reset.sh` clears them — a refile clears only the staged
-  entries under `runs/artifacts`.
-- **`work/` is never cleared by the driver.** A new idea inherits the previous
-  run's directory on purpose — that is what makes a *fix* task possible (user
-  rule, 2026-09-12) — so clear it yourself with `mission/reset.sh --board
-  boards/<slug>`, which wipes it and stages the removal of the committed paths.
-  Never clear it with `git restore --staged --worktree -- work/`: against tracked
-  paths that means "restore to HEAD", so it resurrects the committed deliverable
-  and un-stages a pending removal at once.
-- **A lane's previous outputs are cleared when its first card starts**
-  (`clear_lane_outputs`), so a hand-unblocked root or a restart into a dirty
-  state is never handed the last run's `refined.md`: the idea gate checks the
-  refined idea's *structure*, and a leftover passes that check (`ERRORS.md` #31).
-- **A killed driver leaves its workers running.** They keep writing to the lane's
-  shared output paths (`runs/artifacts/lane-<k>/`), so an orphan can overwrite
-  the NEXT run's documents after the first card cleared them. `reset.sh` stops
-  this board's workers before archiving its cards; the document chain reports it
-  as `F2`.
+  the index, and two cards went off-contract chasing one.
+  Nothing here commits, so a previous run's staged entries outlive it until
+  `reset.sh` unstages this board's generated paths (the files stay; only the
+  pending entry goes) — a refile clears only the staged entries under
+  `runs/artifacts`.
+- **`work/` is never cleared by anything in the template.** A new idea inherits
+  the previous run's directory on purpose — that is what makes a *fix* task
+  possible — and no script offers to clear it, `reset.sh` included. Delete it
+  yourself when you mean to. Never with
+  `git restore --staged --worktree -- work/`: against tracked paths that means
+  "restore to HEAD", so it resurrects the committed deliverable and un-stages any
+  pending removal at once.
+- **A lane is never handed the last run's `refined.md`.** The idea gate checks
+  the refined idea's *structure*, so a leftover would pass it and the plan would be
+  built on the old idea. The incoming run's hand-offs are under
+  its own `runs/<run-id>/`, so this is a property of the paths rather than a
+  deletion anything has to remember. **It therefore rests on minting being
+  correct**: a driver that rejoins the wrong run, or mints one per restart instead
+  of per armed idea, brings #31 back.
+- **A killed driver leaves its workers running.** They keep writing to the paths
+  rendered into their own card bodies at filing time, which name their own run — so
+  an orphan cannot reach a later run's documents. It is still burning a worker slot
+  and a budget on an archived card, so `reset.sh` stops this board's workers before
+  archiving its cards; the document chain reports it as `F2`.
 - **A leaked child-context marker blocks every card mutation.** With
   `HERMES_DELEGATED_CHILD_CONTEXT=1` in the shell's environment the kanban CLI
   refuses `create`, `attach`, `complete`, `unblock`: `create-board.sh` dies in its
@@ -288,16 +343,27 @@ including what is still open:
   them as `env -u HERMES_DELEGATED_CHILD_CONTEXT -u HERMES_HOME mission/…`.
 - **`python3` on the PATH is the Hermes venv and has no pytest.** Run the suite
   as `mission/test.sh`; a plan whose Run steps say `python3 -m pytest` fails
-  before collecting (`ERRORS.md` O6).
+  before collecting.
 - **A Hermes command's first stderr lines can be a stale-update banner**,
   printed while the last `hermes update` receipt is partial. It is not the
   error: `runs_util.cli_error` drops it from driver logs, where it once hid
   "board does not exist" for a night.
 - **Lane chaining (`Gc1 → I2`) is the one part with no run behind it**:
   `roman-evaluator-java` is the two-lane board and has not run yet
-  (`ERRORS.md` O4).
+ .
 
-**The driver never commits.** All work is staged on the current branch. At a
+**The driver never commits, and never moves a branch.** All work is staged on the
+branch the run found — and each
+gate's result names the repository, branch and HEAD it staged into, so a board whose
+`default-workdir` is another repository says where its deliverable went instead of
+leaving the operator to guess. `run-summary.json` records the same as
+`commit_target`. The run also pins that repository, branch and HEAD when its first
+lane opens (`runs/<run-id>/workdir.json`) and checks them every tick: a branch
+switched mid-run, a commit or reset made under the board, or a path staged in an
+external work directory that is not this lane's, are logged once as WARNINGs,
+recorded in the summary as `workdir_drift`, and fail `run-audit.py` (E17). Reported,
+never corrected — switching a branch back would make the board a second writer
+fighting the operator, and a staged path is the human's to keep. At a
 gate the driver records the evidence; you commit at your discretion, or not at
 all. With auto-gates on, nothing is committed at all.
 
@@ -307,9 +373,6 @@ Six ready-to-run examples ship as board directories:
     mission/create-board.sh --board boards/roman-evaluator-java
     mission/create-board.sh --board boards/portfolio-engineering
     mission/create-board.sh --board boards/roman-evaluator-js
-    # these two are RED TESTS: their manifests carry the proposed key names
-    # (IDEA.md item 2), so create-board.sh refuses them and the suite fails on
-    # them until that lands. Do not edit them to match the engine.
     mission/create-board.sh --board boards/minimal-goal-mode
     mission/create-board.sh --board boards/blade-workspace   # edit its workdir first
 
@@ -332,173 +395,6 @@ A warning alone fails it. The loop is: run, audit, fix, run again — no cycle i
 done while the auditor reports anything.
 
 ---
-
-## 4. The latest runs
-
-Two boards have run. These are their most recent runs — the only run records
-this README keeps; each board's `runs/` holds its own current-run state.
-
-### `minimal-development` — run 15, 2026-09-11 23:32 → 23:42
-
-One lane, idea `is_even` (one Python function and its tests), 9 live cards
-(`TI1`/`RVc1` archived: `integration-tests: false`), auto-gates, goal mode off,
-**4-minute ceiling per card, board-wide**.
-
-| card | role | agent min |
-|---|---|---|
-| I1 refine idea | researcher | 1.33 |
-| Gi1 idea gate | auto | 0.00 |
-| P1 plan | manager | 0.87 |
-| RVp1 plan review | reviewer | 0.58 |
-| Gp1 plan gate | auto | 0.00 |
-| TW1 tests RED | tester | 0.62 |
-| C1 implement | coder | 0.38 |
-| RVa1 review | reviewer | 1.22 |
-| Gc1 code gate | auto | 0.00 |
-| **total** | | **wall 10.4 min, agent 5.0 min, overhead 5.4 min** |
-
-Gates: `Gi1` auto (refined idea present, all sections, 10 findings with
-evidence), `Gp1` auto (plan verdict PASS), `Gc1` auto (2 files staged, verdict
-PASS) — **nothing committed**. Deliverables: `work/is_even.py` and
-`work/test_is_even.py`, staged. `run-audit.py`: **0 errors, 0 warnings**;
-`doc-chain.py`: `OK: 0 findings` over 9 cards; reviews `RVp1/Gp1/RVa1/Gc1` all
-PASS. Role share: reviewer 1.8 min (36%), researcher 1.3 (27%), manager 0.9
-(17%), tester 0.6 (12%), coder 0.4 (8%).
-
-Comments — what this run is for:
-
-- **It is the machinery's smoke test**, worth running after any change to
-  `mission/`: arm an idea, watch the researcher refine it, read the gates and
-  the timing report, and check the auditor — for about ten minutes of wall clock
-  and almost nothing to review.
-- **Overhead is the cost centre, not the cards.** More than half the wall clock
-  is not agent work: it is the dispatcher claiming a card, the 20 s poll
-  interval and provider latency. Cheaper cards would not shorten this run much;
-  a tighter loop or a faster provider would.
-- **The 4-minute ceiling is a detector, not a target.** The worst card took
-  1.33 min — 3× headroom. On an idea this small a card that needs longer is a
-  card body doing work the idea does not ask for, which is how an over-long plan
-  review was caught (`ERRORS.md` #29).
-- **Human gates cost no agent time** (0.00 each) because the driver plays the
-  gate-holder role; they are still the only place a human can intervene, and on
-  an auto-gated board they never wait for one.
-
-### `roman-evaluator-js` — run 1, 2026-09-11 23:58 → 2026-09-12 00:16
-
-One lane, idea `roman-evaluator` (browser page at `work/roman-evaluator.html`,
-DOM-free parsing ES module with unit tests, executable `run.sh`, two launch
-modes), 9 live cards, auto-gates, goal mode off, **10-minute ceiling per card**.
-
-| card | role | agent min |
-|---|---|---|
-| I1 refine idea | researcher | 3.30 |
-| Gi1 idea gate | auto | 0.00 |
-| P1 plan | manager | 3.20 |
-| RVp1 plan review | reviewer | 1.33 |
-| Gp1 plan gate | auto | 0.00 |
-| TW1 tests RED | tester | 1.72 |
-| C1 implement | coder | 1.13 |
-| RVa1 review | reviewer | 2.50 |
-| Gc1 code gate | auto | 0.00 |
-| **total** | | **wall 18.9 min, agent 13.2 min, overhead 5.7 min** |
-
-Gates: `Gi1` auto (refined idea, 25 findings with evidence, 21 795 bytes),
-`Gp1` auto (plan verdict PASS), `Gc1` auto (**9 files staged**, verdict PASS) —
-**nothing committed**. `run-audit.py`: **0 errors, 0 warnings**; `doc-chain.py`:
-`OK: 0 findings` over 9 cards; reviews `RVp1/Gp1/RVa1/Gc1` all PASS. Role share:
-reviewer 3.8 min (29%), researcher 3.3 (25%), manager 3.2 (24%), tester 1.7
-(13%), coder 1.1 (9%).
-
-Deliverables, all staged under `work/`: `roman-evaluator.html`, `style.css`,
-`roman.js`, `main.js`, `roman.test.js`, `run.sh`, `jest.config.js`,
-`package.json`, `package-lock.json`, plus the installed `node_modules/`
-(untracked, reproducible from the staged lockfile). What was verified on the
-finished artifact:
-
-- `npm test` (Jest 30, `NODE_OPTIONS=--experimental-vm-modules`): **8 passed / 8**.
-- `./run.sh --headless --dump-dom`: prints the page's DOM, exit 0.
-- No absolute path, `file://` or `http(s)://` reference in the delivered HTML,
-  JS or CSS; every `import` is `./`-relative.
-- `./run.sh` with `google-chrome` off `PATH`: exit 1 with
-  `run.sh: google-chrome not found on PATH`.
-- `RVa1` re-derived the parser independently — an oracle over all of 1..3999
-  (0 mismatches) and 24 malformed inputs, all rejected — and proved the coder
-  changed no test file: the suite the coder turned green is byte-identical to
-  the one the tester made red.
-- **Page behaviour, checked after the run in both launches, in real Chrome
-  153.0.8010.36**, since no card in this lane may drive a browser: over HTTP
-  (`python3 -m http.server 8000`) and from `file://` through the deliverable's
-  own `./run.sh` (Chrome's CDP attached, so the flag and throwaway profile under
-  test are `run.sh`'s own). Evaluating `XIV` appends exactly one row reading
-  `XIV = 14`; a second numeral appends a second row and keeps the first, in
-  order; `IIII` raises an alert reading `Not a valid roman numeral: IIII` and
-  appends nothing; `Reset` empties both the input and the display; `MMMCMXCIX`
-  gives `MMMCMXCIX = 3999`; `ABC` raises `Not a valid roman numeral: ABC` with
-  no row. Identical in both launches, and the nine delivered files' sha256 sums
-  were unchanged by the check — nothing in the frozen deliverable was written.
-
-Comments — what this run shows:
-
-- **A real (if small) idea costs about twice the smoke board**: 13.2 min of
-  agent work against 5.0, with refinement and planning dominant (I1 3.3, P1 3.2)
-  because those cards carry the environment facts — Chrome's `file://` module
-  block, the flag that lifts it, `run.sh`'s throwaway profile, Jest's ESM flag.
-  The code cards stay cheap (TW1 1.7, C1 1.1).
-- **Page behaviour is deliberately not a card.** `--dump-dom` can click nothing
-  and cannot see an `alert()`, so "evaluating `XIV` appends one row, `IIII`
-  shows an alert and appends nothing, Reset clears both" is checked by a human
-  — with a browser, in both launches — not by the lane. This is why the board
-  keeps that check out of its card bodies and says so in its own README.
-- **The ceiling was never close.** The worst card took 3.3 min against 10, so
-  the 10-minute board-wide budget is headroom here, not a constraint that
-  shaped the work.
-- **The nine files are yours to commit** — the deliverable is tracked, and the
-  gate commit is its authorization record; an auto-gated run leaves them staged
-  until you commit. A later idea on this board inherits them (that is what makes a
-  fix task possible); clearing them is your call — `mission/reset.sh` — not the
-  driver's.
-
-### Running the unit tests
-
-The tests are the lane's deliverables, so these are the commands the cards ran —
-from the repo root, each in its own board's work directory:
-
-```
-# minimal-development — pytest, the four cases 0, 4, 7, -3
-cd boards/minimal-development/work && pytest test_is_even.py -q
-#   ....                                                             [100%]
-#   4 passed in 0.00s
-
-# roman-evaluator-js — Jest 30 over the ES module, eight cases
-cd boards/roman-evaluator-js/work && npm test
-#   Test Suites: 1 passed, 1 total
-#   Tests:       8 passed, 8 total
-```
-
-Two traps, both measured on this machine:
-
-- **`python3` first on `PATH` is the Hermes venv and has no pytest**
-  (`No module named pytest`, exit 1); the bare `pytest` on `PATH` is
-  `/usr/bin/pytest` (pytest 9.0.2, shebang `#!/usr/bin/python3`). So
-  `minimal-development` runs the bare CLI — `pytest …`, or explicitly
-  `/usr/bin/python3 -m pytest …`, which also works — and a plan whose Run step
-  says `python3 -m pytest` fails before collecting (`ERRORS.md` O6).
-- **The Jest suite tests an ES module, so it needs
-  `NODE_OPTIONS=--experimental-vm-modules`**; `work/package.json`'s `test`
-  script already sets it, which is why `npm test` is enough. The same run
-  without the script:
-  `NODE_OPTIONS=--experimental-vm-modules npx jest`. Bare `npx jest` does not
-  fail on assertions but on the module load (`createRequireEsmError`) — a run
-  that reports `0 total` is that, not a broken suite.
-
-Neither run writes outside its own work directory, and neither needs the
-network or a build step. To run `minimal-development`'s suite without leaving
-the pytest caches behind (`work/` holds deliverables only):
-
-```
-cd boards/minimal-development/work \
-  && PYTHONDONTWRITEBYTECODE=1 pytest test_is_even.py -q -p no:cacheprovider
-```
 
 ### How it flows (diagram)
 
@@ -598,7 +494,7 @@ the human's git write — or explicitly no write — closes the chain
 ### Timing instrumentation (on the board itself)
 
 - Driver tick every 20 s appends a status snapshot to
-  `boards/<slug>/runs/timing.jsonl` (one JSON line per tick); a run-boundary marker
+  `boards/<slug>/runs/<run-id>/timing.jsonl` (one JSON line per tick); a run-boundary marker
   (ts, argv) is written at every driver start so the report covers only the
   latest run segment.
 - On each card status *change* the driver embeds the card's run evidence
@@ -612,20 +508,20 @@ the human's git write — or explicitly no write — closes the chain
 - At a code gate the driver logs the staged-evidence line
   (`GATE GcN evidence: …; staged: …`) — verification was the reviewer's job,
   and the human still owns the commit.
-- On completion the driver writes `boards/<slug>/runs/run-summary.json` (one
+- On completion the driver writes `boards/<slug>/runs/<run-id>/run-summary.json` (one
   jq-able file per run): per-card agent minutes (real minutes, from runs
   epoch fields), wall + overhead totals, gate results.
 - If ≥2 cards end up blocked/needs_input, a DEADMAN notice is logged and
   written to the board's `runs/` (Telegram sent if env tokens set).
 - Per-card provenance patches are preserved to
-  `boards/<slug>/runs/artifacts/<run>/` so they survive board archiving.
+  the run's own directory, so they survive board archiving.
 - **At each lane's code gate** the driver writes
-  `boards/<slug>/runs/timing-report-lane-<k>-<YYYYmmdd-HHMM>.txt` — the
+  `boards/<slug>/runs/<run-id>/timing-report-lane-<k>.txt` — the
   per-card table and totals — *before* announcing the gate. That gate is
   where you decide whether to commit, so the cost of the lane has to be
-  readable while the answer can still change the decision. Once per lane per
-  driver run, and timestamped, so a re-run keeps the previous report.
-- The document chain: `boards/<slug>/runs/chain.jsonl`, one record per card as it
+  readable while the answer can still change the decision. Once per lane per run; a re-run
+  keeps the previous one because it writes into its own run directory.
+- The document chain: `boards/<slug>/runs/<run-id>/chain.jsonl`, one record per card as it
   starts (the lane documents its filed body names, and any unresolved
   `<PLACEHOLDER>`) and as it finishes (the patch it attached, the staged set at
   that moment, its result). `mission/doc-chain.py --runs boards/<slug>/runs`
@@ -646,14 +542,37 @@ the human's git write — or explicitly no write — closes the chain
 
 ---
 
-## 5. Operational rules that made the run clean
+## 4. Run records
+
+The latest run of each board that has run — per-card timings, verdicts and the
+audit — is in [docs/RUNS.md](docs/RUNS.md). It is kept separate because it is
+rewritten by every run, while the sections around it are the board's contract.
+
+Per-run state itself lives beside the board, in
+`boards/<slug>/runs/<run-id>/`, and no run directory is ever deleted:
+
+    mission/run-audit.py   --runs boards/<slug>/runs              # the current run
+    mission/run-audit.py   --runs boards/<slug>/runs/<run-id>     # any earlier one
+    mission/doc-chain.py   --runs boards/<slug>/runs [--history]
+    mission/timing-report.py --board <slug>
+
+**Audit every run; that is the loop's stopping rule.** `run-audit.py` exits 0 only
+when a finished run has no errors and no warnings — it reads the driver log
+(terminal state, error vocabulary, held gates), `run-summary.json` (gate wording,
+restarts, per-card budget against the board's ceiling), the document chain, the
+workers that outlived the run and the board's own end state, then prints the
+per-card table and wall/agent/overhead. A warning alone fails it. The loop is: run,
+audit, fix, run again — no cycle is done while the auditor reports anything.
+
+## 5. Operational rules
 
 - **Single driver discipline:** exactly one `run.py` at a time; duplicates
   idle silently and interleave log output. Kill all, start one.
 - **Re-filing mid-run is forbidden:** `create-board.sh` refuses if the board
   already exists. To start over: `mission/reset.sh --board boards/<slug>`,
-  which deletes that board's `work/` and `runs/` and archives its cards —
-  one board only, no `git reset`, no force-push. Orphaned workers burn full
+  which clears that board's `runs/`, unstages its leftover index entries and
+  archives its cards — one board only, `work/` untouched, no `git reset`, no
+  force-push. Orphaned workers burn full
   budgets on archived cards and can re-stage stale file content into the index.
 - **Turn budgets are global, not per-profile:** `agent.max_turns` (80) in
   `~/.hermes/config.yaml` governs every kanban worker. A profile-level
@@ -707,7 +626,7 @@ driver still commits nothing and the files stand staged for you, and the driver
 never removes them either — clearing `work/` between runs is a human decision, so
 a follow-up idea can be a fix of what is already there).
 `mission/` assets are committed freely by the operator between runs. With
-`auto_gates` on (board.json, or a `<!-- auto-gates: true -->` idea header) —
+`auto-gates` on (board.json, or a `<!-- auto-gates: true -->` idea header) —
 the mode both boards that have run use — the driver plays the gate-holder role
 itself: verifies the evidence, records it in the gate result, completes the
 gate — and still commits nothing. Useful for smoke-testing the machinery and
@@ -720,10 +639,15 @@ The card graph (`mission/lanes.py`) and card bodies (`mission/card-bodies/`)
 are shared across every board — nothing scenario-specific to write per idea.
 To run new work:
 
-1. Write the idea into `boards/<s>/lane-<k>.md` — free text, plus the
-   optional `<!-- integration-tests: false -->` / `<!-- auto-gates: true -->`
-   headers to override the board's defaults for that lane only.
-   Write paths relative to the board's work directory, so the idea stays portable between boards.
+1. Write the idea into `boards/<s>/lane-<k>.md` — free text, plus optional
+   headers overriding the board's defaults for that lane only:
+   `<!-- unit-tests: false -->`, `<!-- integration-tests: false -->`,
+   `<!-- auto-gates: true -->`. Those three are the per-lane options and the whole
+   set an idea may carry; `mission/board_schema.py --schema` prints the table.
+   A header is a whole line — anything shaped like one is judged as one, so a
+   misspelling or a stray word after the comment is an error rather than prose
+   silently ignored. Write paths relative to the board's work directory, so the
+   idea stays portable between boards.
 2. Create the board (§3): `mission/create-board.sh --board boards/<s>`.
 3. `mission/start-board.sh --slug <s>` launches the driver.
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run the mission suite with an interpreter that actually HAS pytest.
 #
-# The shell's `python3` is the Hermes venv and has none (ERRORS.md O6), so a
+# The shell's `python3` is the Hermes venv and has none, so a
 # literal `python3 -m pytest` dies before collecting — which is how one plan's
 # every Run step came to fail at once. Set PYTHON=<path> to override the search.
 set -euo pipefail

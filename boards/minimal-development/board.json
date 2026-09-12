@@ -1,11 +1,11 @@
 {
   "slug": "minimal-development",
-  "title": "Minimal Development",
+  "name": "Minimal Development",
   "lanes": 1,
-  "unit_tests": true,
-  "integration_tests": false,
-  "auto_gates": true,
-  "goal_mode": false,
-  "max_runtime": "4m",
-  "max_retries": 2
+  "unit-tests": true,
+  "integration-tests": false,
+  "auto-gates": true,
+  "goal": false,
+  "max-runtime": "4m",
+  "max-retries": 2
 }

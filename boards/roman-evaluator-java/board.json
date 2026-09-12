@@ -1,11 +1,11 @@
 {
   "slug": "roman-evaluator-java",
-  "title": "Roman Evaluator Java",
+  "name": "Roman Evaluator Java",
   "lanes": 2,
-  "integration_tests": [
+  "integration-tests": [
     false,
     true
   ],
-  "auto_gates": true,
-  "max_runtime": "10m"
+  "auto-gates": true,
+  "max-runtime": "10m"
 }

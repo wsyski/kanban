@@ -3,19 +3,20 @@
 Both lanes build from nothing, inside this board's own work directory,
 `boards/roman-evaluator-java/work/`. Nothing they generate lands anywhere else
 in the repository — the modules, their POMs, their tests and the plan files all
-live under that one path, so a clean start is one line:
+live under that one path. Only run state is ever cleared:
 
-    rm -rf boards/roman-evaluator-java/work
+    mission/reset.sh --board boards/roman-evaluator-java
+
+The work directory is never touched by anything here, so a second run finds
+`roman-cli/` and `roman-service/` from the last one and treats them as the previous
+version to improve. Delete them by hand if you want a blank start.
 
 Or just type a new idea into the Triage card and drag it to Todo, which archives
-the previous run for you.
+the previous run for you and leaves the product in place.
 
 The two ideas are one problem in two shapes: lane 1 a CLI (`roman-cli/`) that
 evaluates one roman numeral from stdin, lane 2 a spec-first Spring Boot REST API
-(`roman-service/`) that consumes lane 1's rule. This board used to build a
-word-count CLI and service (it was called `test-driven-development`); the
-earlier run's modules were removed on 2026-09-09 and git holds them —
-`git log -- wordcount-cli`, last state of the service at commit `479f8e7`.
+(`roman-service/`) that consumes lane 1's rule.
 
 Toolchain, needed by these two ideas and not by the board template: JDK 17 and
 Maven 3.9. Workers have iteration budgets, so pre-warm `~/.m2` before starting

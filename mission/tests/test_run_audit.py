@@ -11,7 +11,7 @@ ra = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ra)
 
 BASE = datetime.datetime(2026, 9, 11, 21, 21, 0)
-GOOD_LOG = ["[21:21:04] LANE 1 open: its=True auto_gates=True snapshot=… idea='## Idea 1'",
+GOOD_LOG = ["[21:21:04] LANE 1 open: its=True uts=True auto-gates=True snapshot=… idea='## Idea 1'",
             "[21:22:34] unblocked Gi1 (parents done)",
             "[21:22:35] GATE Gi1: auto-completed — nothing committed",
             "[21:33:30] artifact kept: boards/b/runs/artifacts/2026/t_x.patch",
@@ -28,19 +28,21 @@ def at(seconds):
 
 
 def fixture(tmp_path, log=None, gates=None, cards=None, restarts=False,
-            chain_recs=None, ceiling="4m"):
+            chain_recs=None, ceiling="4m", summary_extra=None):
     """A board directory with one run inside it."""
     board = tmp_path / "boards" / "b"
     runs = board / "runs"
     runs.mkdir(parents=True, exist_ok=True)
     (board / "board.json").write_text(json.dumps(
-        {"slug": "b", "auto_gates": True, "max_runtime": ceiling} if ceiling
-        else {"slug": "b", "auto_gates": True}))
+        {"slug": "b", "auto-gates": True, "max-runtime": ceiling} if ceiling
+        else {"slug": "b", "auto-gates": True}))
     (runs / "driver.log").write_text("\n".join(log if log is not None else GOOD_LOG) + "\n")
-    (runs / "run-summary.json").write_text(json.dumps({
+    summary = {
         "wall_min": 13.1, "agent_work_min": 5.6, "restarts_observed": restarts,
         "gates": GOOD_GATES if gates is None else gates,
-        "cards": cards if cards is not None else {"C1: implement - lane 1": {"agent_min": 0.63}}}))
+        "cards": cards if cards is not None else {"C1: implement - lane 1": {"agent_min": 0.63}}}
+    summary.update(summary_extra or {})
+    (runs / "run-summary.json").write_text(json.dumps(summary))
     if chain_recs is not None:
         (runs / "chain.jsonl").write_text(
             "\n".join(json.dumps(r) for r in chain_recs) + "\n")
@@ -146,7 +148,7 @@ def test_a_held_gate_warns_on_an_auto_gated_board_but_not_a_human_one(tmp_path, 
     assert "E2" in codes(findings, "WARNING")
     runs = fixture(tmp_path / "second", log=log)
     (tmp_path / "second" / "boards" / "b" / "board.json").write_text(
-        json.dumps({"slug": "b", "auto_gates": False, "max_runtime": "4m"}))
+        json.dumps({"slug": "b", "auto-gates": False, "max-runtime": "4m"}))
     findings, _rows, _s = ra.audit(runs)
     assert "E2" in codes(findings, "INFO")
 
@@ -305,3 +307,53 @@ def test_the_ceiling_parser():
     assert ra.ceiling_minutes("1h30m") == 90.0
     assert ra.ceiling_minutes("90s") == 1.5
     assert ra.ceiling_minutes(None) is None
+
+
+# ---- per-run directories: the auditor must read either form ----------------
+
+def test_the_board_is_found_from_a_run_directory(tmp_path):
+    """`dirname(runs_dir)` was the board while runs/ was flat; a run directory is
+    one level deeper. Getting it wrong is SILENT — board.json goes unread, so the
+    per-card ceiling and auto-gates both default and the table still looks clean."""
+    board = tmp_path / "boards" / "b"
+    (board / "runs" / "b-20260912-090000").mkdir(parents=True)
+    for probe in (board / "runs", board / "runs" / "b-20260912-090000"):
+        assert ra.board_dir_for(str(probe)) == str(board), probe
+        assert ra.runs_root(str(probe)) == str(board / "runs"), probe
+
+
+def test_the_index_check_covers_every_run_not_just_this_one(tmp_path):
+    """No run directory is ever deleted, so an older run's staged leftover is still
+    in the index and still reaches every later `git diff --cached`."""
+    board = tmp_path / "boards" / "b"
+    (board / "runs" / "r1").mkdir(parents=True)
+    assert ra.runs_root(str(board / "runs" / "r1")) == str(board / "runs")
+
+
+def test_the_current_run_is_used_when_runs_is_given(tmp_path):
+    board = tmp_path / "boards" / "b"
+    (board / "runs" / "r1").mkdir(parents=True)
+    (board / "runs" / "current").write_text("r1\n")
+    assert ra.resolve_run_dir(str(board / "runs")) == str(board / "runs" / "r1")
+    # a board from before per-run directories still reads flat
+    flat = tmp_path / "boards" / "old" / "runs"
+    flat.mkdir(parents=True)
+    assert ra.resolve_run_dir(str(flat)) == str(flat)
+
+
+def test_a_work_directory_that_moved_fails_the_run(tmp_path):
+    """A branch switched mid-run moves where a gate's evidence would land and makes
+    the HEAD it recorded untrue. The driver can only report it — staging and
+    unstaging are the board's only writes — so the auditor is what stops the loop."""
+    findings, _rows, _stats = ra.audit(fixture(
+        tmp_path, chain_recs=worker_chain(),
+        summary_extra={"workdir_drift": [
+            "the work directory moved from branch main to feature/x while this run "
+            "was live"]}))
+    assert [f for f in findings if f[1] == "E17"], findings
+
+
+def test_a_run_whose_work_directory_held_still_passes(tmp_path):
+    findings, _rows, _stats = ra.audit(fixture(
+        tmp_path, chain_recs=worker_chain(), summary_extra={"workdir_drift": []}))
+    assert not [f for f in findings if f[1] == "E17"], findings

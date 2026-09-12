@@ -15,6 +15,18 @@ Nothing else. No CLI, no package, no `__init__.py`, no configuration file, no
 docstrings beyond one line, no type-checking setup, no extra edge cases, no
 error handling for non-integers. Python 3 and pytest only.
 
+### The work directory may not be empty
+
+The driver never clears it, so what is already there is **the previous version of
+this project** — this idea's input, not litter. Read it before planning: a run
+that finds the deliverable already present is a request to improve or fix it, and
+the smallest correct change to what exists beats rebuilding it. A run that finds
+the directory empty builds it from nothing. Both are this idea.
+
+Nothing is deleted to "start clean" — clearing the directory is a human decision
+(`mission/reset.sh`), and a card that wipes what it did not plan to replace
+destroys the only copy of the last run's work.
+
 This idea is deliberately complete and unambiguous: it exists to exercise the
 board end to end in the least possible time, not to pose a problem. If a card
 finds itself with a decision to make, the answer is the smallest thing that
@@ -25,5 +37,6 @@ satisfies the lines above.
 - `is_even(0)` and `is_even(4)` are `True`; `is_even(7)` and `is_even(-3)` are
   `False`.
 - pytest is green in the board's work directory.
-- `is_even.py` and `test_is_even.py` are the only files this idea creates (tool
-  caches aside).
+- `is_even.py` and `test_is_even.py` are the only files this idea leaves behind
+  (tool caches aside) — whether it wrote them this run or corrected ones that
+  were already there.

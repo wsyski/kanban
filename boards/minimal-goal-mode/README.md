@@ -1,14 +1,6 @@
 # minimal-goal-mode
 
-> **This board is a red test.** Its `board.json` is written in the proposed
-> naming convention (`IDEA.md` item 2: every Hermes parameter keeps Hermes's
-> spelling — `max-runtime`, `name`, `goal`, `default-workdir`), which today's
-> `BOARD_KEYS` does not accept. So `create-board.sh` refuses it and
-> `mission/test.sh` is red on it, on purpose: the manifest is the specification
-> and the engine is what has not caught up. It goes green when items 2 and 7
-> land, and it is not to be edited to satisfy the engine in the meantime.
-
-**The goal-judge board.** `"goal_mode": true` — the only shipped board that
+**The goal-judge board.** `"goal": true` — the only shipped board that
 turns the judge on. Same shape as `minimal-development` and deliberately just
 as small: one function, three cases, no build tool, no dependencies. The idea
 is not what is under test; the judge is.
@@ -42,11 +34,11 @@ first card (`I1`):
   returning `continue` against a card that has clearly done its work, and the
   card ends `gave_up`.
 
-`max_runtime` is 6 minutes and `max_retries` is 1, so a wedge declares itself
+`max-runtime` is 6 minutes and `max-retries` is 1, so a wedge declares itself
 in about twelve minutes instead of at the hour-long default. That is the whole
-reason to reach for this board before arming a real one with `goal_mode` on.
+reason to reach for this board before arming a real one with `goal` on.
 
-If the judge is failing, set `"goal_mode": false` in the board you actually
+If the judge is failing, set `"goal": false` in the board you actually
 care about. The switch is read at **filing** time (`file_lanes.py:145`), so it
 takes a re-create, not a driver restart.
 

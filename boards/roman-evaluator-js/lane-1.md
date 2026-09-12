@@ -77,6 +77,18 @@ Technology preferences:
 Nothing else. No persistence, no history beyond the current display rows,
 no arithmetic input, no arabic-to-roman direction.
 
+### The work directory may not be empty
+
+The driver never clears it, so what is already there is **the previous version of
+this project** — this idea's input, not litter. Read it before planning: a run
+that finds the deliverable already present is a request to improve or fix it, and
+the smallest correct change to what exists beats rebuilding it. A run that finds
+the directory empty builds it from nothing. Both are this idea.
+
+Nothing is deleted to "start clean" — clearing the directory is a human decision
+(`mission/reset.sh`), and a card that wipes what it did not plan to replace
+destroys the only copy of the last run's work.
+
 This idea is deliberately complete and unambiguous: it exercises the board
 end to end with a small self-contained artefact. If a card finds itself with
 a decision to make, the answer is the smallest thing that satisfies the lines
@@ -84,7 +96,8 @@ above.
 
 ### Done means
 
-- Everything for this idea lives in the board's work directory: the entry
+- Everything for this idea lives in the board's work directory, whether this run
+  wrote it or improved what was already there: the entry
   page, its CSS and JS module files, the executable `run.sh`, the module
   tests, and the test tooling they need (package manifest, test config,
   installed packages). Those are deliverables, not scratch — nothing else is

@@ -25,11 +25,30 @@ def ideas(board):
             yield int(m.group(1)), os.path.join(BOARDS, board, name)
 
 
-def test_every_shipped_manifest_uses_known_keys():
+def test_every_shipped_manifest_validates():
+    """Every board, not the first offender: asserting inside the loop hides the
+    rest of the job behind whichever board sorts earliest, and `validate` already
+    collects each manifest's problems."""
+    import board_schema
+    bad = {}
     for b in boards():
-        cfg = json.load(open(os.path.join(BOARDS, b, "board.json")))
-        assert not set(cfg) - file_lanes.BOARD_KEYS, b
-        assert isinstance(cfg.get("lanes", 1), int), b
+        problems = board_schema.validate(
+            json.load(open(os.path.join(BOARDS, b, "board.json"))), where=b)
+        if problems:
+            bad[b] = problems
+    assert not bad, "\n".join(f"{b}: {p}" for b, ps in bad.items() for p in ps)
+
+
+def test_every_shipped_idea_validates():
+    import board_schema
+    bad = {}
+    for b in boards():
+        for k, path in ideas(b):
+            problems = board_schema.validate_idea(open(path).read(),
+                                                  where=f"{b}/lane-{k}.md")
+            if problems:
+                bad[path] = problems
+    assert not bad, "\n".join(f"{p}" for ps in bad.values() for p in ps)
 
 
 def test_every_shipped_idea_parses_and_fits_its_board():

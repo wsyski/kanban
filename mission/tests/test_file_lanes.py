@@ -92,7 +92,7 @@ def test_scratch_is_rendered_but_is_not_a_hand_off(monkeypatch, tmp_path):
 
 
 def test_a_board_can_file_without_the_goal_judge(monkeypatch, tmp_path):
-    """`goal_mode: false` has to reach the FILING path: a card filed with --goal
+    """`goal: false` has to reach the FILING path: a card filed with --goal
     anyway wedges on a judge that is reachable but transport-failing (O10)."""
     fake = _file_one_lane(monkeypatch, tmp_path, goal_mode=False)
     assert fake.created()

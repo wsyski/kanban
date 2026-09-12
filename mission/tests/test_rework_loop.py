@@ -106,7 +106,7 @@ def test_a_board_can_turn_the_goal_judge_off(monkeypatch):
     assert lanes.goal_args("C") == ["--goal", "--goal-max-turns", "40"]
     assert lanes.goal_args("C", enabled=False) == []
     assert lanes.goal_args("RVp", enabled=False) == []
-    monkeypatch.setattr(run, "board_defaults", lambda: {"goal_mode": False})
+    monkeypatch.setattr(run, "board_defaults", lambda: {"goal": False})
     assert run._goal_args("coder", "C") == []
     assert run._goal_args("tester", "TW") == []
     monkeypatch.setattr(run, "board_defaults", lambda: {})
@@ -209,7 +209,7 @@ def board_env(monkeypatch, tmp_path):
     # the repo, or the suite writes into boards/runs (the guard test says so).
     monkeypatch.setattr(run, "RUN_DIR", str(tmp_path / "runs"))
     monkeypatch.setattr(run, "VERDICTS_PATH", str(tmp_path / "verdicts.jsonl"))
-    monkeypatch.setattr(run, "manifest", lambda: {"max_runtime": "7m", "targets": []})
+    monkeypatch.setattr(run, "manifest", lambda: {"max-runtime": "7m", "targets": []})
     return tmp_path
 
 

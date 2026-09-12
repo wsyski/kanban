@@ -21,7 +21,7 @@ def refined(findings_bullet="- F1: python3 present — `python3 --version` → 3
 @pytest.fixture
 def refined_file(monkeypatch, tmp_path):
     monkeypatch.setattr(run, "RUN_DIR", str(tmp_path))
-    monkeypatch.setattr(run, "lane_options", lambda lane: {"auto_gates": False})
+    monkeypatch.setattr(run, "lane_options", lambda lane: {"auto-gates": False})
     monkeypatch.setattr(run, "log", lambda msg: None)
     run._ANNOUNCED.clear()
     d = tmp_path / "artifacts" / "lane-1"
@@ -51,3 +51,68 @@ def test_md_section_stops_at_the_next_heading():
     assert run.md_section(text, "Findings") == "none\n"
     assert run.md_section(text, "Success criteria") == "- SC1: x\n"
     assert run.md_section(text, "Prior art") == ""
+
+
+def test_a_gate_records_which_repository_and_branch_it_staged_in(monkeypatch, tmp_path):
+    """The authorization chain is "the driver stages, the human commits at the
+    gate". With an external default-workdir that commit lands in ANOTHER repository
+    on whatever branch was checked out, so a gate that does not name it cannot be
+    acted on."""
+    import subprocess
+    wd = tmp_path / "elsewhere"
+    wd.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "feature/x", str(wd)], check=True)
+    (wd / "f.txt").write_text("x\n")
+    subprocess.run(["git", "-C", str(wd), "add", "f.txt"], check=True)
+    subprocess.run(["git", "-C", str(wd), "-c", "user.email=t@t", "-c", "user.name=t",
+                    "commit", "-qm", "one"], check=True)
+    monkeypatch.setattr(run, "WORKDIR", str(wd))
+    monkeypatch.setattr(run, "REPO", str(tmp_path / "repo"))
+    target = run.commit_target()
+    assert str(wd) in target and "EXTERNAL repository" in target
+    assert "branch feature/x" in target
+
+
+def test_a_board_owned_work_directory_says_so(monkeypatch, tmp_path):
+    monkeypatch.setattr(run, "REPO", os.path.dirname(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__)))))
+    monkeypatch.setattr(run, "WORKDIR", os.path.join(run.REPO, "mission"))
+    assert "this repo" in run.commit_target()
+
+
+def test_a_work_directory_outside_git_is_named_as_such(monkeypatch, tmp_path):
+    monkeypatch.setattr(run, "WORKDIR", str(tmp_path))
+    assert "not a git repository" in run.commit_target()
+
+
+def test_gate_evidence_works_when_the_work_directory_is_another_repo(monkeypatch, tmp_path):
+    """git runs -C WORKDIR, and a pathspec outside that repo drops git into
+    --no-index mode where --cached is not a valid option at all. Passing the
+    kanban-side artifacts path therefore made staged_files() RAISE for an external
+    default-workdir — taking the gate's evidence with it, on exactly the two boards
+    that use one."""
+    import subprocess
+    ext = tmp_path / "ext"
+    ext.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main", str(ext)], check=True)
+    (ext / "built.py").write_text("the lane's work\n")
+    subprocess.run(["git", "-C", str(ext), "add", "built.py"], check=True)
+    monkeypatch.setattr(run, "WORKDIR", str(ext))
+    monkeypatch.setattr(run, "RUN_DIR", str(tmp_path / "kanban" / "runs" / "r1"))
+    assert run.staged_files() == ["built.py"]
+
+
+def test_gate_evidence_still_includes_the_hand_offs_for_a_board_owned_tree(monkeypatch, tmp_path):
+    """When the work directory and the hand-offs share a repository, both pathspecs
+    are required: gates record the refined idea and the plan too."""
+    import inspect
+    src = inspect.getsource(run.staged_files)
+    assert "pathspecs.append(artifacts)" in src
+    assert 'startswith(os.path.abspath(top)' in src
+
+
+def test_foreign_staged_compares_paths_on_one_basis(monkeypatch, tmp_path):
+    """Both sides come from `git -C WORKDIR ... --name-only`, so both are relative to
+    that repository's top. An absolute-path branch here was dead code."""
+    import inspect
+    assert "os.path.isabs" not in inspect.getsource(run.foreign_staged)

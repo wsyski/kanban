@@ -6,10 +6,16 @@ template text. It describes a folder tree called `my-project` that this project
 does not have, and it says nothing about what this project actually contains.
 Replace that boilerplate with a README that describes THIS workspace.
 
-Survey the work directory first, and write only what you found. The tree is a
-real project with history — the survey is the input to this idea, not a
-formality, and anything the README claims has to be a thing you can point at in
-the directory.
+Survey the work directory first, and write only what you found. The work
+directory here is not something a run built: it is a real project with its own
+history, and every file in it is the current version of somebody's work. The
+survey is this idea's input, not a formality, and anything the README claims has
+to be a thing you can point at in the directory.
+
+So nothing here is ever cleared or rebuilt. On a second run the README you are
+improving is **the previous version of this deliverable** — read it, keep what is
+still true, and change what is not. A rewrite from scratch throws away the last
+run's judgement for no reason.
 
 Keep the parts of the stock README that are still true (the upstream Liferay
 Workspace documentation link, the local-run instructions if they match this

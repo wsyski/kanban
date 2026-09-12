@@ -120,3 +120,19 @@ def test_an_unresolved_placeholder_is_recorded(monkeypatch, tmp_path):
     run.record_chain_start({"id": "t_i", "status": "ready", "title": lanes.card_title("I", 1),
                             "body": "write <REFINED> now"}, 1)
     assert _recs(tmp_path)[0]["unresolved"] == ["<REFINED>"]
+
+
+def test_chain_inputs_match_a_body_filed_under_its_own_run(monkeypatch, tmp_path):
+    """A body filed under runs/<run-id>/ names that run. Comparing it against the
+    run-less path form matches nothing, and the chain then records every card as
+    having been given no documents at all."""
+    import file_lanes
+    monkeypatch.setattr(run, "REPO", str(tmp_path))
+    monkeypatch.setattr(run, "BOARD", "b")
+    monkeypatch.setattr(run, "CURRENT_RUN", str(tmp_path / "current"))
+    (tmp_path / "current").write_text("r1\n")
+    paths = file_lanes.lane_paths(str(tmp_path), "b", 1, "r1")
+    body = f"read {paths['<IDEA>']} then write {paths['<REFINED>']}"
+    found = run.chain_inputs(body, 1)
+    assert found.get("IDEA") == paths["<IDEA>"]
+    assert found.get("REFINED") == paths["<REFINED>"]

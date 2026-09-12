@@ -21,6 +21,7 @@ SERVE = "--serve" in sys.argv
 POLL = 20
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import board_schema
 import lanes
 import file_lanes
 import runs_util
@@ -28,8 +29,66 @@ import runs_util
 BOARD_DIR = os.path.join(REPO, "boards", BOARD)
 BOARD_CFG = os.path.join(BOARD_DIR, "board.json")
 IDEAS_DIR = BOARD_DIR
-RUN_DIR = os.path.join(BOARD_DIR, "runs")
-SNAP_DIR = os.path.join(RUN_DIR, "snapshots")
+# runs/ is board-level and holds the DRIVER's own state — its log and its lock,
+# both of which outlive any single run (one serve-mode driver answers many ideas).
+# Everything belonging to a RUN lives in runs/<run-id>/, minted when an idea is
+# armed and never touched again.
+RUNS_ROOT = os.path.join(BOARD_DIR, "runs")
+CURRENT_RUN = os.path.join(RUNS_ROOT, "current")   # a file naming the live run
+
+
+def _read_current_run():
+    """The run id runs/current names, or None. A pointer FILE, not a symlink: the
+    per-card paths are rendered into card bodies at filing time and swept from the
+    git index by pathspec, and both break on an alias — a worker orphaned by run N
+    would resolve `current` at write time and land in run N+1's directory, which is
+    the overwrite this layout exists to prevent (F2), while `git diff --cached --
+    runs/...` does not match through a symlink at all (E14)."""
+    try:
+        with open(CURRENT_RUN) as f:
+            return f.read().strip() or None
+    except OSError:
+        return None
+
+
+def use_run(run_id):
+    """Point every per-run path at runs/<run-id>. Reassigns the module globals so
+    the paths stay plain strings: a hundred call sites join them, tests patch
+    RUN_DIR, and a lazy accessor would buy nothing."""
+    global RUN_DIR, SNAP_DIR, TIMING_PATH, CARDS_DIR, VERDICTS_PATH
+    RUN_DIR = os.path.join(RUNS_ROOT, run_id) if run_id else RUNS_ROOT
+    SNAP_DIR = os.path.join(RUN_DIR, "snapshots")
+    TIMING_PATH = os.path.join(RUN_DIR, "timing.jsonl")
+    CARDS_DIR = os.path.join(RUN_DIR, "cards")
+    VERDICTS_PATH = os.path.join(RUN_DIR, "verdicts.jsonl")
+    return RUN_DIR
+
+
+def mint_run(run_id):
+    """Create runs/<run-id>/ and make it current. Called once per armed idea.
+
+    Nothing is deleted here, or anywhere: a finished run's evidence stays exactly
+    as it was and the next run starts on empty paths because they are NEW paths,
+    not because something cleared them. That is what retires clear_run_state,
+    snapshot_run_evidence and clear_lane_outputs — a fresh directory cannot hold a
+    previous run's refined idea, so the stale-hand-off failures (#31, F2) stop
+    being something a driver has to remember to prevent.
+    """
+    path = use_run(run_id)
+    os.makedirs(path, exist_ok=True)
+    tmp = CURRENT_RUN + ".tmp"
+    with open(tmp, "w") as f:
+        f.write(run_id + "\n")
+    os.replace(tmp, CURRENT_RUN)          # atomic: a reader sees one id or the other
+    log(f"RUN {run_id}: {os.path.relpath(path, REPO)}")
+    return path
+
+
+# Before the first idea is armed there is no run, and the driver still logs and
+# locks: those live at RUNS_ROOT, and RUN_DIR falls back to it so a pre-run write
+# lands where it always did rather than in a directory named after nothing.
+RUN_DIR = SNAP_DIR = TIMING_PATH = CARDS_DIR = VERDICTS_PATH = None
+use_run(_read_current_run())
 
 
 def manifest():
@@ -41,18 +100,16 @@ def manifest():
         # Same defaults create-board.sh prints in --help, so a board that loses
         # its manifest degrades to the documented shape rather than silently
         # growing integration cards nobody asked for.
-        return {"workdir": os.path.join(BOARD_DIR, "work"), "lanes": 1,
-                "integration_tests": False, "auto_gates": False}
+        return {"default-workdir": os.path.join(BOARD_DIR, "work"), "lanes": 1,
+                "integration-tests": False, "auto-gates": False}
 
 
 def board_defaults():
     return manifest()
 
 
-WORKDIR = manifest().get("workdir") or os.path.join(BOARD_DIR, "work")
+WORKDIR = manifest().get("default-workdir") or os.path.join(BOARD_DIR, "work")
 
-TIMING_PATH = os.path.join(RUN_DIR, "timing.jsonl")
-CARDS_DIR = os.path.join(RUN_DIR, "cards")
 
 
 def board_lane_count(state):
@@ -142,7 +199,21 @@ def board():
     return state
 
 def log(msg):
-    print(f"[{datetime.datetime.now():%H:%M:%S}] {msg}", flush=True)
+    """stdout (the driver's board-level log) AND the current run's own log.
+
+    The driver outlives any one run in serve mode, so its stdout is board-scoped;
+    the per-run copy is what `run-audit.py --runs runs/<id>` reads, which is why
+    auditing an earlier run needs no log slicing. Before the first idea is armed
+    there is no run directory, and a failure to write one must never take the
+    driver down — stdout is the record that always exists."""
+    line = f"[{datetime.datetime.now():%H:%M:%S}] {msg}"
+    print(line, flush=True)
+    try:
+        if RUN_DIR and RUN_DIR != RUNS_ROOT and os.path.isdir(RUN_DIR):
+            with open(os.path.join(RUN_DIR, "driver.log"), "a") as f:
+                f.write(line + "\n")
+    except OSError:
+        pass
 
 def title_of_prefix(state, prefix):
     """Card whose TITLE CODE equals the prefix.
@@ -196,11 +267,13 @@ def _goal_args(assignee, code):
     """Delegates to lanes.goal_args — single source of the worker-only rule.
 
     The board decides whether its workers run under the goal judge: machine
-    without a working auxiliary model sets `"goal_mode": false` in board.json
+    without a working auxiliary model sets `"goal": false` in board.json
     and its cards complete on their own evidence (reviewers and gates still
-    judge the work). See ERRORS O10.
+    judge the work).
     """
-    return lanes.goal_args(code, enabled=bool(board_defaults().get("goal_mode", True)))
+    cfg = board_defaults()
+    return lanes.goal_args(code, enabled=bool(cfg.get("goal", True)),
+                           max_turns=cfg.get("goal-max-turns"))
 
 
 def latest_verdict_card(state, lane, reviewer_prefix, final_code=None):
@@ -269,15 +342,28 @@ def code_rework_hold(state, lane):
     return False
 
 
+def rework_retries():
+    """Retry budget for a REVISION card, from `rework-max-retries`.
+
+    Separate from `max-retries`, which is the board's first filing: a revision is a
+    second attempt at work a reviewer already rejected, so a board may want it
+    tighter or looser than the original without changing both. Default 1, as this
+    was when it was a literal.
+    """
+    return str(manifest().get("rework-max-retries")
+               or board_schema.OPTIONS["rework-max-retries"][1])
+
+
 def _round_settings(lane):
     """(max_runtime, render) for a rework round: the board's own ceiling, and bodies
     rendered exactly as board filing renders them."""
     cfg = manifest()
-    runtime = cfg.get("max_runtime") or file_lanes.DEFAULT_MAX_RUNTIME
+    runtime = cfg.get("max-runtime") or file_lanes.DEFAULT_MAX_RUNTIME
     targets = cfg.get("targets") or ()
 
     def render(body_file):
         return file_lanes.render_body(body_file, repo=REPO, board=BOARD, workdir=WORKDIR,
+                                      run_id=_read_current_run(),
                                       lane=lane, targets=targets)
     return runtime, render
 
@@ -316,7 +402,7 @@ def file_revision(state, lane, round_no, findings, base="P", reviewer_prefix="RV
                   gate_code="Gp", max_rounds=3, verdict_card_id=None):
     """File one rework round: a revision card + its re-gate, linked to the gate.
 
-    Serves BOTH loops (ERRORS.md O2): the plan loop (base P, reviewer RVp,
+    Serves BOTH loops: the plan loop (base P, reviewer RVp,
     gate Gp) and the idea loop (base I, re-gate Gi itself). The idea loop's
     'reviewer' is the re-gate — no separate reviewer sits before an idea
     gate, by design. Both cards are rendered like the cards they repeat: same
@@ -345,8 +431,10 @@ def file_revision(state, lane, round_no, findings, base="P", reviewer_prefix="RV
               f"escalation).\n\n{sender} sent this back. Address EXACTLY:\n{findings}\n"
               f"Fix only these, re-stage, re-attach, complete with a change summary.\n")
     rbody += _full_verdict_pointer(verdict_card_id)
-    args = ["create", rev_title, "--body", rbody, "--assignee", rev_assignee,
-            "--workspace", f"dir:{WORKDIR}", "--max-runtime", runtime, "--max-retries", "1",
+    remap = manifest().get("assignees")
+    args = ["create", rev_title, "--body", rbody,
+            "--assignee", lanes.assignee_for(rev_assignee, remap),
+            "--workspace", f"dir:{WORKDIR}", "--max-runtime", runtime, "--max-retries", rework_retries(),
             "--idempotency-key", f"{BOARD}-rev-{base}{lane}-{round_no}",
             "--created-by", "manager", "--json"] + _skill_args(base) + _goal_args(rev_assignee, base)
     rev_id = json.loads(kb(*args))["id"]
@@ -364,9 +452,10 @@ def file_revision(state, lane, round_no, findings, base="P", reviewer_prefix="RV
         rrbody += (f"\nRE-GATE ROUND {round_no + 1} of {max_rounds + 1}. A previous gate-holder "
                    f"sent the work back with the findings on the parent revision card. Verify "
                    f"they are addressed, then complete this card exactly as a gate-holder would.\n")
-    rr_args = ["create", rr_title, "--body", rrbody, "--assignee", rr_assignee,
+    rr_args = ["create", rr_title, "--body", rrbody,
+               "--assignee", lanes.assignee_for(rr_assignee, remap),
                "--parent", rev_id, "--workspace", f"dir:{WORKDIR}", "--max-runtime", runtime,
-               "--max-retries", "1", "--idempotency-key",
+               "--max-retries", rework_retries(), "--idempotency-key",
                f"{BOARD}-rr-{base}{lane}-r{round_no + 1}", "--created-by", "manager", "--json"]
     rr_id = json.loads(kb(*rr_args))["id"]
     kb("link", rr_id, gate_id)
@@ -375,6 +464,132 @@ def file_revision(state, lane, round_no, findings, base="P", reviewer_prefix="RV
     # _OPENED stays untouched: the lane's option state is settled.
     log(f"filed {kind} rework round {round_no}: {rev_title} + {rr_title}")
     record_rework(lane, gate_code, round_no, [rev_title, rr_title], findings, state)
+
+WORKDIR_FACTS = "workdir.json"          # written per run, beside its other state
+_DRIFT = set()                          # drift already reported, once per change
+
+
+def workdir_facts():
+    """Read-only reading of the tree a run stages into: repo, branch, HEAD.
+
+    Every git call here READS. The board's only writes to any index are stage and
+    unstage, so a branch that moved is something to report, never something to
+    correct: switching it back would be a second writer fighting the operator, and
+    a commit or a checkout is not the board's to make.
+    """
+    top = git_at(WORKDIR, "rev-parse", "--show-toplevel").strip()
+    if not top:
+        return {"repo": None, "workdir": os.path.abspath(WORKDIR)}
+    return {"repo": top,
+            "workdir": os.path.abspath(WORKDIR),
+            "branch": git_at(WORKDIR, "rev-parse", "--abbrev-ref", "HEAD").strip()
+                      or "DETACHED",
+            "head": git_at(WORKDIR, "rev-parse", "HEAD").strip() or ""}
+
+
+def record_workdir_facts():
+    """Pin what the run started on. Once per run, at the first lane it opens."""
+    path = os.path.join(RUN_DIR, WORKDIR_FACTS)
+    if os.path.exists(path):
+        return
+    os.makedirs(RUN_DIR, exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(workdir_facts(), f, indent=2)
+    os.replace(tmp, path)
+
+
+def expected_workdir_facts():
+    try:
+        with open(os.path.join(RUN_DIR, WORKDIR_FACTS)) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def foreign_staged():
+    """Staged paths in the work directory's repo that are NOT this board's.
+
+    Only for a work directory the board does not own: inside this repo the index is
+    shared with the operator's ordinary work on mission/ and that is normal, and the
+    pathspecs in staged_files() already scope a gate's evidence. In ANOTHER
+    repository every staged path is either this lane's or the operator's, and the
+    operator's reaches the next card's `git diff --cached` and the gate's evidence.
+
+    Reported, never unstaged: the board may unstage what it put there, but throwing
+    away a human's pending work to tidy its own evidence is not a trade it gets to
+    make.
+    """
+    exp = expected_workdir_facts()
+    if not exp.get("repo"):
+        return []
+    if os.path.abspath(exp["repo"]).startswith(os.path.abspath(REPO) + os.sep) or \
+            os.path.abspath(exp["repo"]) == os.path.abspath(REPO):
+        return []
+    staged = [ln for ln in git_at(WORKDIR, "diff", "--cached", "--name-only")
+              .splitlines() if ln.strip()]
+    # Both sides are relative to the same repository root: staged_files() also runs
+    # git -C WORKDIR, so `--name-only` gives paths from that repo's top.
+    own = set(staged_files())
+    return [p for p in staged if p not in own]
+
+
+def workdir_drift(state=None):
+    """Report a work directory that moved under a live run. Findings, not fixes.
+
+    A branch switched mid-run moves where a gate's evidence would land, and the HEAD
+    the gate recorded goes stale without anything noticing — which is the one thing
+    that makes the gate's record untrue rather than merely incomplete.
+    """
+    exp = expected_workdir_facts()
+    if not exp.get("repo"):
+        return []
+    now = workdir_facts()
+    out = []
+    if now.get("branch") and exp.get("branch") and now["branch"] != exp["branch"]:
+        out.append(f"the work directory moved from branch {exp['branch']} to "
+                   f"{now['branch']} while this run was live — a gate's recorded "
+                   f"evidence names the branch it staged into, so this run's record "
+                   f"is no longer true of {exp['repo']}")
+    if now.get("head") and exp.get("head") and now["head"] != exp["head"]:
+        out.append(f"{exp['repo']} moved from {exp['head'][:7]} to "
+                   f"{now['head'][:7]} while this run was live — something committed "
+                   f"or reset under the board")
+    for p in foreign_staged():
+        out.append(f"staged in {exp['repo']} but not this lane's: {p} — it reaches "
+                   f"every later `git diff --cached` and the gate's evidence")
+    for finding in out:
+        if finding not in _DRIFT:
+            _DRIFT.add(finding)
+            log(f"WARNING: {finding}")
+    return out
+
+
+def commit_target():
+    """Which repository and branch a gate's evidence is staged in, as one line.
+
+    Matters when `default-workdir` points outside this repo. The authorization chain
+    is "the driver stages, the human commits at the gate" — and with an external work
+    directory that commit lands in ANOTHER repository, on whatever branch was checked
+    out. A gate that does not say which cannot be acted on: the operator has to guess
+    where to look, and a run's record does not say where its work went.
+    """
+    top = git_at(WORKDIR, "rev-parse", "--show-toplevel").strip()
+    if not top:
+        return f"{os.path.abspath(WORKDIR)} (not a git repository — nothing to commit)"
+    branch = git_at(WORKDIR, "rev-parse", "--abbrev-ref", "HEAD").strip() or "DETACHED"
+    head = git_at(WORKDIR, "rev-parse", "--short", "HEAD").strip() or "no commits yet"
+    own = os.path.abspath(top).startswith(os.path.abspath(REPO) + os.sep) or \
+        os.path.abspath(top) == os.path.abspath(REPO)
+    where = "this repo" if own else "an EXTERNAL repository"
+    return f"{top} ({where}), branch {branch} at {head}"
+
+
+def git_at(cwd, *args):
+    """git in an arbitrary tree, empty string on failure — for reading only."""
+    r = subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True)
+    return r.stdout if r.returncode == 0 else ""
+
 
 def staged_files():
     """Paths staged in WORKDIR plus this board's artifact files — the evidence
@@ -387,8 +602,18 @@ def staged_files():
     Intermediates (refined idea, plan) live under runs/artifacts/, not WORKDIR,
     and gates record them too — so both pathspecs are required.
     """
+    # Only pathspecs inside the work directory's OWN repository. git runs -C
+    # WORKDIR, and a path outside that repo drops it into --no-index mode, where
+    # --cached is not even a valid option — so an external default-workdir made this
+    # raise and took the gate's evidence with it. The hand-offs are in the kanban
+    # repo, gitignored and never staged, so for an external tree there is nothing of
+    # ours in that index to ask about.
+    pathspecs = [WORKDIR]
     artifacts = os.path.join(RUN_DIR, "artifacts")
-    out = git("diff", "--cached", "--name-only", "--", WORKDIR, artifacts)
+    top = git_at(WORKDIR, "rev-parse", "--show-toplevel").strip()
+    if top and os.path.abspath(artifacts).startswith(os.path.abspath(top) + os.sep):
+        pathspecs.append(artifacts)
+    out = git("diff", "--cached", "--name-only", "--", *pathspecs)
     return [l for l in out.splitlines() if l.strip()]
 
 def runs_result(card_id):
@@ -464,7 +689,7 @@ def md_section(text, name):
 
 def gate_action(state, title, kind, lane):
     opts = lane_options(lane) or {}
-    auto = bool(opts.get("auto_gates"))
+    auto = bool(opts.get("auto-gates"))
     if kind == "gi":
         # No reviewer card precedes this gate — the refinement's check IS a
         # person reading it, which is the whole point of putting a gate here.
@@ -503,7 +728,8 @@ def gate_action(state, title, kind, lane):
         if verdict_token(verdict_txt) != "PASS":
             return f"waiting: final review verdict = {verdict_txt[:40]!r}"
         staged = staged_files()
-        evidence = f"{len(staged)} files staged, verdict PASS"
+        evidence = (f"{len(staged)} files staged, verdict PASS; "
+                    f"to commit in: {commit_target()}")
         if title not in _ANNOUNCED:
             log(f"GATE {title.split(':')[0]} evidence: {evidence}; "
                 f"staged: {', '.join(staged[:8])}")
@@ -609,40 +835,6 @@ def card_log(card):
 _OPENED = set()
 
 
-def clear_lane_outputs(lane):
-    """Delete this lane's OWN output files before its first card runs.
-
-    runs/artifacts/lane-<k>/{refined,plan}.md are the incoming lane's OUTPUT
-    paths, so a copy left behind is a stale contract: the Gi gate checks the
-    refined idea's STRUCTURE, so a previous refined idea passes it and the plan
-    is built on the old idea (ERRORS #31). clear_run_state covers the refile, but
-    a driver restart, a hand-unblocked root or any other continuation from a
-    dirty state skips that path — so the clearance belongs to the lane's first
-    card, which is this call site, immediately before the root is released. It
-    runs once per lane per process (open_lane is guarded by _OPENED), so a retry
-    inside the run keeps what this run already wrote.
-    """
-    hand_offs = (("refined.md", "refined idea"), ("plan.md", "plan"))
-    for name, what in hand_offs:
-        path = os.path.join(RUN_DIR, "artifacts", f"lane-{lane}", name)
-        if os.path.exists(path):
-            os.remove(path)
-            log(f"LANE {lane}: cleared a previous {what} at "
-                f"{os.path.relpath(path, REPO)} before the first card runs")
-    board_rel = os.path.relpath(BOARD_DIR, REPO)
-    pathspec = f":(top){os.path.join(board_rel, 'runs', 'artifacts', f'lane-{lane}')}"
-    try:
-        staged = git("diff", "--cached", "--name-only", "--", pathspec)
-        if staged.strip():
-            git("restore", "--staged", "--worktree", "--", pathspec)
-            log(f"LANE {lane}: cleared the staged index for {pathspec} "
-                f"({len(staged.splitlines())} files)")
-    except RuntimeError as e:
-        # git() runs -C WORKDIR, which reset.sh deletes; the hand-offs above are
-        # already gone, and the next tick reaches the refile's index cleanup.
-        log(f"LANE {lane}: staged-index cleanup skipped ({e})")
-
-
 def open_lane(state, lane):
     """Resolve lane <lane> the moment its turn comes. Once per lane per run.
 
@@ -654,7 +846,7 @@ def open_lane(state, lane):
     if opts is None:
         log(f"LANE {lane}: no idea entered ({IDEAS_DIR}/lane-{lane}.md) — chain stops here")
         return "stopped"
-    if not opts["integration_tests"]:
+    if not opts["integration-tests"]:
         for code in lanes.IT_CODES:
             title = lanes.card_title(code, lane)
             card = state.get(title)
@@ -680,7 +872,28 @@ def open_lane(state, lane):
                 log(f"LANE {lane}: relinked RVa{lane} -> Gc{lane}")
             except RuntimeError as e:
                 log(f"LANE {lane}: link RVa{lane}->Gc{lane} skipped ({e})")
-    clear_lane_outputs(lane)
+    if not opts["unit-tests"]:
+        # TW only — RVa is the CODE review and the only one before the code gate
+        # (lanes.UT_CODES says why). Its child C must be reparented to the plan
+        # gate, or it waits forever on an archived parent, the same failure the
+        # RVc -> Gc unlink above exists to avoid.
+        tw = state.get(lanes.card_title("TW", lane))
+        c = state.get(lanes.card_title("C", lane))
+        gp = state.get(lanes.card_title("Gp", lane))
+        if tw and tw["status"] != "done":
+            kb("archive", tw["id"])
+            log(f"LANE {lane}: unit-tests=no — archived TW{lane}")
+        if tw and c:
+            try:
+                kb("unlink", tw["id"], c["id"])
+            except RuntimeError as e:
+                log(f"LANE {lane}: unlink TW{lane}->C{lane} skipped ({e})")
+        if gp and c:
+            try:
+                kb("link", gp["id"], c["id"])
+                log(f"LANE {lane}: relinked Gp{lane} -> C{lane}")
+            except RuntimeError as e:
+                log(f"LANE {lane}: link Gp{lane}->C{lane} skipped ({e})")
     # Snapshot BEFORE unblocking: the card bodies already point at this path,
     # and workers must never read the mutable source (spec D8).
     os.makedirs(SNAP_DIR, exist_ok=True)
@@ -689,14 +902,45 @@ def open_lane(state, lane):
     with open(tmp, "w") as f:
         f.write(opts["idea"])
     os.replace(tmp, snap)
+    # The work directory AS THIS LANE FINDS IT. Written here rather than rendered
+    # into the bodies at filing time, because every lane's cards are filed in one
+    # moment: lane 2 would otherwise be told what the tree looked like before lane
+    # 1 built anything in it. Same guarantee as the idea snapshot — written before
+    # the root is unblocked, so no worker can read a missing or half-written file.
+    # The cards were filed with THIS run's paths baked into their bodies. If the
+    # driver is pointed at a different run — minted on a restart instead of at the
+    # refile, or a hand-edited runs/current — every hand-off would be written where
+    # nothing reads it and the idea gate would wait forever for a refined.md one
+    # directory over. Checked here rather than trusted: the guarantee that a lane
+    # cannot inherit a stale hand-off is only as good as this agreement.
+    if not lane_paths_agree(state, lane):
+        return "mismatch"
+    record_workdir_facts()
+    wd_state = file_lanes.workdir_state(WORKDIR, BOARD_DIR)
+    # Beside the idea snapshot, in SNAP_DIR — the same directory
+    # file_lanes.workdir_state_path renders into the card bodies.
+    state_path = os.path.join(SNAP_DIR, f"lane-{lane}-workdir-at-open.md")
+    tmp = state_path + ".tmp"
+    with open(tmp, "w") as f:
+        f.write(
+            f"# Work directory as lane {lane} opened on it\n\n"
+            f"Taken {datetime.datetime.now().isoformat(timespec='seconds')}, when "
+            f"lane {lane} opened. This is a SNAPSHOT, not a live view: the tree "
+            f"changes as this lane works, so for the current state run `git status` "
+            f"in the directory itself. What it is for is planning — what was here "
+            f"before this lane touched anything.\n\n"
+            f"{os.path.abspath(WORKDIR)}\n\n{wd_state}\n")
+    os.replace(tmp, state_path)
     idea_head = opts["idea"].splitlines()[0][:80] if opts["idea"] else ""
-    log(f"LANE {lane} open: its={opts['integration_tests']} "
-        f"auto_gates={opts['auto_gates']} snapshot={snap} idea={idea_head!r}")
+    log(f"LANE {lane} open: its={opts['integration-tests']} "
+        f"uts={opts['unit-tests']} auto-gates={opts['auto-gates']} "
+        f"snapshot={snap} workdir={wd_state.split(' — ')[0]} idea={idea_head!r}")
     # The idea text is NOT posted to the board: raw ideas stay off it, and a
     # comment would be a second, mutable copy of the contract.
     kb("comment", state[lanes.card_title("I", lane)]["id"],
-       f"lane {lane} opened: integration_tests={opts['integration_tests']} "
-       f"auto_gates={opts['auto_gates']}, idea snapshot: {snap}")
+       f"lane {lane} opened: integration-tests={opts['integration-tests']} "
+       f"unit-tests={opts['unit-tests']} auto-gates={opts['auto-gates']}, "
+       f"idea snapshot: {snap}")
     _OPENED.add(lane)
     return "open"
 
@@ -746,7 +990,7 @@ def rework_rounds(st):
             if is_rework(v):
                 rounds = len([t for t in st if t.startswith(f"I{lane}-rev")])
                 if rounds < 2:      # 2 rounds: an idea needing three human
-                                    # round-trips is a wrong idea (ERRORS.md O2)
+                                    # round-trips is a wrong idea
                     file_revision(st, lane, rounds + 1, rework_answers(v), base="I",
                                   reviewer_prefix="Gi", gate_code="Gi", max_rounds=2,
                                   verdict_card_id=(v_card or {}).get("id"))
@@ -758,14 +1002,13 @@ def rework_rounds(st):
 # --- document chain -----------------------------------------------------------
 # What each card was GIVEN and what it PRODUCED, so the hand-off chain can be
 # checked instead of trusted: a card handed a document older than its own start
-# read a leftover (ERRORS #31), and a worker that attached nothing produced
+# read a leftover, and a worker that attached nothing produced
 # nothing. runs/chain.jsonl is per-run state — rotated and cleared like the rest.
 _CHAIN_STARTED = set()
 _CHAIN_DONE = set()
 WORKER_CODES = ("I", "P", "TW", "C", "TI")
 # Review and gate cards carry a verdict; the ledger is where they outlive a run.
 VERDICT_CODES = ("rv", "g")
-VERDICTS_PATH = os.path.join(RUN_DIR, "verdicts.jsonl")
 
 
 def ledger(record):
@@ -791,6 +1034,32 @@ def ledger(record):
         log(f"ledger: cannot append to {VERDICTS_PATH} ({e})")
 
 
+def lane_paths_agree(state, lane):
+    """Does the lane's root card name the run the driver is writing to?
+
+    The root's body carries its <IDEA> path from filing time. If it does not name
+    the current run, the two disagree about where this lane's documents live, and
+    nothing downstream can recover: the worker writes where its body says and the
+    gate reads where the driver says.
+    """
+    title = lanes.card_title(lanes.lane_root_code(True), lane)
+    card = state.get(title)
+    if not card:
+        return True                      # nothing filed yet; open_lane handles it
+    body = card.get("body")
+    if not body:
+        return True                      # unreadable body is not evidence of drift
+    expected = file_lanes.lane_paths(REPO, BOARD, lane, _read_current_run())["<IDEA>"]
+    if expected in body:
+        return True
+    log(f"REFUSING to open lane {lane}: {title} was filed against a different run — "
+        f"its body does not name {expected}. The driver is on run "
+        f"{_read_current_run()!r}; a run is minted when an idea is ARMED, never on "
+        f"driver start, so check runs/current and re-arm the idea rather than "
+        f"letting the lane write where nothing reads.")
+    return False
+
+
 def chain_inputs(body, lane):
     """The lane documents a card's FILED body points at, by role.
 
@@ -798,8 +1067,12 @@ def chain_inputs(body, lane):
     what a later edit intended.
     """
     body = body or ""
+    # THIS run's paths: a body filed under runs/<run-id>/ names that run, and
+    # comparing against the run-less form matches nothing — the chain would record
+    # every card as having been given no documents at all.
     return {role.strip("<>"): path for role, path
-            in file_lanes.lane_paths(REPO, BOARD, lane).items() if path in body}
+            in file_lanes.lane_paths(REPO, BOARD, lane,
+                                     _read_current_run()).items() if path in body}
 
 
 def chain_record(event, card, lane, ts=None, **extra):
@@ -922,7 +1195,7 @@ def open_lanes(state):
     `integration_tests: false` board TI and RVc stayed live and RAN (live,
     2026-09-11), and no snapshot was refreshed.
     Opening here also means the lane's stale outputs are cleared on every entry
-    path — a human continuing from a dirty state included (ERRORS #31).
+    path — a human continuing from a dirty state included.
     Returns True when the board changed, so the caller re-reads it.
     """
     changed = False
@@ -944,19 +1217,31 @@ def open_lanes(state):
 def unstage_run_paths():
     """Every path under this board's runs/ stays unstaged (user rule).
 
-    The lane's hand-offs are read by path, so the index is not how they travel;
-    a card that stages one anyway (older bodies did) only puts scratch in front
-    of every later `git diff --cached` — the operator sees it and asks who did
-    it. One git call per tick, and only when something is actually staged.
+    The lane's hand-offs are read by path, so the index is not how they travel; a card
+    that stages one anyway only puts scratch in front of every later
+    `git diff --cached` — the operator sees it and asks who did it. One git call per
+    tick, and only when something is actually staged.
+
+    RUNS_ROOT, not this run's directory: no run directory is ever deleted, so an
+    earlier run's staged leftover is still in the index and still reaches every later
+    diff.
+
+    And in REPO, not WORKDIR. runs/ lives in the kanban repo; the driver's other git
+    calls run -C WORKDIR, which for an external default-workdir is a DIFFERENT
+    repository, where this pathspec means nothing — the call failed and the failure
+    was swallowed, so the sweep quietly did nothing on exactly the boards whose index
+    is shared with someone else's work.
     """
-    rel = os.path.relpath(RUN_DIR, REPO)
-    try:
-        staged = git("diff", "--cached", "--name-only", "--", rel)
-    except Exception:
+    rel = os.path.relpath(RUNS_ROOT, REPO)
+    r = subprocess.run(["git", "-C", REPO, "diff", "--cached", "--name-only",
+                        "--", rel], capture_output=True, text=True)
+    if r.returncode != 0 or not r.stdout.strip():
         return
-    if not staged.strip():
-        return
-    git("restore", "--staged", "--", rel)
+    staged = r.stdout
+    # unstage: the board's only writes to any index are stage and unstage, and this
+    # one only ever touches paths it generated itself.
+    subprocess.run(["git", "-C", REPO, "restore", "--staged", "--", rel],
+                   capture_output=True, text=True)
     log(f"unstaged {len(staged.split())} path(s) under {rel} "
         f"(nothing run-generated stays in the index)")
 
@@ -972,11 +1257,12 @@ def tick():
                  "the board escalated this card to Triage for a human — the lane "
                  "cannot advance by itself")
         return True
+    workdir_drift(st)
     graph = lane_graph(st)
     # 0. open the lanes whose turn has come. Promotion below only ever looks at
     #    BLOCKED cards, so a root that was already unblocked (--once, or a human)
     #    would never open its lane — and open_lane is what prunes TI/RVc on an
-    #    integration_tests=false board and refreshes the idea snapshot.
+    #    integration-tests=false board and refreshes the idea snapshot.
     if open_lanes(st):
         st = state = board()
     note_empty_results(st)
@@ -990,7 +1276,7 @@ def tick():
         is_root = code == f"{root_code}{lane}"
         if is_root:
             # lane root (whatever card LANE_CARDS puts first — positional per
-            # ERRORS.md O3, not hardcoded to the researcher): parents done (or
+            # not hardcoded to the researcher): parents done (or
             # lane 1) AND an idea entered.
             if parents and not parents_done(st, parents):
                 continue
@@ -1088,8 +1374,9 @@ def file_coder_revision(state, lane, round_no, findings, max_rounds=2, verdict_c
               f"escalation).\n\nThe review returned the work. Address EXACTLY:\n{findings}\n"
               f"Fix only these, re-stage your files, re-attach, complete with a change summary.\n")
     rbody += _full_verdict_pointer(verdict_card_id)
-    args = ["create", rev_title, "--body", rbody, "--assignee", "coder",
-            "--workspace", f"dir:{WORKDIR}", "--max-runtime", runtime, "--max-retries", "1",
+    args = ["create", rev_title, "--body", rbody,
+            "--assignee", lanes.assignee_for("coder", manifest().get("assignees")),
+            "--workspace", f"dir:{WORKDIR}", "--max-runtime", runtime, "--max-retries", rework_retries(),
             "--idempotency-key", f"{BOARD}-rev-C{lane}-{round_no}",
             "--created-by", "manager", "--json"] + _skill_args("C") + _goal_args("coder", "C")
     rev_id = json.loads(kb(*args))["id"]
@@ -1104,9 +1391,11 @@ def file_coder_revision(state, lane, round_no, findings, max_rounds=2, verdict_c
         rrbody += ("This lane has integration tests, so this re-review is also its final "
                    "review: run the FULL suite — unit and integration — from a clean run, and "
                    "check the staged set and the success criteria as the final review does.\n")
-    rr_args = ["create", rr_title, "--body", rrbody, "--assignee", "reviewer",
+    rr_args = ["create", rr_title, "--body", rrbody,
+               "--assignee", lanes.assignee_for("reviewer",
+                                                manifest().get("assignees")),
                "--parent", rev_id, "--workspace", f"dir:{WORKDIR}", "--max-runtime", runtime,
-               "--max-retries", "1", "--idempotency-key",
+               "--max-retries", rework_retries(), "--idempotency-key",
                f"{BOARD}-rr-C{lane}-r{round_no + 1}", "--created-by", "manager", "--json"]
     rr_id = json.loads(kb(*rr_args))["id"]
     kb("link", rr_id, gate_id)
@@ -1152,6 +1441,12 @@ def clean_work_noise():
     """
     removed = []
     if not os.path.isdir(WORKDIR):
+        return removed
+    # Only a work directory the BOARD owns. With an explicit default-workdir the
+    # tree belongs to another project, and a `__pycache__` there was almost
+    # certainly not put there by this run — deleting someone's files to tidy our
+    # own evidence is not a trade the board gets to make.
+    if not os.path.abspath(WORKDIR).startswith(os.path.abspath(BOARD_DIR) + os.sep):
         return removed
     for root, dirs, files in os.walk(WORKDIR):
         for d in list(dirs):
@@ -1347,9 +1642,14 @@ def notify_deadman(state):
         pass
 
 def preserve_artifacts():
-    """Copy every completed card's provenance patch into the board's own
-    runs/artifacts/<runid>/ so per-task diffs live next to the code commit they
+    """Copy every completed card's provenance patch into this run's own
+    runs/<run-id>/patches/ so per-task diffs live next to the code commit they
     produced — and stay inside the board, like everything else it generates.
+
+    No timestamp of its own: the run directory already names the run, and a second
+    one inside it invited reading the inner name as a different run. Beside
+    artifacts/, not inside it — artifacts/ holds the lane HAND-OFFS the chain stats,
+    and a patch is not one.
 
     Called at each lane's code gate: the lane is finished, its cards are about
     to be archived by the next refile, and this is the last moment the patches
@@ -1357,8 +1657,7 @@ def preserve_artifacts():
     called (found reading, not running — the one finding of that kind here).
     """
     import shutil, glob
-    run_id = datetime.datetime.now().strftime("%Y%m%d-%H%M")
-    out_dir = os.path.join(RUN_DIR, "artifacts", run_id)
+    out_dir = os.path.join(RUN_DIR, "patches")
     os.makedirs(out_dir, exist_ok=True)
     st = board()
     for title, card in st.items():
@@ -1415,6 +1714,13 @@ def write_summary(state):
                   for t, c in state.items() if re.match(r"^G[ipc]\d+:", t)},
         "lanes_with_ideas": [l for l in range(1, board_lane_count(state) + 1)
                              if lane_options(l) is not None],
+        # Where this run's work is staged, and therefore where a gate commit lands.
+        # A run whose work directory is another repository has to say so, or its
+        # record does not describe where the deliverable went.
+        "workdir": os.path.abspath(WORKDIR),
+        "commit_target": commit_target(),
+        "workdir_facts": expected_workdir_facts(),
+        "workdir_drift": sorted(_DRIFT),
     }
     with open(os.path.join(RUN_DIR, "run-summary.json"), "w") as f:
         json.dump(summary, f, indent=2)
@@ -1433,6 +1739,11 @@ _RAW_RE = re.compile(r"^RAW IDEA for lane (\d+)")
 
 # Serve mode holds every lane until a human arms an idea. Set by adopt_and_refile.
 _ARMED = False
+# Idea cards already told they are invalid, keyed by card id -> the text that was
+# wrong. The driver ticks every few seconds and a refusal is sticky (the card stays
+# where the human dropped it), so without this the card collects one identical
+# comment per tick. Re-editing the text re-reports, which is the point.
+_REPORTED = {}
 
 
 def lane_is_armed(lane):
@@ -1510,127 +1821,52 @@ def hermes_kanban_dir():
             return os.path.join(alt, "kanban")
     return os.path.join(home, "kanban")
 
-def snapshot_run_evidence(lanes_n):
-    """Preserve the finishing run's intermediates + DB snapshot under runs/.
+def validate_armed(armed):
+    """Judge what the human just dragged, and say so ON the card. True to proceed.
 
-    Called at refile: the incoming run writes runs/artifacts/lane-<k>/
-    (refined.md, plan.md) afresh — clear_run_state deletes the old ones — so
-    first rotate the finished run's copies into runs/artifacts/<run-id>/ and copy
-    the board DB, which the dispatcher will soon archive away from boards/. runs/ then reads self-contained without
-    drilling into ~/.hermes archived DBs.
+    create-board.sh and start-board.sh validate board.json and every lane-<k>.md
+    before they hand the board over, but an idea typed into a Triage card and
+    dragged to Todo reaches filing without passing either. That is the one path
+    where the author is present, so it is the one where a bad header must not
+    become a log line: the driver ticks on, the card sits there, and a lane that
+    never files looks exactly like a slow board.
+
+    So the same `board_schema` that guards the files guards this, and the finding
+    goes back as a comment on the card the human is looking at. The board refuses to
+    file until the text is fixed — the card stays where it was dropped, so editing
+    it and letting the next tick re-read it is the whole recovery.
     """
-    import shutil
-    run_id = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    out_dir = os.path.join(RUN_DIR, "artifacts", run_id)
-    nothing = True
-    for lane in range(1, lanes_n + 1):
-        lane_dir = os.path.join(RUN_DIR, "artifacts", f"lane-{lane}")
-        if not os.path.isdir(lane_dir):
+    problems = []
+    manifest_problems = board_schema.validate(file_lanes.read_board(BOARD_DIR),
+                                             where="board.json")
+    for lane, text, cid in armed:
+        found = [f"lane {lane}: {p}" for p in
+                 board_schema.validate_idea(text, where=f"lane-{lane}.md")]
+        if not found and not manifest_problems:
             continue
-        for name in sorted(os.listdir(lane_dir)):
-            lp = os.path.join(lane_dir, name)
-            if not os.path.isfile(lp):
-                continue
-            nothing = False
-            dst_dir = os.path.join(out_dir, f"lane-{lane}")
-            os.makedirs(dst_dir, exist_ok=True)
-            dst = os.path.join(dst_dir, name)
-            if os.path.exists(dst):
-                dst = os.path.join(dst_dir, f"{run_id}-{name}")
-            shutil.copy2(lp, dst)
-    # HERMES_HOME leaks a profile dir when run from a profiled shell (observed);
-    # the board DB duplicates under every candidate home — snapshot the one
-    # that actually holds this board's non-empty DB.
-    candidates = [os.path.join(os.path.expanduser("~/.hermes"), "kanban",
-                               "boards", BOARD, "kanban.db")]
-    leaked = os.environ.get("HERMES_HOME")
-    if leaked:
-        candidates.insert(0, os.path.join(leaked, "kanban", "boards", BOARD,
-                                          "kanban.db"))
-    for db in candidates:
-        if os.path.exists(db):
-            nothing = False
-            os.makedirs(out_dir, exist_ok=True)
-            shutil.copy2(db, os.path.join(out_dir, "kanban.db"))
-            break
-    # Per-run card histories + timing snapshots belong to the rotation dir too:
-    # clear_run_state deletes them next, so move (not copy) them now.
-    for name in ("cards", "timing.jsonl", "chain.jsonl"):
-        path = os.path.join(RUN_DIR, name)
-        if not os.path.exists(path):
-            continue
-        nothing = False
-        os.makedirs(out_dir, exist_ok=True)
-        shutil.move(path, os.path.join(out_dir, name))
-    if not nothing:
-        log(f"run evidence archived: {os.path.relpath(out_dir, REPO)}")
-    # Clear the shared staged index of this board's HAND-OFF paths so the new run
-    # starts from a clean index: previous run's staged entries under runs/artifacts
-    # would otherwise be swept into the next run's per-card patches and gate
-    # evidence. Explicit pathspecs — same reason as reset.sh; never parse
-    # `git status --porcelain`.
-    #
-    # `work/` is deliberately NOT touched here (user rule, 2026-09-12). A new idea
-    # may be a FIX of what the previous run built, so the directory it inherits is
-    # that task's input; clearing it is a human decision, taken when the human
-    # knows what the next task is — `mission/reset.sh` wipes it and stages the
-    # removal of the committed paths. A driver that guessed would destroy the
-    # baseline between two runs.
-    board_rel = os.path.relpath(BOARD_DIR, REPO)
-    # runs/artifacts holds the intermediate hand-offs (refined idea, plan): never
-    # committed, so a plain staged restore is right. :(top) prefixes the pathspec
-    # to the repo root — git runs -C WORKDIR, so a plain relative path would
-    # resolve under work/ — and restore --worktree also discards UNTRACKED
-    # worktree copies of staged files.
-    pathspec = f":(top){os.path.join(board_rel, 'runs', 'artifacts')}"
-    staged = git("diff", "--cached", "--name-only", "--", pathspec)
-    if staged.strip():
-        git("restore", "--staged", "--worktree", "--", pathspec)
-        log(f"cleared staged index for {pathspec} "
-            f"({len(staged.splitlines())} files)")
-
-
-
-def clear_run_state(lanes_n):
-    """Start the incoming run with an EMPTY per-run state under runs/.
-
-    The finished run's evidence was just rotated into runs/artifacts/<run-id>/
-    by snapshot_run_evidence; what remains (per-run state) is now stale:
-    per-card JSONLs keyed by card ids the new run won't reuse, the timing
-    snapshot series, the finished run's halt/deadman notices — and the per-lane
-    HAND-OFF files, runs/artifacts/lane-<k>/{refined,plan}.md, which are the
-    incoming run's OUTPUT paths. They used to disappear only as a side effect of
-    the staged-index restore below (workers stage them with a plain `git add`), so a hand-off that
-    was never staged survived: the Gi gate checks the refined idea's STRUCTURE,
-    so the previous run's refined idea passed it and the new plan would be built
-    on the old idea (2026-09-11). Clear them explicitly; gate_action already
-    reports the absence as "waiting: no refined idea at …".
-    driver.log keeps appending (it is the live process's stdout target;
-    truncating it would break the running writer's file handle).
-    """
-    import shutil
-    gone = []
-    for lane in range(1, lanes_n + 1):
-        path = os.path.join(RUN_DIR, "artifacts", f"lane-{lane}")
-        if os.path.isdir(path):
-            shutil.rmtree(path)
-            gone.append(f"artifacts/lane-{lane}/")
-    for name in ("cards", "snapshots", "timing.jsonl", "chain.jsonl",
-                 "run-summary.json", "halt.txt", "deadman.txt"):
-        path = os.path.join(RUN_DIR, name)
-        if os.path.isdir(path):
-            shutil.rmtree(path)
-            gone.append(name + "/")
-        elif os.path.exists(path):
-            os.remove(path)
-            gone.append(name)
-    if gone:
-        log("cleared previous run state: " + ", ".join(gone))
-    # The fresh timing.jsonl must open with a run-boundary marker (the report
-    # splits run segments on it); the _started flag would otherwise suppress a
-    # second boundary for this long-lived process.
-    if hasattr(record_timing, "_started"):
-        del record_timing._started
+        problems.append((cid, lane, found + [f"lane {lane}: {p}"
+                                            for p in manifest_problems]))
+    if not problems:
+        return True
+    for cid, lane, found in problems:
+        log(f"REFUSING refile: lane {lane}'s armed idea does not validate")
+        for p in found:
+            log(f"  - {p}")
+        if _REPORTED.get(cid) == found:
+            continue                      # already said, and nothing changed
+        _REPORTED[cid] = found
+        body = ("This idea does not validate, so the board did not file it:\n\n"
+                + "\n".join(f"  - {p}" for p in found)
+                + "\n\nEdit this card and the driver re-reads it on the next tick. "
+                  "`python3 mission/board_schema.py --schema` lists every option; "
+                  "a header is a whole line, `<!-- option: value -->`, and only the "
+                  f"per-lane options {sorted(board_schema.PER_LANE)} may appear in an "
+                  "idea.")
+        try:
+            kb("comment", cid, body)
+        except Exception as exc:          # a comment must never stop the driver
+            log(f"  (could not comment on {cid}: {exc})")
+    return False
 
 
 def adopt_and_refile(state):
@@ -1644,6 +1880,8 @@ def adopt_and_refile(state):
     armed = armed_ideas(state)
     if not armed:
         return False
+    if not validate_armed(armed):
+        return False
     cfg = file_lanes.read_board(BOARD_DIR)
     lanes_n = cfg.get("lanes", 1)
     over = [l for l, _, _ in armed if l > lanes_n]
@@ -1656,8 +1894,6 @@ def adopt_and_refile(state):
         with open(dst, "w") as f:
             f.write(text.rstrip() + "\n")
         log(f"adopted idea for lane {lane} -> {os.path.relpath(dst, REPO)}")
-    snapshot_run_evidence(lanes_n)
-    clear_run_state(lanes_n)
     # Archive everything, including the armed cards: file_ideas re-creates the
     # triage cards from the files we just wrote, so the loop closes on itself.
     ids = [c["id"] for c in state.values() if c.get("id")]
@@ -1671,16 +1907,30 @@ def adopt_and_refile(state):
         if left:
             log(f"WARNING: {len(left)} card(s) survived the archive: {', '.join(left)} "
                 f"— archive them by hand before arming another idea")
+    # One id for the cards' idempotency keys AND the run directory, so a card in
+    # the engine names the directory holding its evidence.
     key = f"{BOARD}-{datetime.datetime.now():%Y%m%d-%H%M%S}"
+    mint_run(key)
     made = file_lanes.file_board(BOARD, REPO, WORKDIR, lanes_n, key,
-                                 max_runtime=cfg.get("max_runtime"),
-                                 max_retries=cfg.get("max_retries"),
-                                 targets=cfg.get("targets"))
-    file_lanes.file_ideas(BOARD, REPO, BOARD_DIR, lanes_n, key)
+                                 max_runtime=cfg.get("max-runtime"),
+                                 max_retries=cfg.get("max-retries"),
+                                 targets=cfg.get("targets"), run_id=key,
+                                 goal_max_turns=cfg.get("goal-max-turns"),
+                                 assignees=cfg.get("assignees"))
+    file_lanes.file_ideas(BOARD, REPO, BOARD_DIR, lanes_n, key, run_id=key,
+                          workdir=WORKDIR)
     global _ARMED
     _ARMED = True
     _OPENED.clear()
     _TIMED.clear()
+    # Per-RUN state, and a serve-mode driver answers many ideas. _DRIFT carried the
+    # previous run's findings into this run's summary (and so failed it on E17 for
+    # something that happened before it existed); _ANNOUNCED is keyed by card TITLE,
+    # which repeats identically across runs, so a second run's human gate would never
+    # announce itself.
+    _DRIFT.clear()
+    _ANNOUNCED.clear()
+    _REPORTED.clear()
     log(f"refiled {len(made)} cards in {lanes_n} lane(s) — board ready")
     return True
 
@@ -1701,8 +1951,7 @@ def write_timing_report(lane):
     if lane in _TIMED:
         return
     _TIMED.add(lane)
-    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M")
-    dst = os.path.join(RUN_DIR, f"timing-report-lane-{lane}-{stamp}.txt")
+    dst = os.path.join(RUN_DIR, f"timing-report-lane-{lane}.txt")
     r = subprocess.run([sys.executable,
                         os.path.join(REPO, "mission", "timing-report.py"),
                         "--board", BOARD],
@@ -1745,8 +1994,8 @@ def acquire_lock():
     into a manual `rm` before the board can restart, while every other guard says
     the board is free (observed 2026-09-12: start-board.sh's liveness check passed
     and run.py refused, so the restart silently did nothing)."""
-    os.makedirs(RUN_DIR, exist_ok=True)
-    path = os.path.join(RUN_DIR, "driver.lock")
+    os.makedirs(RUNS_ROOT, exist_ok=True)
+    path = os.path.join(RUNS_ROOT, "driver.lock")
     try:
         fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
     except FileExistsError:
@@ -1816,6 +2065,15 @@ def main():
                          "there is no default board")
     require_manifest()
     acquire_lock()
+    # Say which run this process is on. A restart REJOINS the run runs/current
+    # names — it must not mint one, because the cards already filed carry their
+    # run's paths in their bodies and a new directory would leave every hand-off
+    # pointing at a tree nothing writes to.
+    joined = _read_current_run()
+    if joined:
+        log(f"rejoined run {joined}: {os.path.relpath(RUN_DIR, REPO)}")
+    else:
+        log("no run yet — the first armed idea mints one")
     reset_attempt_budgets()
     t0 = time.time()
     write_summary._t0 = t0          # wall_min in the summary is measured from here

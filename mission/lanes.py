@@ -49,8 +49,15 @@ LABELS = {
 REFINED_SECTIONS = ("Problem", "Scope", "Open questions", "Assumptions", "Findings",
                     "Verification recipe", "Prior art", "Success criteria")
 
-# codes dropped when a lane runs without integration tests
+# codes dropped when a lane runs without integration tests: the integration
+# tester AND the final review, because RVc reviews nothing else.
 IT_CODES = ("TI", "RVc")
+
+# codes dropped when a lane runs without unit tests. TW alone: RVa is the CODE
+# review (parented to C, "reviewer verdict") and the only review before the code
+# gate, so dropping it with the tests would leave the gate unguarded. Not a
+# mirror of IT_CODES, and deliberately so.
+UT_CODES = ("TW",)
 
 
 def lane_root_code(integration_tests=True):
@@ -58,8 +65,7 @@ def lane_root_code(integration_tests=True):
 
     Positional, not code-based: open_lane's activation work (snapshot,
     pruning, linking) belongs to whatever card opens the lane, and hardcoding
-    "i" there breaks the day I/Gi are removed or reordered (ERRORS.md O3 — a
-    manual removal worked only because the lane had already been opened).
+    "i" there breaks the day I/Gi are removed or reordered.
     """
     return lane_cards(1, integration_tests)[0]["code"]
 
@@ -68,16 +74,16 @@ def card_title(code, lane):
     return f"{code}{lane}: {LABELS[code]} - lane {lane}"
 
 
-def goal_args(code, enabled=True):
+def goal_args(code, enabled=True, max_turns=None):
     """`--goal` flags for a WORKER card at filing time; [] for gates/reviewers.
 
-    ``enabled=False`` — a board whose manifest sets ``"goal_mode": false`` —
+    ``enabled=False`` — a board whose manifest sets ``"goal": false`` —
     files none of them. The judge gate is a worker self-check that needs a
     REACHABLE auxiliary model; a judge that is reachable but failing returns
     its transport error as the verdict ``continue`` ("not done yet"), which
     makes every goal-mode card uncompletable and the lane unwinnable (the
     harness warns of exactly this wedge and guards only the no-client case —
-    ERRORS O10). Nothing else bounds a worker: agent.max_turns is 80 and the
+    Nothing else bounds a worker: agent.max_turns is 80 and the
     card's runtime ceiling still applies.
 
     Turn-based bounding for the cards that produce work (O5: /loop inside a
@@ -85,7 +91,7 @@ def goal_args(code, enabled=True):
     card: a goal-loop judge can push a card whose success case is BLOCKING
     into completing, silently opening the gate it guards.
 
-    40, not the global goal-loop default 20: a verifier-heavy plan/implementation
+    The default is 40, not the global goal-loop default 20: a verifier-heavy plan/implementation
     card legitimately needs more turns than a /goal chat loop (observed: a P1
     attempt died at 20/20 healthy, then finished in 51s with a fresh attempt).
     agent.max_turns (80) is untouched — goal-mode workers measure against the
@@ -94,7 +100,8 @@ def goal_args(code, enabled=True):
     c = code.lower()
     if not enabled or c.startswith("g") or c.startswith("rv"):
         return []
-    return ["--goal", "--goal-max-turns", "40"]
+    turns = max_turns or board_schema.OPTIONS["goal-max-turns"][1]
+    return ["--goal", "--goal-max-turns", str(turns)]
 
 
 def skill_for(code):
@@ -105,10 +112,25 @@ def skill_for(code):
     raise KeyError(code)
 
 
-def lane_cards(lane, integration_tests=True):
-    """The card graph for one lane, in filing order (parents before children)."""
+def assignee_for(role, assignees=None):
+    """The hermes profile that works a role — the board's `assignees` remapping if
+    it names this role, else the role's own name.
+
+    One lookup, so a board that renames its tester renames it everywhere: filing,
+    revision cards and the reviewer-feed retry rule all come through here.
+    """
+    return (assignees or {}).get(role, role)
+
+
+def lane_cards(lane, integration_tests=True, unit_tests=True, assignees=None):
+    """The card graph for one lane, in filing order (parents before children).
+
+    A dropped card's child is reparented by the `prev_id` walk below, so
+    `unit-tests: false` hands C straight to the plan gate.
+    """
     rows = [r for r in LANE_CARDS
-            if integration_tests or r[0] not in IT_CODES]
+            if (integration_tests or r[0] not in IT_CODES)
+            and (unit_tests or r[0] not in UT_CODES)]
     cards = []
     prev_id = None
     for code, body, assignee, _parent_code, skill in rows:
@@ -117,7 +139,8 @@ def lane_cards(lane, integration_tests=True):
             "id": f"{code}{lane}",
             "title": card_title(code, lane),
             "body": body,
-            "assignee": assignee,
+            "role": assignee,
+            "assignee": assignee_for(assignee, assignees),
             "parent": prev_id,
             "skill": skill,
         })
@@ -128,29 +151,38 @@ def lane_cards(lane, integration_tests=True):
 import os
 import re
 
-HEADER_KEYS = frozenset({"integration-tests", "auto-gates"})
+import board_schema
+
+# The option set — and the per-lane subset an idea header may carry — is declared
+# once, in board_schema. A second copy here is what let the manifest and the
+# header spell the same option two different ways.
+HEADER_KEYS = board_schema.HEADER_KEYS
 
 _HEADER_RE = re.compile(r"^<!--\s*([A-Za-z][A-Za-z0-9-]*)\s*:\s*(.*?)\s*-->\s*$")
 _BOOL = {"true": True, "false": False}
 
 
 def parse_idea(text):
-    """Split an idea into (headers, body).
+    """Split an idea into (headers, body), or raise ValueError naming every fault.
 
-    A header is a whole line of the form `<!-- key: value -->`. An HTML
-    comment without a `key:` shape is ordinary prose and left in the body.
-    An unknown key is an error: a typo must fail loudly, never silently
-    produce the wrong lane shape.
+    `board_schema.validate_headers` is the single authority on what a header is and
+    whether its value is usable: it judges a line that merely LOOKS like a header
+    (opens `<!--`, carries a `key:`) rather than only one matching the strict key
+    class below, so `<!-- auto_gates: true -->` is an error instead of prose, and it
+    checks the value against the same option table `board.json` is checked against.
+    Extraction stays here because the body is what the caller needs back. The
+    idea's PROSE is not this function's business — `board_schema.validate_idea`
+    judges that at the doors, where a missing success criterion can still be fixed
+    by the person who wrote it.
     """
+    problems = board_schema.validate_headers(text)
+    if problems:
+        raise ValueError("; ".join(problems))
     headers, body_lines = {}, []
     for line in text.splitlines():
         m = _HEADER_RE.match(line.strip())
         if m:
-            key, value = m.group(1).lower(), m.group(2)
-            if key not in HEADER_KEYS:
-                raise ValueError(
-                    f"unknown idea header {key!r} (known: {sorted(HEADER_KEYS)})")
-            headers[key] = value
+            headers[m.group(1).lower()] = m.group(2)
             continue
         body_lines.append(line)
     return headers, "\n".join(body_lines).strip() + "\n"
@@ -169,7 +201,7 @@ def _board_default(board_defaults, key, lane, fallback):
     """One board default for THIS lane.
 
     A scalar applies to every lane. A LIST is per-lane, indexed from lane 1, so
-    `"integration_tests": [false, true]` reads as "lane 1 without, lane 2 with"
+    `"integration-tests": [false, true]` reads as "lane 1 without, lane 2 with"
     in the one file that describes the board. A list whose length does not match
     the board's lanes is an error, not a shrug: a missing entry would otherwise
     become a silent default, and the lane that quietly grew or lost its
@@ -192,14 +224,21 @@ def _board_default(board_defaults, key, lane, fallback):
 
 
 def resolve_lane_options(board_defaults, headers, lane=1):
-    """template default -> board default (scalar or per-lane list) -> idea header."""
-    it = _board_default(board_defaults, "integration_tests", lane, True)
-    ag = _board_default(board_defaults, "auto_gates", lane, False)
-    if "integration-tests" in headers:
-        it = _as_bool(headers["integration-tests"], it)
-    if "auto-gates" in headers:
-        ag = _as_bool(headers["auto-gates"], ag)
-    return {"integration_tests": it, "auto_gates": ag}
+    """schema default -> board default (scalar or per-lane list) -> idea header.
+
+    One key per option, spelled as `board_schema` spells it, from the manifest
+    through the header to this dict — so there is one thing to grep for and no
+    translation layer to forget. Every per-lane option resolves the same way;
+    nothing here names them individually.
+    """
+    opts = {}
+    for key in sorted(board_schema.PER_LANE):
+        default = board_schema.OPTIONS[key][1]
+        value = _board_default(board_defaults, key, lane, default)
+        if key in headers:
+            value = _as_bool(headers[key], value)
+        opts[key] = value
+    return opts
 
 
 def read_idea(path):

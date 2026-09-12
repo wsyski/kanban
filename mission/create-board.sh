@@ -34,7 +34,8 @@ same set:
     {
       "slug": "my-board",              # optional; defaults to the dir name
       "name": "My Board",
-      "default-workdir": "/path/to/repo",   # where lanes stage; default: this repo
+      "default-workdir": "/abs/path/to/repo",  # ALWAYS absolute; omit it and the
+                                               # board stages in its own work/
       "lanes": 2,
       "unit-tests": true,
       "integration-tests": [false, true],
@@ -42,8 +43,19 @@ same set:
       "goal": false,
       "max-runtime": "60m",
       "max-retries": 1,
+      "rework-max-retries": 1,                   # revision cards, separately
+      "goal-max-turns": 40,
+      "timeout-min": 240,                        # the driver's own cap
+      "assignees": {"reviewer": "senior"},       # optional: role -> hermes profile
       "targets": ["~/.hermes/profiles/trader"],  # optional: write roots outside it
     }
+
+`default-workdir` is where every card stages and the only tree the driver runs git
+in. It must be an ABSOLUTE path: three different current directories resolve it —
+this script's, the driver's, and each card's, which runs inside it — so a relative
+path is a different tree depending on who asks, and `~` is not expanded at all.
+Omit it and the board builds in `boards/<slug>/work/`, which is what most boards
+want.
 
 An option that reaches Hermes keeps HERMES's spelling of its name — `max-runtime`
 because the flag is `--max-runtime`, `name` because it is `--name`, `goal` because
@@ -51,11 +63,16 @@ it is `--goal`, `default-workdir` because it is `--default-workdir`. A name
 invented for a parameter Hermes already named is a name nobody can grep for. The
 template's own options take the same hyphenated convention.
 
+`assignees` remaps a role to a different hermes profile for this board; a role it
+does not name keeps the card graph's own. The roles are researcher, manager, coder,
+tester, reviewer and human-gate.
+
 `max-runtime` and `max-retries` are the per-card worker runtime ceiling
 ("45m", "90m", "1h30m", …) and retry budget, applied to every card the board
 files — per card, not shared. Omitted means the defaults, 60m and 1. Cards whose
 next step is a reviewer card get 3 retries regardless of `max-retries` (a REJECT →
-revision cycle is an attempt; failing there is judgment, not a wedged worker).
+revision cycle is an attempt; failing there is judgment, not a wedged worker), and
+revision cards themselves take `rework-max-retries`.
 
 `targets` lists extra write roots outside the work directory — a lane that
 installs into a Hermes profile, say. Cards may write there and reviewers count
@@ -139,37 +156,26 @@ CFG=$(python3 - "$REPO" "$BOARD_DIR" "$SLUG" "$TITLE" <<'PY'
 import json, os, shlex, sys
 repo, board_dir, slug, title = sys.argv[1:5]
 sys.path.insert(0, os.path.join(repo, "mission"))
-from file_lanes import BOARD_KEYS
 cfg = {}
 if board_dir:
     with open(os.path.join(board_dir, "board.json")) as f:
         cfg = json.load(f)
     slug = cfg.get("slug") or os.path.basename(board_dir)
-    title = cfg.get("title") or slug
+    title = cfg.get("name") or slug
     lanes = cfg.get("lanes", 1)
 else:
     board_dir = os.path.join(repo, "boards", slug)
     lanes = 2                       # parser default: an empty two-lane board
 # A board's work is board output: it belongs inside the board, not at the repo
-# root, so `rm -rf boards/<slug>/work` is a clean start and nothing a board
-# generates leaks into the template. An explicit workdir still points anywhere.
-workdir = os.path.abspath(cfg.get("workdir") or os.path.join(board_dir, "work"))
-if not isinstance(lanes, int) or lanes < 1:
-    sys.exit("board.json: 'lanes' must be a positive integer")
-for k, v in (("integration_tests", cfg.get("integration_tests", False)),
-             ("auto_gates", cfg.get("auto_gates", False))):
-    if isinstance(v, list) and len(v) != lanes:
-        sys.exit(f"board.json: '{k}' has {len(v)} values for {lanes} lane(s)")
-
-# A typo in a key is a typo in the board's shape — the value you meant to set
-# silently keeps its default, and you find out from the cards. Same reasoning as
-# lanes.parse_idea rejecting an unknown idea header.
-unknown = sorted(set(cfg) - BOARD_KEYS)
-if unknown:
-    sys.exit(f"board.json: unknown key(s) {unknown} (known: {sorted(BOARD_KEYS)})")
+# root, so nothing a board generates leaks into the template. An explicit workdir still points anywhere.
+# board_schema requires an explicit default-workdir to be absolute, so abspath
+# here only normalises the default (the board's own work/).
+workdir = os.path.abspath(cfg.get("default-workdir")
+                          or os.path.join(board_dir, "work"))
+# Keys, types, values and the per-lane array lengths were all settled by
+# board_schema above, before anything existed — this block only reads what it
+# validated.
 targets = cfg.get("targets", [])
-if not isinstance(targets, list) or not all(isinstance(t, str) and t for t in targets):
-    sys.exit("board.json: 'targets' must be a list of paths")
 
 # An idea file above the lane count is filed by nothing and reported by nothing.
 # A silently dropped lane is exactly the failure the array-length check above
@@ -226,7 +232,7 @@ echo "board '$SLUG' created (workdir $WORKDIR)"
 
 mkdir -p "$BOARD_DIR/runs/snapshots" "$WORKDIR"
 if [ ! -f "$BOARD_DIR/board.json" ]; then
-  printf '{\n  "title": %s,\n  "lanes": %s,\n  "integration_tests": false,\n  "auto_gates": false\n}\n' \
+  printf '{\n  "name": %s,\n  "lanes": %s,\n  "integration-tests": false,\n  "auto-gates": false\n}\n' \
     "\"$TITLE\"" "$LANES" > "$BOARD_DIR/board.json"
   echo "wrote $BOARD_DIR/board.json"
 fi
@@ -240,17 +246,30 @@ import file_lanes
 slug, workdir, lanes_n, board_dir = sys.argv[1:5]
 lanes_n = int(lanes_n)
 repo = os.getcwd()
-key = f"{slug}-{datetime.datetime.now():%Y%m%d-%H%M}"
+key = f"{slug}-{datetime.datetime.now():%Y%m%d-%H%M%S}"
 cfg = file_lanes._board_cfg(board_dir)
+# Cards carry their run's paths in their bodies, so a filing belongs to a run —
+# this one, minted here and pointed at by runs/current. The driver mints a fresh
+# one each time an idea is armed; nothing ever deletes an older one.
+run_dir = file_lanes.run_dir(repo, slug, key)
+os.makedirs(run_dir, exist_ok=True)
+current = os.path.join(os.path.dirname(run_dir), "current")
+tmp = current + ".tmp"
+with open(tmp, "w") as f:
+    f.write(key + "\n")
+os.replace(tmp, current)
 made = file_lanes.file_board(slug, repo, workdir, lanes_n, key,
-                         max_runtime=cfg.get("max_runtime"),
-                         max_retries=cfg.get("max_retries"),
-                         targets=cfg.get("targets"),
+                         max_runtime=cfg.get("max-runtime"),
+                         max_retries=cfg.get("max-retries"),
+                         targets=cfg.get("targets"), run_id=key,
+                         goal_max_turns=cfg.get("goal-max-turns"),
+                         assignees=cfg.get("assignees"),
                          # filing is where a card's goal_mode is decided
-                         goal_mode=cfg.get("goal_mode"))
+                         goal_mode=cfg.get("goal"))
 print(f"filed {len(made)} cards in {lanes_n} lane(s), all parked "
-      f"(max-runtime: {cfg.get('max_runtime') or file_lanes.DEFAULT_MAX_RUNTIME})")
-ideas_filed = file_lanes.file_ideas(slug, repo, board_dir, lanes_n, key)
+      f"(max-runtime: {cfg.get('max-runtime') or file_lanes.DEFAULT_MAX_RUNTIME})")
+ideas_filed = file_lanes.file_ideas(slug, repo, board_dir, lanes_n, key, run_id=key,
+                                    workdir=workdir)
 if ideas_filed:
     print(f"raw ideas in triage: lane(s) {', '.join(map(str, sorted(ideas_filed)))}")
 else:

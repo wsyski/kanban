@@ -18,9 +18,13 @@ def _state(root_status="ready"):
 
 def _board_env(monkeypatch, tmp_path, calls, it=False):
     monkeypatch.setattr(run, "kb", lambda *a, **k: calls.append(a) or "")
-    # clear_lane_outputs runs git -C WORKDIR; the stub keeps the test hermetic
+    # open_lane runs git -C WORKDIR; the stub keeps the test hermetic
     monkeypatch.setattr(run, "git", lambda *a: "")
     monkeypatch.setattr(run, "REPO", str(tmp_path))
+    # A board-owned work directory: BOARD_DIR is its parent, which is what makes
+    # the cache sweep this board's business (an external tree is another
+    # project's, and the sweep leaves it alone).
+    monkeypatch.setattr(run, "BOARD_DIR", str(tmp_path))
     monkeypatch.setattr(run, "WORKDIR", str(tmp_path / "work"))
     # tick() also writes the document chain; without this the suite drops
     # chain.jsonl/halt.txt into the repo's boards/runs (BOARD is "" at import)
@@ -30,7 +34,7 @@ def _board_env(monkeypatch, tmp_path, calls, it=False):
     monkeypatch.setattr(run, "halt_if_exhausted", lambda st: False)
     monkeypatch.setattr(run, "rework_rounds", lambda st: None)
     monkeypatch.setattr(run, "lane_options",
-                        lambda lane: {"integration_tests": it, "auto_gates": False,
+                        lambda lane: {"integration-tests": it, "unit-tests": True, "auto-gates": False,
                                       "idea": "## Idea 1: is_even\n"})
     monkeypatch.setattr(run, "IDEAS_DIR", str(tmp_path))
     monkeypatch.setattr(run, "SNAP_DIR", str(tmp_path / "snapshots"))
@@ -43,7 +47,7 @@ def _board_env(monkeypatch, tmp_path, calls, it=False):
 def test_the_lane_is_prepared_before_its_root_is_released(monkeypatch, tmp_path):
     """--once must not release the root from the shell: the dispatcher claims a
     ready card immediately, and the researcher then starts before open_lane has
-    written the <IDEA> snapshot its body reads (ERRORS #36)."""
+    written the <IDEA> snapshot its body reads."""
     calls = []
     _board_env(monkeypatch, tmp_path, calls)
     monkeypatch.setattr(run, "board", lambda: _state(root_status="blocked"))
@@ -110,26 +114,63 @@ def test_a_cache_in_work_is_not_a_deliverable(monkeypatch, tmp_path):
     assert len(removed) == 2, removed
 
 
-def test_nothing_under_runs_stays_in_the_index(monkeypatch, tmp_path):
-    """unstage_run_paths() restores the board's runs/ paths, and stays quiet
-    when the index is already clean."""
+def test_an_external_work_directory_is_never_swept(monkeypatch, tmp_path):
+    """With an explicit default-workdir the tree belongs to another project, and a
+    cache there was almost certainly not put there by this run. Deleting someone
+    else's files to tidy our own evidence is not a trade the board gets to make."""
     calls = []
     _board_env(monkeypatch, tmp_path, calls)
-    staged = "boards/b/runs/artifacts/lane-1/plan.md"
+    board = tmp_path / "boards" / "b"
+    board.mkdir(parents=True)
+    outside = tmp_path / "someone-elses-repo"
+    (outside / "__pycache__").mkdir(parents=True)
+    monkeypatch.setattr(run, "BOARD_DIR", str(board))
+    monkeypatch.setattr(run, "WORKDIR", str(outside))
+    assert run.clean_work_noise() == []
+    assert (outside / "__pycache__").exists()
 
-    def git(*a):
-        calls.append(a)
-        return staged if a[:2] == ("diff", "--cached") else ""
 
-    monkeypatch.setattr(run, "git", git)
+def test_nothing_under_runs_stays_in_the_index(monkeypatch, tmp_path):
+    """The sweep runs in the KANBAN repo, where runs/ lives — not in WORKDIR, which
+    for an external default-workdir is a different repository where the pathspec means
+    nothing. It also covers the whole runs/ tree, because no run directory is ever
+    deleted and an earlier run's staged leftover still reaches every later diff."""
+    import subprocess
+    repo = tmp_path / "kanban"
+    runs = repo / "boards" / "b" / "runs"
+    (runs / "r-OLD" / "artifacts" / "lane-1").mkdir(parents=True)
+    (runs / "r-NOW").mkdir()
+    (runs / "r-OLD" / "artifacts" / "lane-1" / "plan.md").write_text("a hand-off\n")
+    subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+    (repo / "seed.txt").write_text("seed\n")
+    subprocess.run(["git", "-C", str(repo), "add", "seed.txt"], check=True)
+    subprocess.run(["git", "-C", str(repo), "-c", "user.email=t@t", "-c",
+                    "user.name=t", "commit", "-qm", "seed"], check=True)
+    subprocess.run(["git", "-C", str(repo), "add", "-f",
+                    "boards/b/runs/r-OLD/artifacts/lane-1/plan.md"], check=True)
+    # an external work directory: its own repo, and not where runs/ lives
+    ext = tmp_path / "ext"
+    ext.mkdir()
+    subprocess.run(["git", "init", "-q", str(ext)], check=True)
+
+    logged = []
+    monkeypatch.setattr(run, "REPO", str(repo))
+    monkeypatch.setattr(run, "RUNS_ROOT", str(runs))
+    monkeypatch.setattr(run, "RUN_DIR", str(runs / "r-NOW"))
+    monkeypatch.setattr(run, "WORKDIR", str(ext))
+    monkeypatch.setattr(run, "log", lambda m: logged.append(m))
+
     run.unstage_run_paths()
-    rel = os.path.relpath(run.RUN_DIR, run.REPO)
-    assert ("restore", "--staged", "--", rel) in calls, calls
+    staged = subprocess.run(["git", "-C", str(repo), "diff", "--cached",
+                             "--name-only"], capture_output=True, text=True).stdout
+    assert "plan.md" not in staged, "an earlier run's staged hand-off must be swept"
+    assert logged and "unstaged" in logged[0]
+    # the file itself stays: unstaging is not deleting
+    assert (runs / "r-OLD" / "artifacts" / "lane-1" / "plan.md").exists()
 
-    calls.clear()
-    monkeypatch.setattr(run, "git", lambda *a: calls.append(a) or "")
+    logged.clear()
     run.unstage_run_paths()
-    assert not [a for a in calls if a[0] == "restore"]
+    assert logged == [], "quiet when the index is already clean"
 
 
 def test_an_assigned_card_escalated_to_triage_halts_the_driver(monkeypatch, tmp_path):
@@ -186,3 +227,77 @@ def test_a_held_gate_reports_once_not_once_per_tick(monkeypatch, tmp_path, capsy
     run.tick()
     assert capsys.readouterr().out.count("waiting: something else") == 1
     run._OPENED.clear()
+
+
+def test_each_lane_reads_the_tree_as_IT_found_it(monkeypatch, tmp_path):
+    """The defect this fixes: every lane's cards are filed in one moment, so a
+    work-directory reading rendered into the body at filing time tells lane 2 what
+    the tree looked like BEFORE lane 1 built anything in it. Writing it when the
+    lane opens is the same guarantee the idea snapshot already has."""
+    import file_lanes
+    calls = []
+    _board_env(monkeypatch, tmp_path, calls)
+    snaps = tmp_path / "snapshots"
+    work = tmp_path / "work"
+    work.mkdir()
+    monkeypatch.setattr(run, "SNAP_DIR", str(snaps))
+
+    def lane_state(lane):
+        st = {lanes.card_title(c, lane): {"id": f"id-{c}{lane}", "status": "blocked",
+                                         "title": lanes.card_title(c, lane)}
+              for c in ("Gi", "P", "RVp", "Gp", "TW", "C", "RVa", "TI", "RVc", "Gc")}
+        st[lanes.card_title("I", lane)] = {"id": f"id-I{lane}", "status": "ready",
+                                          "title": lanes.card_title("I", lane)}
+        return st
+
+    run.open_lane(lane_state(1), 1)
+    lane1 = (snaps / "lane-1-workdir-at-open.md").read_text()
+    assert "empty" in lane1
+
+    (work / "built-by-lane-1.py").write_text("the first lane's product\n")
+    run._OPENED.clear()
+    run.open_lane(lane_state(2), 2)
+    lane2 = (snaps / "lane-2-workdir-at-open.md").read_text()
+
+    assert "NOT empty" in lane2, "lane 2 must see what lane 1 built"
+    assert "empty" in lane1 and "NOT empty" not in lane1, "lane 1's reading is unchanged"
+
+
+def test_the_reading_is_written_before_the_root_is_released(monkeypatch, tmp_path):
+    """Same ordering the idea snapshot has: the root card's body points at this
+    file, so a worker claimed the instant the root goes ready must not find it
+    missing or half-written."""
+    calls = []
+    _board_env(monkeypatch, tmp_path, calls)
+    monkeypatch.setattr(run, "board", lambda: _state(root_status="blocked"))
+    (tmp_path / "work").mkdir()
+    monkeypatch.setattr(run, "SNAP_DIR", str(tmp_path / "snapshots"))
+    reading = tmp_path / "snapshots" / "lane-1-workdir-at-open.md"
+    seen = []
+
+    def kb(*a, **k):
+        calls.append(a)
+        if a and a[0] == "unblock" and a[1] == "id-I":
+            seen.append(reading.exists())
+        return ""
+
+    monkeypatch.setattr(run, "kb", kb)
+    run.tick()
+    assert seen and all(seen), "root released before its work-directory reading existed"
+
+
+def test_the_reading_says_when_it_was_taken_and_that_it_is_a_snapshot(monkeypatch, tmp_path):
+    """Within a lane the tree changes — the coder builds, the tester adds files — so
+    the reviewer reads the same file the researcher did. It is correct for planning
+    and wrong as a description of the tree now, and it has to say so itself: the
+    filename carries `-at-open` and the file carries its timestamp."""
+    calls = []
+    _board_env(monkeypatch, tmp_path, calls)
+    snaps = tmp_path / "snapshots"
+    (tmp_path / "work").mkdir()
+    monkeypatch.setattr(run, "SNAP_DIR", str(snaps))
+    run.open_lane(_state(), 1)
+    text = (snaps / "lane-1-workdir-at-open.md").read_text()
+    assert "SNAPSHOT, not a live view" in text
+    assert "git status" in text, "it must say how to get the current state"
+    assert "Taken 20" in text, "and when it was taken"
