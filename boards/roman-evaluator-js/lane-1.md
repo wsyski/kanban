@@ -1,4 +1,4 @@
-## Idea 1: roman-evaluator
+## Idea 1: Roman number evaluator - Javascript
 
 Build a small browser page, entry point `roman-evaluator.html` at the root of
 the board's work directory, implementing a roman number evaluator.
