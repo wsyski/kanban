@@ -22,10 +22,19 @@ nothing about it lives under mission/:
 
     boards/<slug>/
         board.json          the manifest — see below
-        lane-1.md           the idea for lane 1
-        lane-2.md           the idea for lane 2
-        runs/artifacts/lane-<k>/   intermediates: refined.md, plan.md
-        runs/snapshots/     driver-written idea snapshots, gitignored
+        README.md           what this board's ideas require
+        lane-<k>.md         the idea for lane <k> — one file per lane
+        work/               what a run BUILDS: the board's product, tracked
+        runs/               the DRIVER's own state — driver.log, driver.lock,
+                            and `current`, a file naming the live run
+        runs/<run-id>/      ONE armed idea's run, minted when it is armed and
+                            never touched again: copies of the idea and of the
+                            work directory as the lane found them under
+                            snapshots/, the hand-offs (refined.md, plan.md)
+                            under artifacts/lane-<k>/, plus cards/,
+                            timing.jsonl, chain.jsonl, run-summary.json,
+                            patches/ and scratch/<card-id>/ — run state, never
+                            staged, never committed
 
 Every board.json is validated against the schema before the board is created.
 `python3 mission/board_schema.py --schema` prints the option table; this is the
@@ -69,10 +78,13 @@ tester, reviewer and human-gate.
 
 `max-runtime` and `max-retries` are the per-card worker runtime ceiling
 ("45m", "90m", "1h30m", …) and retry budget, applied to every card the board
-files — per card, not shared. Omitted means the defaults, 60m and 1. Cards whose
-next step is a reviewer card get 3 retries regardless of `max-retries` (a REJECT →
-revision cycle is an attempt; failing there is judgment, not a wedged worker), and
-revision cards themselves take `rework-max-retries`.
+files — per card, not shared. Omitted means the defaults, 60m and 1.
+
+`max-retries` and `rework-max-retries` must be 1. A failure — a timeout, a crash,
+a spawn that never started — is FINAL: the dispatcher blocks the card on it and
+the driver halts the board, and the only retry this board recognises is a REVIEW
+that failed, which asks for one by filing a revision card. Revision cards take
+`rework-max-retries` for the same reason.
 
 `targets` lists extra write roots outside the work directory — a lane that
 installs into a Hermes profile, say. Cards may write there and reviewers count
@@ -230,7 +242,7 @@ fi
 hermes kanban boards create "$SLUG" --name "$TITLE" --default-workdir "$WORKDIR"   # flags verified: hermes kanban boards create --help
 echo "board '$SLUG' created (workdir $WORKDIR)"
 
-mkdir -p "$BOARD_DIR/runs/snapshots" "$WORKDIR"
+mkdir -p "$WORKDIR"
 if [ ! -f "$BOARD_DIR/board.json" ]; then
   printf '{\n  "name": %s,\n  "lanes": %s,\n  "integration-tests": false,\n  "auto-gates": false\n}\n' \
     "\"$TITLE\"" "$LANES" > "$BOARD_DIR/board.json"

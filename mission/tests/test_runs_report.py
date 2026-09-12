@@ -74,6 +74,31 @@ def test_a_flat_layout_is_reported_as_the_one_run_it_is(tmp_path):
     assert len(rows) == 1 and rows[0]["flat"] is True
 
 
+def test_flat_leftovers_are_counted_beside_the_run_directories(tmp_path):
+    """A board that has run both ways keeps the old flat state in runs/ itself
+    (`chain.jsonl`, `cards/`, the pre-per-run `scratch/`). The report exists to make
+    this tree's growth visible, and counting only the run directories hid an older
+    run's evidence entirely — the board's own runs/ still holds ~220K of it."""
+    runs = tmp_path / "runs"
+    (runs / "r1" / "scratch" / "c").mkdir(parents=True)
+    (runs / "r1" / "scratch" / "c" / "patch.diff").write_text("x" * 100)
+    (runs / "cards").mkdir()
+    (runs / "cards" / "t_a.jsonl").write_text("y" * 400)
+    (runs / "chain.jsonl").write_text("z" * 100)
+    (runs / "driver.log").write_text("the driver's own log, never a run's\n")
+    (runs / "current").write_text("r1\n")
+    rows, live = rr.runs_in(str(runs))
+    names = {r["run"] for r in rows}
+    assert names == {"r1", "(flat leftovers — before per-run directories)"}, names
+    assert live == "r1"
+    left = [r for r in rows if r.get("flat")][0]
+    assert left["bytes"] >= 500, left
+    assert left["scratch_bytes"] == 0, "the old flat scratch/ is not this run's"
+    assert str(runs / "driver.log") not in left["path"]
+    assert str(runs / "current") not in left["path"]
+    assert str(runs / "r1") not in left["path"], "a run directory is reported on its own"
+
+
 def test_a_flat_layout_is_never_offered_for_deletion(tmp_path):
     """runs/ itself holds the driver's log and the current pointer, so the `rm` that
     would drop that row drops those too."""

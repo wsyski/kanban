@@ -189,7 +189,12 @@ def test_file_ideas_carries_the_raw_text_and_points_at_the_snapshot(monkeypatch,
     file_lanes.file_ideas("b", "/repo", str(tmp_path), 1, "k")
     body = fake.created()[0][fake.created()[0].index("--body") + 1]
     assert "Build the CLI." in body
-    assert "/repo/boards/b/runs/snapshots/lane-1.md" in body
+    # The run directory is minted when an idea is ARMED, so the card names the runs
+    # root and the file under it, never the id of the run that filed it (#31 class:
+    # a path a reader would trust and a worker would never write to).
+    assert "snapshots/lane-1.md" in body
+    assert "/repo/boards/b/runs" in body
+    assert "runs/k/snapshots" not in body
 
 
 def test_file_ideas_files_nothing_on_an_empty_generic_board(monkeypatch, tmp_path):

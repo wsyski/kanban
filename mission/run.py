@@ -97,6 +97,12 @@ def mint_run(run_id, armed):
     with open(tmp, "w") as f:
         f.write(run_id + "\n")
     os.replace(tmp, CURRENT_RUN)          # atomic: a reader sees one id or the other
+    # record_timing writes its run-boundary marker once per PROCESS, and a serve-mode
+    # driver answers many ideas: without this the second run's timing.jsonl opened
+    # with no boundary, and the report's "latest segment" split had nothing to split
+    # on. One run, one marker.
+    if hasattr(record_timing, "_started"):
+        del record_timing._started
     log(f"RUN {run_id}: {os.path.relpath(path, REPO)}")
     return path
 
@@ -154,12 +160,21 @@ def lane_graph(state):
         prev = None
         for c in present:
             parents = [prev] if prev else ([f"Gc{lane - 1}"] if lane > 1 else [])
-            # Rework cards gate the review ONLY once a round has been filed.
+            # Rework cards gate the review ONLY once a round has been filed, and the
+            # parent names the NEWEST round: a family grows (r2, r3 …), and naming
+            # the first one left a gate satisfied while its own newest round was
+            # still running — the engine then refused the completion, every tick.
             # Listing them unconditionally stalled every lane that passed plan
             # review first time: parents_done() treats a missing parent as
-            # not-done, so RVp waited forever on a P<k>-rev that never existed.
-            rework = [pfx for pfx in (f"P{lane}-rev", f"RVp{lane}-r")
-                      if title_of_prefix(state, pfx)[1] is not None]
+            # not-done, so RVp waited forever on a P<lane>-rev that never existed.
+            def newest_round(pfx):
+                """The newest round of a family as a CODE prefix ('RVp1-r3'), which
+                title_of_prefix resolves at the ':' boundary — a full title carries
+                no trailing boundary and would never match."""
+                t = newest_of_prefix(state, pfx)[0]
+                return t.split(":")[0] if t else None
+            rework = [p for p in (newest_round(f"P{lane}-rev"),
+                                  newest_round(f"RVp{lane}-r")) if p]
             if c["code"] == "RVp":
                 parents += rework
             if c["code"] == "Gp":
@@ -171,8 +186,8 @@ def lane_graph(state):
             # tick()'s comment claimed the parents did. Linked now, for RVa and
             # Gc alike; Gc keeps its positional parent (RVa, or RVc on a lane
             # with integration tests) and the round is added to it.
-            code_rework = [pfx for pfx in (f"C{lane}-rev", f"RVa{lane}-r")
-                           if title_of_prefix(state, pfx)[1] is not None]
+            code_rework = [p for p in (newest_round(f"C{lane}-rev"),
+                                       newest_round(f"RVa{lane}-r")) if p]
             if c["code"] in ("RVa", "Gc"):
                 parents += code_rework
             rows.append((c["title"], parents, c["code"].lower(), lane))
@@ -252,6 +267,29 @@ def title_of_prefix(state, prefix):
         if nxt in (":", "-") or (nxt.isdigit() and not ends_digit):
             return t, card
     return None, None
+
+def newest_of_prefix(state, prefix):
+    """(title, card) of the NEWEST card in a round family ('RVp1-r', 'P1-rev').
+
+    Not title_of_prefix: that returns the FIRST card of the family, and a family
+    grows. A gate whose parent list named round 2 was satisfied while round 3 was
+    still running, so the driver went to complete a gate the engine refuses —
+    `cannot complete ... (unknown id or terminal state)` every tick, on a lane that
+    had merely sent a plan back (live, 2026-09-12). Round numbers run upward in the
+    code's tail: `RVp1-r2`, `P1-rev-1`.
+    """
+    best, best_n = (None, None), 0
+    for t, card in state.items():
+        if not t.startswith(prefix):
+            continue
+        tail = t[len(prefix):].lstrip("-r")
+        if not tail[:1].isdigit():
+            continue
+        n = int(re.match(r"\d+", tail).group())
+        if n > best_n:
+            best, best_n = (t, card), n
+    return best
+
 
 def parents_done(state, prefixes):
     for p in prefixes:
@@ -504,6 +542,35 @@ def workdir_facts():
             "head": git_at(WORKDIR, "rev-parse", "HEAD").strip() or ""}
 
 
+def write_workdir_state(lane, when="open"):
+    """One reading of WORKDIR, written into the run directory.
+
+    Two of them per lane, and they answer different questions: `open` is what the
+    lane found — the input the plan is written against — and `gate` is what the
+    code gate is looking at, taken after clean_work_noise(). Between them the tree
+    may have moved (a worker, or the human who owns the directory), and a gate whose
+    record is the OPEN reading then reports on a tree that no longer exists.
+
+    `-at-<when>` in the name on purpose, and in SNAP_DIR: the chain must not read
+    either as a hand-off document.
+    """
+    wd_state = file_lanes.workdir_state(WORKDIR, BOARD_DIR)
+    path = os.path.join(SNAP_DIR, f"lane-{lane}-workdir-at-{when}.md")
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        f.write(
+            f"# Work directory as lane {lane} found it ({when})\n\n"
+            f"Taken {datetime.datetime.now().isoformat(timespec='seconds')}, when "
+            f"lane {lane} {'opened' if when == 'open' else 'reached its code gate'}. "
+            f"This is a SNAPSHOT, not a live view: the tree changes as the lane "
+            f"works, so for the current state run `git status` in the directory "
+            f"itself. Nothing in it is promised to survive — the lane may change "
+            f"what it finds.\n\n"
+            f"{os.path.abspath(WORKDIR)}\n\n{wd_state}\n")
+    os.replace(tmp, path)
+    return wd_state, path
+
+
 def record_workdir_facts():
     """Pin what the run started on. Once per run, at the first lane it opens."""
     path = os.path.join(RUN_DIR, WORKDIR_FACTS)
@@ -745,7 +812,15 @@ def gate_action(state, title, kind, lane):
         if verdict_token(verdict_txt) != "PASS":
             return f"waiting: final review verdict = {verdict_txt[:40]!r}"
         staged = staged_files()
-        evidence = (f"{len(staged)} files staged, verdict PASS; "
+        # Say which outcome the lane reached, not just a count: "0 files staged"
+        # reads the same for a lane that verified what was already there (a valid
+        # ending) and one that did nothing. The gate's own reading of the tree is
+        # the file written just above by write_workdir_state.
+        what = (f"{len(staged)} file(s) staged" if staged else
+                "no staged change — the lane ends with the tree as it found it")
+        at_gate = os.path.relpath(
+            os.path.join(SNAP_DIR, f"lane-{lane}-workdir-at-gate.md"), REPO)
+        evidence = (f"{what}, verdict PASS; workdir at gate: {at_gate}; "
                     f"to commit in: {commit_target()}")
         if title not in _ANNOUNCED:
             log(f"GATE {title.split(':')[0]} evidence: {evidence}; "
@@ -793,7 +868,7 @@ def record_timing(state):
             continue
         runs = runs_util.board_runs(BOARD, c["id"])
         closed = [r for r in runs
-                  if r.get("outcome") in ("completed", "gave_up")
+                  if r.get("outcome") in runs_util.CLOSED_OUTCOMES
                   and r.get("ended_at") and r.get("started_at")]
         if closed:
             last = closed[-1]
@@ -933,21 +1008,7 @@ def open_lane(state, lane):
     if not lane_paths_agree(state, lane):
         return "mismatch"
     record_workdir_facts()
-    wd_state = file_lanes.workdir_state(WORKDIR, BOARD_DIR)
-    # Beside the idea snapshot, in SNAP_DIR — the same directory
-    # file_lanes.workdir_state_path renders into the card bodies.
-    state_path = os.path.join(SNAP_DIR, f"lane-{lane}-workdir-at-open.md")
-    tmp = state_path + ".tmp"
-    with open(tmp, "w") as f:
-        f.write(
-            f"# Work directory as lane {lane} opened on it\n\n"
-            f"Taken {datetime.datetime.now().isoformat(timespec='seconds')}, when "
-            f"lane {lane} opened. This is a SNAPSHOT, not a live view: the tree "
-            f"changes as this lane works, so for the current state run `git status` "
-            f"in the directory itself. What it is for is planning — what was here "
-            f"before this lane touched anything.\n\n"
-            f"{os.path.abspath(WORKDIR)}\n\n{wd_state}\n")
-    os.replace(tmp, state_path)
+    wd_state, _ = write_workdir_state(lane, "open")
     idea_head = opts["idea"].splitlines()[0][:80] if opts["idea"] else ""
     log(f"LANE {lane} open: its={opts['integration-tests']} "
         f"uts={opts['unit-tests']} auto-gates={opts['auto-gates']} "
@@ -1020,10 +1081,57 @@ def rework_rounds(st):
 # What each card was GIVEN and what it PRODUCED, so the hand-off chain can be
 # checked instead of trusted: a card handed a document older than its own start
 # read a leftover, and a worker that attached nothing produced
-# nothing. runs/chain.jsonl is per-run state — rotated and cleared like the rest.
+# nothing. runs/chain.jsonl is per-run state: it lives in this run's own directory
+# and outlives the run, so an earlier run stays auditable.
 _CHAIN_STARTED = set()
 _CHAIN_DONE = set()
+# Set once this process records anything for this run. A restart that finds the run
+# already finished has nothing to add, and must not re-write its summary (see
+# write_summary).
+_PROCESS_RECORDED = [False]
 WORKER_CODES = ("I", "P", "TW", "C", "TI")
+
+
+def load_chain_ids(run_dir=None):
+    """The card ids this run's chain already has records for: (started, done).
+
+    A restart REJOINS the run's evidence, not just its cards. Without this the
+    per-process guards in record_chain_starts/record_chain_done re-record every
+    card the restarted process can see — and because the chain view is keyed by
+    card id, a second `done` record REPLACES the real completion time with the
+    restart's clock. Observed 2026-09-12: an idle serve-mode driver restarted
+    after its run had finished turned 9 chain rows into 18 and rewrote every done
+    timestamp to the restart second.
+    """
+    started, done = set(), set()
+    path = os.path.join(run_dir or RUN_DIR, "chain.jsonl")
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                cid = rec.get("card_id")
+                if not cid:
+                    continue
+                (done if rec.get("event") == "done" else started).add(cid)
+    except OSError:
+        pass                             # no chain yet: a fresh run records everything
+    return started, done
+
+
+def rejoin_chain():
+    """Seed this process's record guards from the run's own chain. Idempotent."""
+    started, done = load_chain_ids()
+    _CHAIN_STARTED.update(started)
+    _CHAIN_DONE.update(done)
+    if started or done:
+        log(f"chain: rejoined {len(started)} start / {len(done)} done record(s) — a "
+            f"restart does not re-record what this run already has")
 # Review and gate cards carry a verdict; the ledger is where they outlive a run.
 VERDICT_CODES = ("rv", "g")
 
@@ -1031,8 +1139,8 @@ VERDICT_CODES = ("rv", "g")
 def ledger(record):
     """Append one line to the board's verdict ledger.
 
-    Run state, beside the chain: `runs/verdicts.jsonl` is rotated and cleared
-    with everything else under runs/, and never staged — the board directory
+    Run state, beside the chain: `runs/<run-id>/verdicts.jsonl` is that run's own
+    ledger, and never staged — the board directory
     holds its DEFINITION only (board.json, lane-<k>.md, README). A rejection that
     exists only as prose in a closed card's result field is invisible; one JSON
     line per verdict and per rework round is what lets `mission/doc-chain.py`
@@ -1121,6 +1229,7 @@ def chain_record(event, card, lane, ts=None, **extra):
     os.makedirs(RUN_DIR, exist_ok=True)
     with open(os.path.join(RUN_DIR, "chain.jsonl"), "a") as f:
         f.write(json.dumps(rec) + "\n")
+    _PROCESS_RECORDED[0] = True
 
 
 def record_chain_start(card, lane, observed=False):
@@ -1366,7 +1475,10 @@ def tick():
         if not parents_done(st, parents):
             continue
         if kind == "gc":
-            clean_work_noise()
+            # Read the tree the gate is about to judge: the card bodies point at the
+            # OPEN reading, taken when the lane started. Nothing is swept first —
+            # see the note in the audit about what a worker leaves behind.
+            write_workdir_state(lane, "gate")
         msg = gate_action(st, title, kind, lane)
         if msg and msg not in ("gate-held", "skip"):
             # Once per distinct message per card, not once per tick: a gate
@@ -1465,38 +1577,20 @@ def escalate(card_id, code, reason):
 
 
 def clean_work_noise():
-    """`work/` holds what the idea asks a human to receive — nothing else.
+    """REMOVED — the board deletes nothing, and this was the only thing that did.
 
-    A suite run inside work/ leaves `__pycache__`/`.pytest_cache` behind (run 12
-    did), and those then ride into the reviewer's staged-set check and the gate's
-    evidence. One place, no card has to remember: removed before the code gate
-    reads the index. Scratch belongs under runs/scratch/<card>/.
+    USER RULE (2026-09-12): nothing is wiped, in `runs/` or in `work/`. A suite run
+    inside work/ still leaves `__pycache__`/`.pytest_cache` behind (run 12 did), and
+    this function used to delete them before the code gate so that `work/` held only
+    what a human receives. That trade is now the wrong way round: the tree belongs to
+    the person at the gate, a cache is their litter to keep or clear, and the audit
+    reports what it finds instead of the driver removing it (E16, a note — it does not
+    fail a run). Kept as a named tombstone so the next reader finds the decision
+    rather than the function: `test_nothing_in_the_template_deletes_work_or_runs`
+    fails if anything here starts removing files again.
     """
-    removed = []
-    if not os.path.isdir(WORKDIR):
-        return removed
-    # Only a work directory the BOARD owns. With an explicit default-workdir the
-    # tree belongs to another project, and a `__pycache__` there was almost
-    # certainly not put there by this run — deleting someone's files to tidy our
-    # own evidence is not a trade the board gets to make.
-    if not os.path.abspath(WORKDIR).startswith(os.path.abspath(BOARD_DIR) + os.sep):
-        return removed
-    for root, dirs, files in os.walk(WORKDIR):
-        for d in list(dirs):
-            if d in ("__pycache__", ".pytest_cache"):
-                shutil.rmtree(os.path.join(root, d), ignore_errors=True)
-                dirs.remove(d)
-                removed.append(d)
-        for f in files:
-            if f.endswith((".pyc", ".pyo")):
-                try:
-                    os.remove(os.path.join(root, f))
-                    removed.append(f)
-                except OSError:
-                    pass
-    if removed:
-        log(f"work/: removed {len(removed)} cache artifact(s) — work/ is the human's output")
-    return removed
+    raise NotImplementedError(
+        "the board deletes nothing — see this docstring and run-audit's E16")
 
 
 def escalated_to_triage(state):
@@ -1544,11 +1638,18 @@ def halt_if_exhausted(st):
         if c.get("status") in ("done", "archived"):
             continue
         p = _exhaustion_event(c["id"])
-        # gave_up means the retries are spent. A timed_out attempt is final only
-        # once the card sits blocked: while it is ready or running again the
-        # dispatcher is retrying it — halting there cost three manual restarts
-        # on 2026-09-10 (P1 twice, TW1), each on a card with retries left.
-        if p is not None and (p.get("kind") == "gave_up" or c.get("status") == "blocked"):
+        if p is None:
+            continue
+        # A TIMED-OUT card is a HARD FAILURE (user rule, 2026-09-12): the board
+        # does not try it again. The dispatcher put it back at `ready` with its
+        # retry budget intact, so the attempt would otherwise restart by itself —
+        # the board stops that here and then halts. Only a review may send work
+        # back, by filing a revision card; a ceiling is not a review.
+        if p.get("kind") == "timed_out":
+            stop_a_timeout(c, p)
+            reason_txt = str(p.get("reason") or "")
+            break
+        if p.get("kind") == "gave_up" or c.get("status") == "blocked":
             reason_txt = str(p.get("reason") or "")
             break
     else:
@@ -1594,6 +1695,28 @@ def halt_if_exhausted(st):
 
 _HALTED = {"reason": None}   # mutable holder: functions assign inner keys
 _ESCALATED = set()   # gate codes already escalated this driver run
+
+
+def stop_a_timeout(card, payload):
+    """A card that hit its runtime ceiling is BLOCKED, never retried (user rule).
+
+    The dispatcher's timeout path puts the card back at `ready`
+    (`_retry_status_for_run`) with its retry budget untouched, so the next attempt
+    starts on its own. The board does not want that attempt: a ceiling is a hard
+    failure, and the only thing allowed to send work back is a REVIEW, which does
+    it by filing a revision card. Blocking is the one mutation that tells the
+    dispatcher to stop claiming this card; the halt that follows stops the board.
+
+    Best effort: if the card is already blocked or was re-claimed a heartbeat ago
+    the call can be refused, and the halt is still the right outcome.
+    """
+    try:
+        kb("block", "--kind", "needs_input", card["id"],
+           f"TIMEOUT: {payload.get('reason') or 'runtime ceiling reached'} — hard "
+           f"failure; a timed-out card is not retried, only a review sends work back")
+    except Exception as e:                      # never take the driver down here
+        log(f"WARNING: could not block the timed-out card "
+            f"{card['title'].split(':')[0]} ({e})")
 
 
 EXHAUSTION_KINDS = ("gave_up", "timed_out")
@@ -1706,8 +1829,20 @@ def preserve_artifacts():
 
 def write_summary(state):
     """One-shot per-run summary: gate verdicts, per-card agent minutes, budget
-    events, overhead ratio — one jq-able file per completed run."""
+    events, overhead ratio — one jq-able file per completed run.
+
+    A restart that recorded NOTHING for this run leaves its record alone. It would
+    otherwise re-write a finished run from a process that started minutes after it
+    ended: wall_min became that process's own uptime (0.2 min against 21.7 min of
+    agent work), and `restarts_observed` — inferred from agent > wall — flipped to
+    true on a run that never restarted.
+    """
     import collections
+    path = os.path.join(RUN_DIR, "run-summary.json")
+    if os.path.exists(path) and not _PROCESS_RECORDED[0]:
+        log(f"{os.path.relpath(path, REPO)} already written by the process that drove "
+            f"this run, and this restart recorded nothing — leaving the record alone")
+        return
     rows = {}
     total = 0.0
     for title, c in state.items():
@@ -1718,7 +1853,7 @@ def write_summary(state):
         gave_up = None
         for r in runs:
             outcome = r.get("outcome")
-            if outcome in ("completed", "gave_up"):
+            if outcome in runs_util.CLOSED_OUTCOMES:
                 mins += runs_util.elapsed_min(r)
                 if outcome == "gave_up":
                     gave_up = True
@@ -1871,13 +2006,7 @@ def validate_armed(armed):
     """
     problems = []
     cfg = file_lanes.read_board(BOARD_DIR)
-    # The same checks the shell doors run, including the ones that touch disk: a
-    # missing work directory and a dirty index in it. This is the moment a run is
-    # about to start, so it is the moment those matter most — the shell doors ran
-    # when the board was created and when the driver launched, both of which may be
-    # days ago.
-    manifest_problems = (board_schema.validate(cfg, where="board.json")
-                         + board_schema.workdir_problems(cfg, where="board.json"))
+    manifest_problems = board_schema.validate(cfg, where="board.json")
     for lane, text, cid in armed:
         found = [f"lane {lane}: {p}" for p in
                  board_schema.validate_idea(text, where=f"lane-{lane}.md")]
@@ -2111,6 +2240,7 @@ def main():
     joined = _read_current_run()
     if joined:
         log(f"rejoined run {joined}: {os.path.relpath(RUN_DIR, REPO)}")
+        rejoin_chain()
     else:
         log("no run yet — the first armed idea mints one")
     reset_attempt_budgets()

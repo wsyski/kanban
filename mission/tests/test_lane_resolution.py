@@ -34,14 +34,38 @@ def test_lane_graph_skips_cards_absent_from_the_board():
 
 
 def test_lane_graph_gp_accepts_revision_rounds_as_parents():
-    """Filed rework cards gate the plan gate (real title shapes: the boundary
-    in title_of_prefix must accept a round digit after 'RVp1-r')."""
+    """Filed rework cards gate the plan gate, named by the NEWEST round of each
+    family — a family grows (r2, r3 …), and naming the first one left the gate
+    satisfied while its own newest round was still running (live, 2026-09-12: the
+    engine refused the completion every tick, `cannot complete ... (unknown id or
+    terminal state)`, on a lane that had only sent a plan back)."""
     titles = [c["title"] for c in lanes.lane_cards(1)]
     rows = run.lane_graph(state_with(*titles,
         "P1-rev-1: plan revision round 1 - lane 1",
         "RVp1-r2: plan review round 2 - lane 1"))
     gp = {r[0]: r for r in rows}[lanes.card_title("Gp", 1)]
-    assert gp[1] == ["RVp1", "P1-rev", "RVp1-r"]
+    assert gp[1] == ["RVp1", "P1-rev-1", "RVp1-r2"], gp[1]
+
+
+def test_the_newest_round_is_the_one_the_gate_waits_for():
+    """Round 2 done, round 3 running: the gate waits. Under the old first-match
+    parent it did not, and the driver fought the engine's own (correct) parents."""
+    titles = [c["title"] for c in lanes.lane_cards(1)]
+    st = state_with(*titles,
+                    "P1-rev-1: plan revision round 1 - lane 1",
+                    "P1-rev-2: plan revision round 2 - lane 1",
+                    "RVp1-r2: plan review round 2 - lane 1",
+                    "RVp1-r3: plan review round 3 - lane 1")
+    st["RVp1-r2: plan review round 2 - lane 1"]["status"] = "done"
+    st["RVp1-r3: plan review round 3 - lane 1"]["status"] = "running"
+    parents = {r[0]: r[1] for r in run.lane_graph(st)}[lanes.card_title("Gp", 1)]
+    assert parents == ["RVp1", "P1-rev-2", "RVp1-r3"], parents
+    assert not run.parents_done(st, parents)
+    st["RVp1-r3: plan review round 3 - lane 1"]["status"] = "done"
+    st[lanes.card_title("RVp", 1)]["status"] = "done"
+    st[lanes.card_title("P", 1)]["status"] = "done"
+    st["P1-rev-2: plan revision round 2 - lane 1"]["status"] = "done"
+    assert run.parents_done(st, parents)
 
 
 def test_title_prefix_does_not_cross_lane_numbers():

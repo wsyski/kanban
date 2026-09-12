@@ -116,3 +116,30 @@ def test_foreign_staged_compares_paths_on_one_basis(monkeypatch, tmp_path):
     that repository's top. An absolute-path branch here was dead code."""
     import inspect
     assert "os.path.isabs" not in inspect.getsource(run.foreign_staged)
+
+
+def test_the_gate_records_the_tree_it_judged_not_the_one_the_lane_opened_on(monkeypatch, tmp_path):
+    """Two readings, two questions: `open` is the input the plan was written against,
+    `gate` is what the code gate sees after clean_work_noise() — a worker (or the
+    human who owns the directory) may have moved the tree between them, and a gate
+    reporting the OPEN reading then judges a tree that no longer exists (live,
+    2026-09-12: a plan review recorded the directory empty while the files were on
+    disk)."""
+    board = tmp_path / "boards" / "b"
+    work = board / "work"
+    work.mkdir(parents=True)
+    monkeypatch.setattr(run, "WORKDIR", str(work))
+    monkeypatch.setattr(run, "BOARD_DIR", str(board))
+    monkeypatch.setattr(run, "REPO", str(tmp_path))
+    monkeypatch.setattr(run, "SNAP_DIR", str(tmp_path / "runs" / "r1" / "snapshots"))
+    import os
+    os.makedirs(run.SNAP_DIR, exist_ok=True)
+    at_open, open_path = run.write_workdir_state(1, "open")
+    assert "empty" in at_open
+    (work / "built.py").write_text("a worker built this\n")
+    at_gate, gate_path = run.write_workdir_state(1, "gate")
+    assert "NOT empty" in at_gate
+    assert open_path.endswith("lane-1-workdir-at-open.md")
+    assert gate_path.endswith("lane-1-workdir-at-gate.md")
+    assert "empty" in open(open_path).read()          # the open reading is kept
+    assert "NOT empty" in open(gate_path).read()

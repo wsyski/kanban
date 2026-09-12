@@ -98,36 +98,33 @@ def test_serve_mode_leaves_an_unarmed_lane_alone(monkeypatch, tmp_path):
     run._OPENED.clear()
 
 
-def test_a_cache_in_work_is_not_a_deliverable(monkeypatch, tmp_path):
-    """work/ holds the idea's output for a human: a pytest cache left behind by a
-    suite run is neither, and it reaches the reviewer's staged-set check."""
-    calls = []
-    _board_env(monkeypatch, tmp_path, calls)
-    work = tmp_path / "work"
+def test_the_code_gate_leaves_a_workers_litter_where_it_is(monkeypatch, tmp_path):
+    """USER RULE (2026-09-12): the board wipes nothing — `work/` and `runs/` both.
+
+    `clean_work_noise` deleted `__pycache__`/`.pytest_cache`/`*.pyc` from `work/`
+    before the code gate: the only deletion in the whole template. The gate hook now
+    reads the tree and touches nothing, and the function that used to sweep is a
+    tombstone — the audit reports what it finds (E16, a note) and the gate-holder
+    decides what to keep.
+    """
+    import os
+    import pytest
+    board = tmp_path / "boards" / "b"
+    work = board / "work"
     (work / "__pycache__").mkdir(parents=True)
     (work / "__pycache__" / "is_even.cpython-314.pyc").write_text("x")
-    (work / "is_even.py").write_text("def is_even(n): return n % 2 == 0\n")
     (work / ".pytest_cache").mkdir()
-    removed = run.clean_work_noise()
-    assert (work / "is_even.py").exists(), "the deliverable must survive"
-    assert not (work / "__pycache__").exists() and not (work / ".pytest_cache").exists()
-    assert len(removed) == 2, removed
-
-
-def test_an_external_work_directory_is_never_swept(monkeypatch, tmp_path):
-    """With an explicit default-workdir the tree belongs to another project, and a
-    cache there was almost certainly not put there by this run. Deleting someone
-    else's files to tidy our own evidence is not a trade the board gets to make."""
-    calls = []
-    _board_env(monkeypatch, tmp_path, calls)
-    board = tmp_path / "boards" / "b"
-    board.mkdir(parents=True)
-    outside = tmp_path / "someone-elses-repo"
-    (outside / "__pycache__").mkdir(parents=True)
+    (work / "is_even.py").write_text("def is_even(n): return n % 2 == 0\n")
+    monkeypatch.setattr(run, "WORKDIR", str(work))
     monkeypatch.setattr(run, "BOARD_DIR", str(board))
-    monkeypatch.setattr(run, "WORKDIR", str(outside))
-    assert run.clean_work_noise() == []
-    assert (outside / "__pycache__").exists()
+    monkeypatch.setattr(run, "SNAP_DIR", str(tmp_path / "snap"))
+    os.makedirs(run.SNAP_DIR, exist_ok=True)
+    run.write_workdir_state(1, "gate")            # what the code gate runs now
+    assert (work / "is_even.py").exists(), "the deliverable must survive"
+    assert (work / "__pycache__" / "is_even.cpython-314.pyc").exists(), "nothing wiped"
+    assert (work / ".pytest_cache").exists(), "nothing wiped"
+    with pytest.raises(NotImplementedError):
+        run.clean_work_noise()                    # the tombstone, not a sweeper
 
 
 def test_nothing_under_runs_stays_in_the_index(monkeypatch, tmp_path):

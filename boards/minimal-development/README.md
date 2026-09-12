@@ -20,8 +20,9 @@ gates itself, records the same evidence, and still commits nothing. Set it to
 `false` to see what a human is asked at each gate. `max-runtime` is 4 minutes
 per card — a ceiling, not a target: on an idea this small, a card that needs
 longer is a card doing work the idea does not ask for, so the ceiling is also
-the check on the card bodies themselves. A timed-out card is retried, and the
-driver halts only once its retries are spent.
+the check on the card bodies themselves. A timed-out card is a HARD FAILURE: the
+driver blocks it and halts the board on the first one, and nothing is retried —
+only a review that REJECTS sends work back, by filing a revision card.
 
 `"goal": false` — this board files no card under the goal judge. The judge
 is a worker self-check that needs a REACHABLE auxiliary model, and on 2026-09-11

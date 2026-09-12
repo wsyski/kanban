@@ -118,9 +118,10 @@ def analyze(recs):
 def history(runs_dir):
     """What this run's reviews decided, and what they sent back.
 
-    The ledger sits beside the chain under runs/ — run state, unstaged, rotated
-    with the rest — so this is one RUN's census, not a cross-run history: the
-    chain alone shows what each card was given, never what a review decided.
+    The ledger sits beside the chain in the run's own directory — run state,
+    never staged, cleared by nothing — so this is one RUN's census, not a
+    cross-run history: the chain alone shows what each card was given, never
+    what a review decided.
     """
     path = os.path.join(runs_dir, "verdicts.jsonl")
     if not os.path.exists(path):
@@ -179,7 +180,7 @@ def main(argv=None):
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--quiet", action="store_true", help="findings only")
     ap.add_argument("--history", action="store_true",
-                    help="the board's whole verdict ledger, not just this run")
+                    help="this run's verdict ledger — its reviews and rework rounds")
     a = ap.parse_args(argv)
     runs = resolve_run_dir(a.runs)
     recs = load(runs)

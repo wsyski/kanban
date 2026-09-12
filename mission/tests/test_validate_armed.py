@@ -93,33 +93,36 @@ def test_the_refile_refuses_before_it_adopts_anything(monkeypatch, tmp_path):
     assert src.index("validate_armed") < src.index("open(dst")
 
 
-def test_a_dirty_index_in_the_work_directory_stops_the_arm(monkeypatch, tmp_path):
-    """`git diff --cached` lists the whole index, so the operator's pending edits
-    become the lane's evidence. The shell doors check this when the board is created
-    and when the driver launches — both possibly days before an idea is armed, which
-    is the moment a run actually starts."""
-    import json
+def test_a_dirty_index_in_the_work_directory_does_not_stop_the_arm(monkeypatch, tmp_path):
+    """USER RULE (2026-09-12): the board promises nothing about the work directory's
+    contents — staged and unstaged files alike are its working material — so an arm is
+    never refused for one. The operator's pending entries still reach `git diff
+    --cached`, which is why the door prints a notice and E17 reports it at the audit.
+    """
     import subprocess
     wd = tmp_path / "ext"
     wd.mkdir()
     subprocess.run(["git", "init", "-q", str(wd)], check=True)
     (wd / "theirs.txt").write_text("mine, not the lane's\n")
     subprocess.run(["git", "-C", str(wd), "add", "theirs.txt"], check=True)
-    comments = _fixture(monkeypatch, tmp_path,
-                        manifest={"slug": "b", "lanes": 1,
-                                  "default-workdir": str(wd)})
+    _fixture(monkeypatch, tmp_path,
+             manifest={"slug": "b", "lanes": 1, "default-workdir": str(wd)})
     good = "## Idea\n\nbody\n\n### Done means\n\n- it works\n"
-    assert run.validate_armed([(1, good, "c1")]) is False
-    assert "index" in comments[0][2] and "theirs.txt" in comments[0][2]
+    assert run.validate_armed([(1, good, "c1")]) is True
 
 
-def test_a_missing_work_directory_stops_the_arm(monkeypatch, tmp_path):
-    comments = _fixture(monkeypatch, tmp_path,
-                        manifest={"slug": "b", "lanes": 1,
-                                  "default-workdir": str(tmp_path / "nope")})
+def test_a_missing_work_directory_stops_the_doors_not_the_arm(monkeypatch, tmp_path):
+    """Existence is the board definition's business and the shell doors check it; the
+    driver arms on the manifest's shape, and what the directory HOLDS is never a
+    fault."""
+    import board_schema
+    _fixture(monkeypatch, tmp_path,
+             manifest={"slug": "b", "lanes": 1,
+                       "default-workdir": str(tmp_path / "nope")})
     good = "## Idea\n\nbody\n\n### Done means\n\n- it works\n"
-    assert run.validate_armed([(1, good, "c1")]) is False
-    assert "does not exist on this host" in comments[0][2]
+    assert run.validate_armed([(1, good, "c1")]) is True
+    assert board_schema.workdir_problems(
+        {"default-workdir": str(tmp_path / "nope")})
 
 
 def test_a_board_owned_work_directory_arms_without_disk_checks(monkeypatch, tmp_path):

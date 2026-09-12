@@ -7,7 +7,9 @@ rather than a matter of reading the log.
 
   ERROR    the run did not do what the board's contract says it does
   WARNING  it did it in a way that wastes budget or hides evidence
-  INFO     metrics only, never a finding (per-card table, wall/agent/overhead)
+  INFO     a note about the tree — metrics, and what a lane left behind. The board
+           deletes nothing (`work/` and `runs/` included), so litter is REPORTED and
+           left exactly where it is; a note never fails a run
 
 Usage:
   mission/run-audit.py --runs boards/<slug>/runs [--board boards/<slug>] [--json]
@@ -229,12 +231,16 @@ def repo_findings(runs_dir):
 
 
 def work_noise_findings(runs_dir, workdir=None):
-    """`work/` holds the idea's output for a human — a cache or a harness in
-    there is neither, and it reaches the reviewer's staged-set check.
+    """What a lane left in `work/` besides what the idea asked a human to receive.
+
+    A NOTE, never a failure (user rule, 2026-09-12): the board deletes nothing — not
+    under `runs/`, not under `work/` — so litter a worker left is reported and left
+    exactly where it is, for the person at the gate to keep or clear. It used to be an
+    ERROR and the driver used to sweep caches before the code gate; both halves went
+    with the rule.
 
     Board-owned trees only. A board whose manifest sets default-workdir builds in
-    another project, where a pre-existing cache is that project's business and
-    flagging it would fail every run of that board for litter it did not create.
+    another project, where a pre-existing cache is that project's business.
     """
     out = []
     board = board_dir_for(runs_dir)
@@ -244,12 +250,14 @@ def work_noise_findings(runs_dir, workdir=None):
     for root, dirs, files in os.walk(work):
         for d in dirs:
             if d in ("__pycache__", ".pytest_cache"):
-                out.append(("ERROR", "E16",
-                            f"not a deliverable: {os.path.relpath(os.path.join(root, d), REPO)}"))
+                out.append(("INFO", "E16",
+                            f"not a deliverable, left in place: "
+                            f"{os.path.relpath(os.path.join(root, d), REPO)}"))
         for f in files:
             if f.endswith((".pyc", ".pyo", ".tmp", ".log")):
-                out.append(("ERROR", "E16",
-                            f"not a deliverable: {os.path.relpath(os.path.join(root, f), REPO)}"))
+                out.append(("INFO", "E16",
+                            f"not a deliverable, left in place: "
+                            f"{os.path.relpath(os.path.join(root, f), REPO)}"))
     return out
 
 
@@ -334,7 +342,9 @@ def audit(runs_dir, board_dir=None):
 def report(findings, rows, stats, ceiling):
     errors = [f for f in findings if f[0] == "ERROR"]
     warns = [f for f in findings if f[0] == "WARNING"]
-    print(f"{len(errors)} error(s), {len(warns)} warning(s)")
+    notes = [f for f in findings if f[0] == "INFO"]
+    print(f"{len(errors)} error(s), {len(warns)} warning(s)"
+          + (f", {len(notes)} note(s)" if notes else ""))
     for sev, code, text in findings:
         print(f"  {sev} {code}: {text}")
     verdicts = [r for r in rows if r.get("verdict")]
@@ -356,7 +366,9 @@ def report(findings, rows, stats, ceiling):
         overhead = (wall or 0) - (agent or 0)
         print(f"wall {wall} min, agent {agent} min, overhead {overhead:.1f} min"
               f"{f' of a {ceiling}m ceiling' if ceiling else ''}")
-    return 1 if findings else 0
+    # Only an error or a warning fails a run (E16's notes above): a note is a fact
+    # about the tree that is left exactly as it is.
+    return 1 if (errors or warns) else 0
 
 
 
@@ -407,8 +419,8 @@ def main(argv=None):
     findings, rows, stats = audit(resolve_run_dir(a.runs), a.board)
     if a.json:
         print(json.dumps({"findings": findings, "rows": rows, "stats": stats}, indent=2))
-        return 1 if findings else 0
-    cfg_path = os.path.join(a.board or os.path.dirname(os.path.abspath(a.runs)), "board.json")
+        return 1 if any(f[0] in ("ERROR", "WARNING") for f in findings) else 0
+    cfg_path = os.path.join(a.board or board_dir_for(a.runs), "board.json")
     ceiling = None
     if os.path.exists(cfg_path):
         rt = json.load(open(cfg_path)).get("max-runtime")

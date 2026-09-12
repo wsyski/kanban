@@ -384,10 +384,24 @@ def _event(kind):
     return lambda cid: {"kind": kind, "reason": kind}
 
 
-def test_a_timeout_with_retries_left_does_not_halt(monkeypatch, quiet_halt):
+def test_a_timeout_halts_and_blocks_the_card_instead_of_retrying(monkeypatch, quiet_halt):
+    """USER RULE (2026-09-12): a timeout is a HARD FAILURE — it never retries.
+
+    The dispatcher's timeout path leaves the card at `ready` with its retry budget
+    intact, so the board stops the retry itself (block it) and halts. Only a failed
+    REVIEW may send work back, and it does that by filing a revision card; a
+    ceiling is not a review.
+    """
     monkeypatch.setattr(run, "_exhaustion_event", _event("timed_out"))
-    st = {lanes.card_title("P", 1): {"id": "t1", "status": "ready"}}
-    assert run.halt_if_exhausted(st) is None
+    calls = []
+    monkeypatch.setattr(run, "kb", lambda *a, **k: calls.append(a) or "")
+    st = {lanes.card_title("P", 1): {"id": "t1", "status": "ready",
+                                     "title": lanes.card_title("P", 1)}}
+    assert run.halt_if_exhausted(st)
+    blocked = [c for c in calls if c and c[0] == "block"]
+    assert blocked and blocked[0][1:3] == ("--kind", "needs_input"), calls
+    assert blocked[0][3] == "t1"
+    assert "TIMEOUT" in blocked[0][4] and "not retried" in blocked[0][4]
 
 
 def test_a_timeout_that_left_the_card_blocked_halts(monkeypatch, quiet_halt):
@@ -419,7 +433,7 @@ def test_a_filed_code_round_gates_rva_and_the_code_gate():
     parents = _parents(st)
     for code in ("RVa", "Gc"):
         p = parents[lanes.card_title(code, 1)]
-        assert "C1-rev" in p and "RVa1-r" in p, (code, p)
+        assert "C1-rev-1" in p and "RVa1-r2" in p, (code, p)
     assert not run.parents_done(st, parents[lanes.card_title("Gc", 1)])
 
 

@@ -8,6 +8,7 @@ TASK: review what this lane staged, against the plan at <PLAN> and the lane's co
 (c) Every file the plan names under <WORKDIR> is staged (`git -C <WORKDIR> diff --cached --name-only`); a file the plan names under a declared target root (<TARGETS>) is outside the repository, so verify it by path — it exists and holds what the plan names — and list it in the result. The TW<N> and C<N> patches touch nothing the plan does not name. No commits, no branches.
 (d) Errors are not silently swallowed.
 (e) The tester's tests are unchanged by the coder: diff the staged test files against the patch attached to card TW<N>.
+NO CHANGE IS A VALID OUTCOME: where the plan's smallest correct change is nothing, the lane passes with an empty staged set and the criterion re-derived by running it — say so in the result rather than requiring a diff. An unchanged tree is not an unfinished lane.
 Reproduce, do not skim: every PASS is re-derived, every REJECT carries reproduction steps.
 
 VERDICT — the result field's first word is the verdict:

@@ -8,5 +8,5 @@
   "auto-gates": true,
   "goal": false,
   "max-runtime": "10m",
-  "max-retries": 2
+  "max-retries": 1
 }

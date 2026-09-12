@@ -313,38 +313,49 @@ def test_a_board_owned_work_directory_asks_none_of_this():
     assert board_schema.workdir_problems({}) == []
 
 
-def test_a_dirty_index_in_the_work_directory_is_reported(tmp_path):
-    """`git diff --cached` lists the WHOLE index, so the operator's own pending
-    edits become the lane's evidence."""
+def test_a_dirty_index_in_the_work_directory_is_a_notice_not_a_fault(tmp_path):
+    """USER RULE (2026-09-12): the board promises nothing about the work directory's
+    contents — staged and unstaged files alike are the lane's working material — so a
+    pending entry is reported, never grounds to refuse. It still matters: `git diff
+    --cached` lists the WHOLE index and the operator's entries reach a reviewer, which
+    is why the notice says to scope every check with a pathspec (E17 carries the
+    failing half, at the audit)."""
     import subprocess
     wd = tmp_path / "repo"
     wd.mkdir()
     subprocess.run(["git", "init", "-q", str(wd)], check=True)
     (wd / "theirs.txt").write_text("mine, not the lane's\n")
     subprocess.run(["git", "-C", str(wd), "add", "theirs.txt"], check=True)
-    found = board_schema.workdir_problems({"default-workdir": str(wd)}, where="m")
-    assert len(found) == 1 and "index" in found[0] and "theirs.txt" in found[0]
+    assert board_schema.workdir_problems({"default-workdir": str(wd)}, where="m") == []
+    notices = board_schema.workdir_notices({"default-workdir": str(wd)}, where="m")
+    assert len(notices) == 1 and "index" in notices[0] and "theirs.txt" in notices[0]
+    assert "pathspec" in notices[0]
 
     subprocess.run(["git", "-C", str(wd), "reset", "-q"], check=True)
-    assert board_schema.workdir_problems({"default-workdir": str(wd)}, where="m") == []
+    assert board_schema.workdir_notices({"default-workdir": str(wd)}, where="m") == []
 
 
 # ---- options added for what the manifest could not say ---------------------
 
 def test_the_rework_retry_budget_is_its_own_option():
     """`max-retries` is the first filing; a revision is a second attempt at work a
-    reviewer rejected, and a board may want that tighter or looser without changing
-    both."""
-    assert problems(slug="b", **{"rework-max-retries": 2}) == []
+    reviewer rejected. BOTH are 1 by rule (2026-09-12): a failure is final, and the
+    only thing that retries work is the REVIEW that sent it back — by filing the
+    revision card. The option stays declared (Hermes names it) and refuses anything
+    else, so a manifest cannot re-enable a dispatcher retry."""
+    assert problems(slug="b", **{"rework-max-retries": 1}) == []
+    assert "must be 1" in problems(slug="b", **{"rework-max-retries": 2})[0]
     assert problems(slug="b", **{"rework-max-retries": 0})
+    assert "must be 1" in problems(slug="b", **{"max-retries": 3})[0]
+    assert "unknown option" in problems(slug="b", **{"max_retries": 2})[0]
     assert "rework-max-retries" in board_schema.DRIVER_OPTIONS
     assert "rework-max-retries" not in board_schema.PASS_THROUGH
 
 
 def test_the_driver_reads_the_rework_budget_rather_than_a_literal(monkeypatch):
     import run
-    monkeypatch.setattr(run, "manifest", lambda: {"rework-max-retries": 4})
-    assert run.rework_retries() == "4"
+    monkeypatch.setattr(run, "manifest", lambda: {"rework-max-retries": 1})
+    assert run.rework_retries() == "1"
     monkeypatch.setattr(run, "manifest", lambda: {})
     assert run.rework_retries() == "1"
 
@@ -368,16 +379,19 @@ def test_assignees_remaps_a_role_everywhere_it_appears():
             assert c["assignee"] == c["role"], c["id"]
 
 
-def test_the_reviewer_feed_retry_budget_survives_a_remap():
-    """`_retries_for` used to compare the ASSIGNEE against "reviewer", so a board
-    that renamed its reviewer silently lost the 3-retry budget on every card feeding
-    one — the boards that customised were the ones that broke."""
+def test_every_filed_card_carries_one_attempt():
+    """USER RULE (2026-09-12): only a failed REVIEW retries. Nothing else does — a
+    card that times out, crashes or never spawns is final, so filing must never ask
+    the dispatcher for a second attempt (the 3-retry budget on cards feeding a
+    reviewer was exactly that, and it is gone)."""
     import file_lanes
     import lanes
     for remap in (None, {"reviewer": "senior"}):
         cards = lanes.lane_cards(1, assignees=remap)
-        feeds = {c["id"]: file_lanes._retries_for(c["id"], cards) for c in cards}
-        assert feeds["P1"] == file_lanes.REVIEWER_FEED_MAX_RETRIES, remap
+        assert not hasattr(file_lanes, "REVIEWER_FEED_MAX_RETRIES")
+        assert not hasattr(file_lanes, "_retries_for")
+        assert file_lanes.DEFAULT_MAX_RETRIES == 1, remap
+        assert all(c["role"] for c in cards)
 
 
 def test_an_unknown_role_or_empty_profile_is_refused():

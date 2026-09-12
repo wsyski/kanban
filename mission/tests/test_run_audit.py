@@ -298,7 +298,12 @@ def test_a_cache_left_in_work_is_an_error(tmp_path, monkeypatch):
     (work / "__pycache__" / "x.pyc").write_text("x")
     (work / "notes.tmp").write_text("scratch")
     findings, _rows, _s = ra.audit(runs)
-    assert "E16" in codes(findings, "ERROR"), findings
+    # A NOTE, not a fault: the board deletes nothing, so `work/` litter is reported
+    # and left exactly where it is, and the run is still clean.
+    assert "E16" in codes(findings, "INFO"), findings
+    assert "E16" not in codes(findings, "ERROR"), findings
+    assert ra.report(findings, _rows, _s, None) == 0
+    assert [f for f in findings if f[0] == "INFO"][0][2].startswith("not a deliverable, left in place")
 
 
 def test_the_ceiling_parser():

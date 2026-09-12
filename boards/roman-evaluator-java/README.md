@@ -3,7 +3,9 @@
 Both lanes build from nothing, inside this board's own work directory,
 `boards/roman-evaluator-java/work/`. Nothing they generate lands anywhere else
 in the repository — the modules, their POMs, their tests and the plan files all
-live under that one path. Only run state is ever cleared:
+live under that one path. Nothing here deletes anything — a finished run's log,
+timing and hand-offs stay readable under `runs/<run-id>/`, and the work directory
+is never touched. To archive the cards and unstage what a dead run left pending:
 
     mission/reset.sh --board boards/roman-evaluator-java
 

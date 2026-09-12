@@ -6,7 +6,7 @@ TASK: the parent card staged a plan at <PLAN> — that file, and never a documen
 
 <PLAN_CHECKLIST>
 
-SCOPE OF A FINDING: REJECT only on a checklist item — cite its number, quote the plan line that breaks it, give the fix. Anything else you notice (style, a simpler design, a risk) is a NOTE inside a PASS, never a reason to reject. Environment facts are the researcher's (Findings); you do not re-run them. Item 8 is the one command you run.
+SCOPE OF A FINDING: REJECT only on a checklist item — cite its number, quote the plan line that breaks it, give the fix. Anything else you notice (style, a simpler design, a risk) is a NOTE inside a PASS, never a reason to reject. Environment facts are the researcher's (Findings); you do not re-run them. Item 8 is the one command you run. A plan whose smallest correct change is NO change is a PASS — a lane may legitimately only verify what is already there.
 
 VERDICT — the result field's first word is the verdict:
 - PASS: `hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "PASS: checklist 1-8 hold. NOTES: <notes, or none>"`

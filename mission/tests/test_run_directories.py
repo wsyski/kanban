@@ -61,6 +61,19 @@ def test_mint_run_creates_the_directory_and_points_current(monkeypatch, tmp_path
     assert run._read_current_run() == "r1"
 
 
+def test_a_new_run_opens_its_own_timing_segment(monkeypatch, tmp_path):
+    """record_timing writes its run-boundary marker once per PROCESS, and a serve-mode
+    driver answers many ideas. With the flag left standing, the second run's
+    timing.jsonl opened with no boundary at all, so the report's "latest segment"
+    split (which is how a file covering several processes is read) had nothing to
+    split on."""
+    monkeypatch.setattr(run, "RUNS_ROOT", str(tmp_path))
+    monkeypatch.setattr(run, "CURRENT_RUN", str(tmp_path / "current"))
+    run.record_timing._started = True          # the first run already wrote its marker
+    run.mint_run("r2", [(1, "## Idea\n\n### Done means\n- x\n", "c1")])
+    assert not hasattr(run.record_timing, "_started")
+
+
 def test_minting_a_second_run_leaves_the_first_alone(monkeypatch, tmp_path):
     """The whole point: last run's evidence survives the next arm, so `run, audit,
     fix, run again` can compare. Before this, the next run deleted the numbers the

@@ -107,7 +107,7 @@ def runs_elapsed(card_id):
     """
     out = []
     for r in runs_util.board_runs(BOARD, card_id):
-        if r.get("outcome") in ("completed", "gave_up") \
+        if r.get("outcome") in runs_util.CLOSED_OUTCOMES \
                 and r.get("ended_at") and r.get("started_at"):
             out.append({"outcome": r["outcome"],
                         "elapsed_min": runs_util.elapsed_min(r),
@@ -167,7 +167,7 @@ def main():
         # agent elapsed from board runs data
         rows = runs_elapsed(cid)
         agent = sum(r.get("elapsed_min") or 0
-                    for r in rows if r.get("outcome") in ("completed", "gave_up"))
+                    for r in rows if r.get("outcome") in runs_util.CLOSED_OUTCOMES)
         work_total += agent
         fr = tr.get((title, "running"))
         dn = tr.get((title, "done"))
@@ -226,6 +226,11 @@ def main():
         for r in rows:
             if r.get("outcome") == "gave_up":
                 print(f"⚠ BUDGET: {title.split(':')[0]} gave_up — {r.get('note','')}")
+            if r.get("outcome") == "timed_out":
+                # Already inside the card's agent minutes above (CLOSED_OUTCOMES);
+                # named here so the number has its reason next to it.
+                print(f"⚠ BUDGET: {title.split(':')[0]} timed out after "
+                      f"{r.get('elapsed_min') or 0:.1f} min — {r.get('note','')}")
     return 0
 
 if __name__ == "__main__":

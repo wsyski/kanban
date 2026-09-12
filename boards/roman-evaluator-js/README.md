@@ -21,7 +21,9 @@ the authorization record.
     mission/create-board.sh --board boards/roman-evaluator-js
     mission/start-board.sh --slug roman-evaluator-js   # then drag Triage → Todo
 
-Only run state is ever cleared — `mission/reset.sh --board boards/roman-evaluator-js`.
+Nothing here deletes anything — `mission/reset.sh --board boards/roman-evaluator-js`
+archives the cards and unstages what a dead run left in the index, and leaves
+every `runs/<run-id>/` and the work directory in place.
 Nothing here touches the work directory, so a re-run finds the last run's page and
 treats it as the previous version to improve. Delete it by hand if you want a
 blank start.

@@ -94,6 +94,20 @@ DRIVER_OPTIONS = frozenset({"timeout-min", "rework-max-retries"})
 ROLES = frozenset({"researcher", "manager", "coder", "tester", "reviewer",
                    "human-gate"})
 
+# Options whose VALUE the board's contract fixes, whatever their type allows. A
+# failed card is FINAL (user rule, 2026-09-12): the dispatcher's breaker blocks it
+# on that first failure and the driver halts the board. The only retry the board
+# recognises is a REVIEW that failed, which asks for one by filing a revision
+# card. `max-retries: 2` would re-enable the "run it again and hope" mechanism the
+# rule removes, so it is refused where the board is declared rather than filed.
+ONE_ATTEMPT = {
+    "max-retries": ("a failed card is final — only a REVIEW sends work back, by "
+                    "filing a revision card"),
+    "rework-max-retries": ("a failed revision card is final — the round budget "
+                           "(2 idea / 3 plan / 2 code rounds) is what retries work, "
+                           "not the dispatcher"),
+}
+
 # `<n><unit>` one or more times, as run-audit.py's ceiling parser reads it, so a
 # manifest cannot state a ceiling the auditor scores as zero minutes.
 _DURATION_RE = re.compile(r"^(?:\d+(?:\.\d+)?[hms])+$")
@@ -195,6 +209,8 @@ def validate(cfg, *, where="board.json", only=None, lists=True):
             err = _kind_error(kind, value)
             if err:
                 problems.append(f"{where}: {key!r} {err}")
+            elif key in ONE_ATTEMPT and value != 1:
+                problems.append(f"{where}: {key!r} must be 1 — {ONE_ATTEMPT[key]}")
             continue
         # A LIST is the per-lane form: one entry per lane, indexed from lane 1.
         if not per_lane:
@@ -347,6 +363,36 @@ def _body_problems(text, where):
     return out
 
 
+def workdir_notices(cfg, *, where="board.json"):
+    """What the tree the board works in already holds — REPORTED, never a refusal.
+
+    The board makes no promise about the contents of its work directory: it may
+    change anything inside it, staged and unstaged files included, and it discovers
+    greenfield (empty) from brownfield (anything there) by reading it — see
+    `workdir_state`. So a work directory with pending changes is not a fault to
+    stop for; it is a fact worth printing where a person will see it, because
+    `git diff --cached` lists the WHOLE index and the operator's pending entries
+    then reach the reviewers' evidence. The driver reports the same thing as drift
+    while a run is live (E17), which is where failing belongs — at the audit.
+    """
+    wd = cfg.get("default-workdir")
+    if not wd or not os.path.isdir(wd):
+        return []
+    inside = subprocess.run(["git", "-C", wd, "rev-parse", "--show-toplevel"],
+                            capture_output=True, text=True)
+    if inside.returncode != 0:
+        return []                     # not a repo: nothing stages, nothing to say
+    staged = subprocess.run(["git", "-C", wd, "diff", "--cached", "--name-only"],
+                            capture_output=True, text=True)
+    pending = [ln for ln in staged.stdout.splitlines() if ln.strip()]
+    if not pending:
+        return []
+    return [f"{where}: the index of {inside.stdout.strip()} is not clean "
+            f"({len(pending)} path(s) staged, e.g. {pending[0]}) — the board works "
+            f"around it: it promises nothing about these files, and `git diff "
+            f"--cached` lists the whole index, so scope every check with a pathspec"]
+
+
 def workdir_problems(cfg, *, where="board.json"):
     """Faults in an explicit `default-workdir` that only the filesystem can answer.
 
@@ -354,6 +400,12 @@ def workdir_problems(cfg, *, where="board.json"):
     any machine (a test, a review of someone else's board), while these are about
     THIS host. A board that omits the option builds in its own work/ and has none of
     these questions — the directory is the board's to create.
+
+    EXISTENCE is the only fault here, and it is about the board's definition rather
+    than the tree's contents: an absolute path that is not there points at nothing,
+    and a lane would quietly build greenfield somewhere unintended. What the
+    directory HOLDS is never a fault — it may be empty (greenfield), a previous
+    run's product, or years of someone else's project.
     """
     wd = cfg.get("default-workdir")
     if not wd:
@@ -362,21 +414,7 @@ def workdir_problems(cfg, *, where="board.json"):
         return [f"{where}: 'default-workdir' {wd} does not exist on this host — an "
                 f"absolute path is host-local, so a board that names one does not "
                 f"run as shipped; point it at a tree on this machine"]
-    inside = subprocess.run(["git", "-C", wd, "rev-parse", "--show-toplevel"],
-                            capture_output=True, text=True)
-    if inside.returncode != 0:
-        return []                     # not a repo: nothing stages, nothing to check
-    out = []
-    staged = subprocess.run(["git", "-C", wd, "diff", "--cached", "--name-only"],
-                            capture_output=True, text=True)
-    pending = [ln for ln in staged.stdout.splitlines() if ln.strip()]
-    if pending:
-        out.append(
-            f"{where}: the index of {inside.stdout.strip()} is not clean "
-            f"({len(pending)} path(s) staged, e.g. {pending[0]}). `git diff --cached` "
-            f"lists the WHOLE index, so those become this lane's evidence and a "
-            f"reviewer judges the lane on them — commit or unstage them first")
-    return out
+    return []
 
 
 def validate_or_die(path):
@@ -402,6 +440,9 @@ def validate_or_die(path):
     except json.JSONDecodeError as e:
         sys.exit(f"{path}: not valid JSON — {e.msg} at line {e.lineno}")
     problems = validate(cfg, where=path) + workdir_problems(cfg, where=path)
+    # Notices never fail a door: the work directory's CONTENTS are not a fault.
+    for notice in workdir_notices(cfg, where=path):
+        print(f"note: {notice}")
     if problems:
         sys.exit("\n".join(["board manifest rejected:"]
                            + [f"  - {p}" for p in problems]))

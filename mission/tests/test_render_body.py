@@ -82,6 +82,22 @@ def test_the_reading_itself_distinguishes_the_three_cases(tmp_path):
     assert "does not exist" in file_lanes.workdir_state(str(tmp_path / "nope"), str(board))
 
 
+def test_the_reading_describes_the_tree_not_the_index(tmp_path):
+    """USER RULE (2026-09-12): no assumption about the work directory's contents. The
+    line says what is on disk and how much of it is uncommitted — `git ls-files`
+    reads the INDEX, which is a view neither the worker nor HEAD sees."""
+    import subprocess
+    board = tmp_path / "boards" / "b"
+    work = board / "work"
+    work.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(work)], check=True)
+    (work / "a.py").write_text("x\n")
+    subprocess.run(["git", "-C", str(work), "add", "a.py"], check=True)
+    line = file_lanes.workdir_state(str(work), str(board))
+    assert "1 file(s) on disk" in line and "1 with uncommitted changes" in line, line
+    assert "tracked file(s)" not in line
+
+
 def test_every_body_that_names_the_state_gets_it_resolved():
     """A placeholder left unresolved in a shipped body reaches a worker verbatim."""
     import glob

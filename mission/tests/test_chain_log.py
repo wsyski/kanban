@@ -164,3 +164,57 @@ def test_every_placeholder_in_every_shipped_body_is_either_rendered_or_the_worke
         text = file_lanes.render_body(os.path.basename(path), repo=here + "/..",
                                       board="b", workdir=here, lane=1, run_id="r1")
         assert run.unresolved_placeholders(text) == [], path
+
+
+def _two_done_cards():
+    return {lanes.card_title("I", 1): {
+                "id": "t_i", "status": "done", "title": lanes.card_title("I", 1),
+                "body": "read /repo/boards/b/runs/snapshots/lane-1.md",
+                "result": "refined the idea"},
+            lanes.card_title("P", 1): {
+                "id": "t_p", "status": "done", "title": lanes.card_title("P", 1),
+                "body": "", "result": "planned"}}
+
+
+def test_a_restart_rejoins_the_chain_instead_of_re_recording_it(monkeypatch, tmp_path):
+    """A restarted driver sees every card already done and starts with empty
+    per-process guards, so it re-recorded the whole chain: 9 rows became 18, and
+    because the chain VIEW is keyed by card id the second `done` record replaced
+    the real completion times with the restart's clock (observed 2026-09-12, an
+    idle serve-mode driver restarted after its run finished)."""
+    _env(monkeypatch, tmp_path)
+    st = _two_done_cards()
+    run.record_chain_starts(st)
+    run.record_chain_done(st)
+    assert len(_recs(tmp_path)) == 4          # 2 starts + 2 dones
+
+    # The restart: a fresh process on the same run directory.
+    monkeypatch.setattr(run, "_CHAIN_STARTED", set())
+    monkeypatch.setattr(run, "_CHAIN_DONE", set())
+    run.rejoin_chain()
+    run.record_chain_starts(st)
+    run.record_chain_done(st)
+    assert len(_recs(tmp_path)) == 4, "the restart re-recorded what the run already had"
+
+
+def test_a_restart_that_recorded_nothing_leaves_the_summary_alone(monkeypatch, tmp_path):
+    """wall_min is this process's uptime, so a restart rewriting a finished run
+    reported 0.2 min of wall against 21.7 min of agent work — and
+    `restarts_observed` (agent > wall) then fired on a run that never restarted."""
+    _env(monkeypatch, tmp_path)
+    path = tmp_path / "runs" / "run-summary.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"wall_min": 28.4, "agent_work_min": 21.7}')
+    monkeypatch.setattr(run, "_PROCESS_RECORDED", [False])
+    run.write_summary({})
+    assert json.load(open(path))["wall_min"] == 28.4
+
+
+def test_the_driving_process_still_writes_the_summary(monkeypatch, tmp_path):
+    _env(monkeypatch, tmp_path)
+    path = tmp_path / "runs" / "run-summary.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"wall_min": 28.4, "agent_work_min": 21.7}')
+    monkeypatch.setattr(run, "_PROCESS_RECORDED", [True])
+    run.write_summary({})
+    assert json.load(open(path))["wall_min"] != 28.4

@@ -22,8 +22,8 @@ verifier-heavy card legitimately needs more than a chat loop. `agent.max_turns`
 The judge needs a **reachable** auxiliary model. One that is reachable but
 failing is the dangerous case: it reports its transport error as the verdict
 `continue` — "not done yet" — which no evidence can satisfy, so every worker
-card runs to its ceiling, retries, gives up, and the driver halts
-(`ERRORS.md` O10).
+card runs to its ceiling and the board halts on that first timeout (`ERRORS.md`
+O10). Nothing is retried: a failure is final on this board.
 
 The template does not name that model or ship a probe for it, so the honest
 check is empirical — and that is what this board is for. Arm it and watch the
@@ -35,7 +35,7 @@ first card (`I1`):
   card ends `gave_up`.
 
 `max-runtime` is 6 minutes and `max-retries` is 1, so a wedge declares itself
-in about twelve minutes instead of at the hour-long default. That is the whole
+in about six minutes instead of at the hour-long default. That is the whole
 reason to reach for this board before arming a real one with `goal` on.
 
 If the judge is failing, set `"goal": false` in the board you actually

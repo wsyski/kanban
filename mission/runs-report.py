@@ -50,6 +50,31 @@ def current_run(runs):
         return None
 
 
+# The driver's own state, in runs/ itself whatever the layout: the log it appends
+# to, its lock, the pointer naming the live run.
+BOARD_LEVEL = ("driver.log", "driver.lock", "current")
+# A pre-per-run layout's own subdirectories — run state, but not a run directory.
+FLAT_SUBDIRS = ("snapshots", "artifacts", "cards", "scratch", "patches")
+
+
+def flat_leftovers(runs):
+    """Entries in runs/ that belong to no run directory — a flat layout's remains.
+
+    A board that has run both ways keeps them beside the per-run directories, and
+    reporting only the directories under-reports the tree this tool exists to make
+    visible.
+    """
+    out = []
+    for name in sorted(os.listdir(runs)):
+        if name in BOARD_LEVEL:
+            continue
+        path = os.path.join(runs, name)
+        if os.path.isdir(path) and name not in FLAT_SUBDIRS:
+            continue                      # a run directory: reported on its own
+        out.append(path)
+    return out
+
+
 def runs_in(runs):
     """Every run directory, newest first, with what it costs and what it holds."""
     live = current_run(runs)
@@ -58,8 +83,7 @@ def runs_in(runs):
         return out, live
     for name in sorted(os.listdir(runs)):
         path = os.path.join(runs, name)
-        if not os.path.isdir(path) or name in ("snapshots", "artifacts", "cards",
-                                               "scratch", "patches"):
+        if not os.path.isdir(path) or name in FLAT_SUBDIRS:
             continue                    # a pre-per-run layout's own subdirectories
         scratch = os.path.join(path, "scratch")
         out.append({
@@ -81,6 +105,23 @@ def runs_in(runs):
                     "modified": datetime.datetime.fromtimestamp(
                         os.path.getmtime(runs)).isoformat(timespec="seconds"),
                     "path": runs, "flat": True})
+    elif out:
+        left = flat_leftovers(runs)
+        if left:
+            # A board that has run BOTH ways keeps the old flat run state beside the
+            # per-run directories (driver.log, chain.jsonl, run-summary.json, cards/,
+            # scratch/ …). Reporting only the directories under-reports the tree this
+            # tool exists to make visible.
+            size = sum(dir_size(p) if os.path.isdir(p) else os.path.getsize(p)
+                       for p in left)
+            scratch = sum(dir_size(p) for p in left
+                          if os.path.isdir(p) and os.path.basename(p) == "scratch")
+            out.append({"run": "(flat leftovers — before per-run directories)",
+                        "current": False, "bytes": size, "scratch_bytes": scratch,
+                        "modified": datetime.datetime.fromtimestamp(
+                            max(os.path.getmtime(p) for p in left)
+                        ).isoformat(timespec="seconds"),
+                        "path": left, "flat": True})
     out.sort(key=lambda r: r["modified"], reverse=True)
     return out, live
 

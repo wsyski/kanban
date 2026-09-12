@@ -20,12 +20,14 @@ feeding a second workstation). The driver's staged index is board state: a cron
 that commits it takes the gate's decision away and pushes a half-finished change.
 Pause it before arming, resume when the board is done.
 
-**Start from a clean index, and stay off it while the board runs.**
-`git diff --cached` lists the whole index, so your own pending edits become the
-lane's evidence and a reviewer will judge the lane on them. Check
-`git -C ~/.hermes/profiles status` first — the doors refuse a dirty index, and once
-the run is live a path you stage there is reported and fails the audit (E17). It is
-reported, not unstaged: the board will not throw away your pending work.
+**Expect the lane to touch this tree, and let it.** The board promises nothing
+about a staged or uncommitted file inside its work directory — the lane may change,
+replace or delete what it finds there, and that is the lane's decision, not yours.
+What it will not do is commit or branch. `git diff --cached` lists the whole index,
+so your own pending edits would reach the lane's evidence: check
+`git -C ~/.hermes/profiles status` for information, and once the run is live a path
+you stage there is reported and fails the audit (E17). Reported, not unstaged — the
+board will not throw away your pending work outside the lane's own paths.
 
 ## Cleaning up
 

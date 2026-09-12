@@ -31,13 +31,14 @@ def kb(board, *args):
 
 
 DEFAULT_MAX_RUNTIME = "60m"
+# ONE attempt per card, always. A failure — a timeout, a crash, a spawn that never
+# started — is FINAL (user rule, 2026-09-12): the dispatcher's breaker blocks the
+# card on that first failure and the driver halts the board. The only retry the
+# board recognises is a REVIEW that failed, because it says so with a new card (a
+# revision round); re-running a card against an unchanged body and hoping for a
+# different outcome is not a mechanism this board has, and the 3-retry budget the
+# cards feeding a reviewer used to get was exactly that hope.
 DEFAULT_MAX_RETRIES = 1
-# Cards whose work a reviewer judges (the card BEFORE one with a reviewer
-# assignee) default to 3 retries: a REJECT → revision cycle costs an attempt,
-# and failing there is judgment, not a wedged worker — the chain re-enters
-# review after each fix. Everything else failing twice in a row is broken —
-# 1 is right.
-REVIEWER_FEED_MAX_RETRIES = 3
 
 # Shared text a body includes by name, so a rule two cards must agree on (the
 # plan checklist, the toolchain boundary) is written once. A fragment may use the
@@ -102,18 +103,32 @@ def workdir_state(workdir, board_dir=None):
     entries = [e for e in os.listdir(workdir) if e not in (".git",)]
     if not entries:
         return "empty — nothing has been built here yet"
-    files = sum(len(fs) for _r, _d, fs in os.walk(workdir))
+    # `.git` is not something a lane works on: counting its internals reported
+    # "21 file(s) on disk" for a one-file repo.
+    files = 0
+    for _root, dirs, names in os.walk(workdir):
+        dirs[:] = [d for d in dirs if d != ".git"]
+        files += len(names)
     own = bool(board_dir) and os.path.abspath(workdir).startswith(
         os.path.abspath(board_dir) + os.sep)
     what = ("a PREVIOUS RUN's product on this board" if own
             else "an EXISTING PROJECT this board did not create")
-    head = subprocess.run(["git", "-C", workdir, "rev-parse", "--abbrev-ref", "HEAD"],
-                          capture_output=True, text=True)
-    if head.returncode == 0:
-        tracked = subprocess.run(["git", "-C", workdir, "ls-files"],
-                                 capture_output=True, text=True).stdout.split()
-        detail = (f"{len(tracked)} tracked file(s), {files} file(s) on disk, "
-                  f"git branch {head.stdout.strip()}")
+    inside = subprocess.run(["git", "-C", workdir, "rev-parse", "--is-inside-work-tree"],
+                            capture_output=True, text=True)
+    if inside.returncode == 0 and inside.stdout.strip() == "true":
+        # What the LANE works in: files on disk, and how many of them are
+        # uncommitted. Deliberately not `git ls-files` — that reads the INDEX, and
+        # the line then describes a view neither the worker nor HEAD sees (a staged
+        # tree reads as tracked whether or not it is in history).
+        branch = subprocess.run(["git", "-C", workdir, "rev-parse", "--abbrev-ref", "HEAD"],
+                                capture_output=True, text=True).stdout.strip()
+        # `-- .` scopes it to THIS directory: without the pathspec, git reports the
+        # whole repository and the line said "10 file(s) on disk, 35 with uncommitted
+        # changes" for a work/ holding two tracked files.
+        dirty = subprocess.run(["git", "-C", workdir, "status", "--porcelain", "--", "."],
+                               capture_output=True, text=True).stdout.splitlines()
+        detail = (f"{files} file(s) on disk, {len(dirty)} with uncommitted changes, "
+                  f"git branch {branch or 'no commits yet'}")
     else:
         detail = f"{files} file(s) on disk, not under git"
     return (f"NOT empty — {what}: {detail}. Its contents are this idea's input: "
@@ -173,17 +188,6 @@ def render_body(body_file, *, repo, board, workdir, lane, targets=(), bodies_dir
     return text
 
 
-def _retries_for(card_id, cards_by_id):
-    """3 when the card's child (next step) is a reviewer card, else 1."""
-    for c in cards_by_id:
-        # `role`, not `assignee`: a board may remap reviewer -> its own profile
-        # (board.json `assignees`), and comparing the remapped name would silently
-        # drop the reviewer-feed retry budget for exactly the boards that renamed it.
-        if c["parent"] == card_id and c.get("role") == "reviewer":
-            return REVIEWER_FEED_MAX_RETRIES
-    return DEFAULT_MAX_RETRIES
-
-
 def _board_cfg(board_dir):
     """This board's manifest — the per-card ceiling comes from board.json
     (`max-runtime`, e.g. "45m" or "90m"); the default applies when omitted."""
@@ -237,9 +241,7 @@ def file_board(board, repo, workdir, lane_count, key_prefix, max_runtime=None,
         for card in cards:
             body = render_body(card["body"], repo=repo, board=board, workdir=workdir,
                                lane=lane, targets=targets or (), run_id=run_id)
-            retries = REVIEWER_FEED_MAX_RETRIES \
-                if _retries_for(card["id"], cards) > DEFAULT_MAX_RETRIES \
-                else max_retries
+            retries = max_retries
             args = ["create", card["title"], "--body", body,
                     "--assignee", card["assignee"], "--workspace", f"dir:{workdir}",
                     "--max-runtime", runtime, "--max-retries", str(retries),
@@ -331,12 +333,23 @@ def file_ideas(board, repo, ideas_dir, lane_count, key_prefix, run_id=None,
         text = open(path).read()
         if not text.strip():
             continue
-        snapshot = lane_paths(repo, board, lane, run_id)["<IDEA>"]
+        # The RUN directory is minted when an idea is armed, so a card that will be
+        # armed later cannot name it: this filing's run id is not the one lane <k>
+        # will be activated into (create-board.sh's --once flow is the exception,
+        # and it is why the flat path is still stated when there is no run at all).
+        # Name the runs root and the file under it instead — the part that is true
+        # either way.
+        runs_root = run_dir(repo, board, run_id)
+        if run_id:
+            runs_root = os.path.dirname(runs_root)
         body = (f"RAW IDEA for lane {lane} — human input, not a work card.\n\n"
                 f"{_options_line(repo, board, lane, text, workdir)}\n"
                 f"Source: {os.path.join(ideas_dir, f'lane-{lane}.md')}\n"
-                f"The driver snapshots this to {snapshot} when it activates lane "
-                f"{lane}; lane {lane}'s cards read the snapshot, never the source.\n"
+                f"The driver snapshots this into the run it is driving when it "
+                f"activates lane {lane} — `<runs>/<run-id>/snapshots/lane-{lane}.md` "
+                f"under {runs_root} (a run is minted when an idea is armed, so the id "
+                f"is not known until then); lane {lane}'s cards read the snapshot, "
+                f"never the source.\n"
                 f"Edit the source until the lane is activated.\n\n---\n\n{text}")
         out = kb(board, "create", idea_title(text, lane),
                  "--body", body, "--triage",

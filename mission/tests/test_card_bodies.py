@@ -83,6 +83,20 @@ def test_plan_card_reads_the_refined_idea():
     assert "<REFINED>" in read("i-body.txt"), "the researcher must write the refined idea"
 
 
+def test_the_result_fragment_names_both_valid_outcomes():
+    """USER RULE (2026-09-12): a lane that changes nothing because nothing needed
+    changing is a valid ending, and a lane pointed at an existing project discovers
+    that by reading the directory. Both rules have to be in the text a worker reads,
+    or it invents work to look busy."""
+    text = read("_result-field.txt")
+    assert "CHANGED:" in text and "NO CHANGE:" in text
+    tw = read("tw-body.txt")
+    assert "manufacture a FAIL" in tw
+    assert "already pass" in tw
+    assert "WORK DIRECTORY IS THE INPUT" in tw
+    assert "expect FAIL" not in read("_plan-checklist.txt")
+
+
 def test_worker_bodies_point_at_the_snapshot_not_the_source():
     for body in ("p-body.txt", "rvp-body.txt", "rva-body.txt"):
         text = read(body)

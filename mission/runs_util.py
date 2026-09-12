@@ -13,6 +13,14 @@ import sys
 
 _WARNED = set()
 
+# Every attempt that has both ends. A TIMED-OUT attempt is closed worker time too:
+# it burned the card's whole ceiling before the dispatcher killed it, and leaving
+# it out of the sums made both the run summary and the auditor's ceiling check
+# blind to the one event the ceiling exists to surface. Observed 2026-09-12: TW1
+# timed out at 600s and the summary reported 2.37 min for the card — the ten
+# minutes reappeared as "overhead", on a run the auditor called clean.
+CLOSED_OUTCOMES = ("completed", "gave_up", "timed_out")
+
 
 def _warn_once(msg):
     """A silent [] reads as "this card has no runs". A refused CLI call therefore
@@ -55,9 +63,9 @@ def elapsed_min(run):
 
 
 def worked_min(board, card_id):
-    """Summed agent minutes over a card's completed and gave_up runs."""
+    """Summed agent minutes over a card's CLOSED attempts (CLOSED_OUTCOMES)."""
     return sum(elapsed_min(r) for r in board_runs(board, card_id)
-               if r.get("outcome") in ("completed", "gave_up"))
+               if r.get("outcome") in CLOSED_OUTCOMES)
 
 
 _UPDATE_BANNER = ("⚠ A previous `hermes update`", "Gateways may still be serving",
