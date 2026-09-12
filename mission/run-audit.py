@@ -74,11 +74,15 @@ DONE_STATES = ("done", "archived", "triage")
 # a POSITION prefix the way a tool prints it (`foo.c:12: warning: …`,
 # `pytest: warning: …`), or be a Python warning class. A sentence that merely mentions
 # one is prose — a plan review reasoning about the checklist quoted item 4 ("Item 4's
-# warning: \"A [TW] step that demands a FAIL …\"") and was reported as E13 on
+# warning: \"A [TW] step that demands a FAIL …\") and was reported as E13 on
 # 2026-09-12's blade-workspace run, where no tool printed a warning at all.
 # The FORM is case-insensitive the way tools print it (`warning:`, `WARNING:`,
-# `foo.c:12: warning:`), never a sentence that mentions the word.
-WARN_LINE = re.compile(r"(?i)(^\s*warnings?\b|:\s*warnings?\s*:)|"
+# `foo.c:12: warning:`), never a sentence that mentions the word — and the COLON is
+# what makes it a tool's line: a worker's reasoning is hard-wrapped in the log, so a
+# continuation line can begin with the bare word (`"…The protocol" / " warning is
+# based on stale state…"`, RVa1 on the 2026-09-12 blade-workspace run, which a
+# line-leading `warning\b` read as the run emitting a warning).
+WARN_LINE = re.compile(r"(?i)(^\s*warnings?\s*:|:\s*warnings?\s*:)|"
                        r"(DeprecationWarning|RuntimeWarning|UserWarning|FutureWarning)")
 # A possessive is prose in a verdict too ("item 4's warning does not apply"), so the
 # same guard applies to the result field: only the word standing on its own counts.
@@ -337,7 +341,7 @@ def audit(runs_dir, board_dir=None):
     stats.update(s_stats)
 
     recs = CHAIN.load(runs_dir)
-    rows, chain_findings = CHAIN.analyze(recs) if recs else ([], [])
+    rows, chain_findings = CHAIN.analyze(recs, runs_dir) if recs else ([], [])
     for f in chain_findings:
         findings.append(("ERROR", "E3", f))
     findings += result_findings(rows)

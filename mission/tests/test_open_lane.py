@@ -113,6 +113,39 @@ def test_a_lane_without_unit_tests_unlinks_the_review_from_the_archived_tester(m
     run._OPENED.clear()
 
 
+def test_a_lane_that_prunes_its_idea_cards_releases_its_root_at_once(monkeypatch, tmp_path):
+    """`refinement: false` archives I and Gi at lane open, which makes P the lane ROOT
+    — but P's DECLARED parent is the idea gate the same open archives. A promotion
+    graph built before the prune still lists it, a pruned parent reads as not-done,
+    and the root waits a whole tick: 28 s measured on 2026-09-12's blade-workspace run
+    (snapshot written 22:21:43, root released 22:22:11), which is also what made the
+    run's own snapshot look like a leftover to doc-chain's F3."""
+    calls = []
+    _board_env(monkeypatch, tmp_path, calls)
+    monkeypatch.setattr(run, "lane_options",
+                        lambda lane: {"integration-tests": False, "unit-tests": False,
+                                      "auto-gates": False, "refinement": False,
+                                      "idea": "## Idea 1: is_even\n"})
+    live = _state(root_status="blocked")
+
+    def kb(*a, **k):
+        calls.append(a)
+        if a and a[0] == "archive":
+            for title, card in list(live.items()):
+                if card["id"] == a[1]:
+                    live.pop(title)          # an archived card is absent from the board
+        return ""
+
+    monkeypatch.setattr(run, "kb", kb)
+    monkeypatch.setattr(run, "board", lambda: dict(live))
+    run.tick()
+    archived = [c[1] for c in calls if c[0] == "archive"]
+    assert archived[:2] == ["id-I", "id-Gi"], calls
+    assert [c[1] for c in calls if c[0] == "unblock"] == ["id-P"], \
+        "the root waited a tick for a parent its own open archived"
+    run._OPENED.clear()
+
+
 def test_a_lane_that_keeps_its_cells_archives_none(monkeypatch, tmp_path):
     """The pruning branches read the RESOLVED options, not the manifest — so a lane that
     ends up with both test levels (the board turned one off, the idea's header turned it

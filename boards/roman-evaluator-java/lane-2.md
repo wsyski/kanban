@@ -1,4 +1,4 @@
-## Idea 2: roman-number REST service
+## Idea 2: Roman number evaluator - REST service
 
 Build a spec-first Spring Boot REST API as a Maven module in `roman-service/`,
 inside this board's work directory. `POST /evaluate` takes `{"roman": "XIV"}`

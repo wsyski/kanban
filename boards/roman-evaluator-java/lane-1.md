@@ -1,4 +1,4 @@
-## Idea 1: roman-number CLI
+## Idea 1: Roman number evaluator - CLI
 
 Build a command-line roman-number evaluator as a Maven module in `roman-cli/`:
 it reads one roman numeral from standard input and prints its value as a

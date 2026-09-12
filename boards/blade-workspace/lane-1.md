@@ -1,5 +1,5 @@
 <!-- unit-tests: false -->
-## Idea 1: readme_says_what_is_here
+## Idea 1: README.md Improvment
 
 The README at the root of the work directory is the stock Liferay Workspace
 template text. It describes a folder tree called `my-project` that this project

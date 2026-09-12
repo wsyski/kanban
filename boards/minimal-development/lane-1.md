@@ -1,4 +1,4 @@
-## Idea 1: is_even
+## Idea 1: Even Check
 
 Write `is_even.py` at the root of the board's work directory, containing exactly
 one function:

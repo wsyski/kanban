@@ -51,8 +51,15 @@ def chain(tmp_path, refined_at=60, plan_at=240, unresolved=None, attached=("t_i1
     return recs
 
 
+def _age(path, seconds):
+    """Set a file's mtime, WITHOUT rewriting it — `touch()` overwrites the content,
+    which is exactly what a pointer file must keep."""
+    t = (BASE + datetime.timedelta(seconds=seconds)).timestamp()
+    os.utime(path, (t, t))
+
+
 def findings_for(tmp_path):
-    return dc.analyze(dc.load(str(tmp_path)))[1]
+    return dc.analyze(dc.load(str(tmp_path)), str(tmp_path))[1]
 
 
 def test_a_correct_chain_reports_nothing(tmp_path):
@@ -62,6 +69,74 @@ def test_a_correct_chain_reports_nothing(tmp_path):
 
 def test_a_hand_off_older_than_the_run_is_caught(tmp_path):
     chain(tmp_path, refined_at=-600)          # refined written before the run started
+    out = findings_for(tmp_path)
+    assert any(f.startswith("F3 I1") and "leftover" in f for f in out), out
+
+
+def test_a_snapshot_written_as_the_lane_opened_is_not_a_leftover(tmp_path):
+    """The driver writes the lane's inputs at lane open and releases the root AFTER
+    them — deliberately ("Snapshot BEFORE unblocking", run.py's open_lane) — so the
+    idea snapshot always predates the first card's start. Measured on 2026-09-12's
+    blade-workspace run: root released 28 s after the snapshot, and the old
+    `min(start)` baseline reported the run's own snapshot as F3 'leftover' three
+    times. The lane-open record is what makes the baseline the run's real start."""
+    snap, plan = str(tmp_path / "snap.md"), str(tmp_path / "plan.md")
+    touch(snap, 0)                            # written by the driver, as the lane opened
+    touch(plan, 60)                           # P's own output, after it started
+    recs = [{"ts": at(0), "event": "lane_open", "lane": 1},
+            {"ts": at(30), "event": "start", "lane": 1, "code": "P1", "card_id": "t_p",
+             "title": "P1: implementation plan - lane 1", "status": "ready",
+             "inputs": {"IDEA": snap, "PLAN": plan}, "unresolved": []},
+            {"ts": at(400), "event": "done", "lane": 1, "code": "P1", "card_id": "t_p",
+             "title": "P1: implementation plan - lane 1", "status": "done",
+             "attached": ["plan.md"], "staged": ["boards/b/work/is_even.py"],
+             "result": "a plan"}]
+    (tmp_path / "chain.jsonl").write_text("\n".join(json.dumps(r) for r in recs) + "\n")
+    assert findings_for(tmp_path) == []
+
+
+def test_a_hand_off_older_than_the_lane_open_is_still_a_leftover(tmp_path):
+    """The baseline moves EARLIER with the lane-open record, never away: a refined
+    idea written before the lane opened is still exactly what F3 exists to catch."""
+    recs = chain(tmp_path, refined_at=-600)
+    recs.insert(0, {"ts": at(0), "event": "lane_open", "lane": 1})
+    (tmp_path / "chain.jsonl").write_text("\n".join(json.dumps(r) for r in recs) + "\n")
+    out = findings_for(tmp_path)
+    assert any(f.startswith("F3 I1") and "leftover" in f for f in out), out
+
+
+def test_a_chain_without_the_lane_open_record_uses_the_run_pointer(tmp_path):
+    """A chain written before the driver recorded its lane open still gets a baseline:
+    the run's own MINT — `runs/current` beside the run directory, written when the run
+    was created. This is the shape 2026-09-12's blade-workspace chain has: the snapshot
+    was written at lane open and the root released 28 s later, and without this the
+    check falls back to the first card's start and calls the run's own input a
+    leftover."""
+    snap, plan = str(tmp_path / "snap.md"), str(tmp_path / "plan.md")
+    pointer = tmp_path / "current"
+    pointer.write_text(tmp_path.name)         # it NAMES this run
+    _age(str(pointer), -15)                   # minted before the lane opened
+    touch(snap, 0)
+    touch(plan, 60)
+    recs = [{"ts": at(30), "event": "start", "lane": 1, "code": "P1", "card_id": "t_p",
+             "title": "P1: implementation plan - lane 1", "status": "ready",
+             "inputs": {"IDEA": snap, "PLAN": plan}, "unresolved": []},
+            {"ts": at(400), "event": "done", "lane": 1, "code": "P1", "card_id": "t_p",
+             "title": "P1: implementation plan - lane 1", "status": "done",
+             "attached": ["plan.md"], "staged": ["boards/b/work/is_even.py"],
+             "result": "a plan"}]
+    (tmp_path / "chain.jsonl").write_text("\n".join(json.dumps(r) for r in recs) + "\n")
+    assert findings_for(tmp_path) == []
+
+
+def test_a_pointer_to_another_run_is_not_this_runs_baseline(tmp_path):
+    """Read only when it names THIS run: a `current` pointing elsewhere says nothing
+    about when this run began, so the hand-off older than the run is still caught."""
+    pointer = tmp_path / "current"
+    pointer.write_text("some-other-run")
+    _age(str(pointer), -9000)
+    recs = chain(tmp_path, refined_at=-600)
+    (tmp_path / "chain.jsonl").write_text("\n".join(json.dumps(r) for r in recs) + "\n")
     out = findings_for(tmp_path)
     assert any(f.startswith("F3 I1") and "leftover" in f for f in out), out
 

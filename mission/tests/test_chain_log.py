@@ -35,6 +35,22 @@ def test_a_driver_unblock_records_what_the_card_was_given(monkeypatch, tmp_path)
     assert rec["ts"].startswith("2026-") or rec["ts"].startswith("20")   # from started_at
 
 
+def test_the_lane_open_is_recorded_once_before_any_card_starts(monkeypatch, tmp_path):
+    """The run's own beginning. doc-chain's F3 needs a baseline earlier than any
+    card's start, because the driver writes the lane's inputs (the idea snapshot, the
+    workdir snapshot) and releases the root AFTER them — live 2026-09-12, 28 s after
+    on blade-workspace. A restart must not re-record it, the way a card's start is
+    not re-recorded (load_chain_ids)."""
+    _env(monkeypatch, tmp_path)
+    run.record_lane_open(1)
+    run.record_lane_open(1)                   # a second driver process, or a restart
+    run.record_lane_open(2)                   # another lane is another beginning
+    recs = _recs(tmp_path)
+    assert [(r["event"], r["lane"]) for r in recs] == [("lane_open", 1), ("lane_open", 2)]
+    assert recs[0]["ts"]                      # a real timestamp, on the run's clock
+    assert "card_id" not in recs[0]           # no card: the run began, no card did
+
+
 def test_a_card_someone_else_released_is_still_recorded_once(monkeypatch, tmp_path):
     """--once unblocks the lane root itself, and a human can unblock by hand."""
     _env(monkeypatch, tmp_path)

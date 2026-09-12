@@ -1109,6 +1109,11 @@ def open_lane(state, lane):
        f"lane {lane} opened: integration-tests={opts['integration-tests']} "
        f"unit-tests={opts['unit-tests']} auto-gates={opts['auto-gates']}, "
        f"idea snapshot: {snap}")
+    # The run's own beginning, on the record. The lane's inputs are on disk above and
+    # the root is released next, so doc-chain's F3 ("a document older than the run is
+    # a leftover") measures from HERE rather than from the first card's start — which
+    # lands after this by design, and by a whole tick on a refinement: false lane.
+    record_lane_open(lane)
     _OPENED.add(lane)
     return "open"
 
@@ -1347,6 +1352,44 @@ def chain_record(event, card, lane, ts=None, **extra):
     _PROCESS_RECORDED[0] = True
 
 
+def record_lane_open(lane):
+    """One record per lane per run, at the moment its inputs exist and its root is
+    about to be released — the run's own beginning.
+
+    Written by the driver because the ordering it describes is the driver's: the idea
+    snapshot and the workdir snapshot are on disk before the root card is released
+    ("Snapshot BEFORE unblocking", above), so neither can be judged against the first
+    card's start. doc-chain's F3 reads this record as the run's start, which is the
+    only baseline under which the run's own snapshot is not a "leftover".
+
+    Idempotent against a restart, the way the card records are: a second driver
+    process must not re-record what this run already has (a doubled chain row is what
+    load_chain_ids exists to prevent).
+    """
+    if not BOARD:
+        return
+    path = os.path.join(RUN_DIR, "chain.jsonl")
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                if rec.get("event") == "lane_open" and rec.get("lane") == lane:
+                    return
+    except OSError:
+        pass
+    os.makedirs(RUN_DIR, exist_ok=True)
+    with open(path, "a") as f:
+        f.write(json.dumps({"ts": datetime.datetime.now().isoformat(timespec="seconds"),
+                            "event": "lane_open", "lane": lane}) + "\n")
+    _PROCESS_RECORDED[0] = True
+
+
 def record_chain_start(card, lane, observed=False):
     """One record per card as it leaves the parked state.
 
@@ -1562,7 +1605,6 @@ def tick():
                  "cannot advance by itself")
         return True
     workdir_drift(st)
-    graph = lane_graph(st)
     # 0. open the lanes whose turn has come. Promotion below only ever looks at
     #    BLOCKED cards, so a root that was already unblocked (--once, or a human)
     #    would never open its lane — and open_lane is what prunes TI/RVc on an
@@ -1570,6 +1612,15 @@ def tick():
     if open_lanes(st):
         st = state = board()
     note_empty_results(st)
+    # The promotion graph is built AFTER the lanes are opened, never before: open_lane
+    # prunes the lane's optional cards (I and Gi on a `refinement: false` lane), and a
+    # graph computed from the pre-prune state still lists them — a pruned parent reads
+    # as not-done, so the root, whose DECLARED parent is the idea gate the same open
+    # just archived, waited a whole tick for promotion. Measured on 2026-09-12's
+    # blade-workspace run: snapshot written 22:21:43, root released 22:22:11 — one
+    # 20 s poll apart, and the reason the run's own snapshot read as a leftover to
+    # doc-chain's F3. `graph` is used only by the loop below, so this is its one home.
+    graph = lane_graph(st)
     # 1. handoff promotion: blocked card whose parents are all done -> unblock
     for title, parents, kind, lane in graph:
         card = st.get(title)

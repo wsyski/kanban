@@ -46,14 +46,53 @@ def mtime(path):
     return datetime.datetime.fromtimestamp(os.path.getmtime(path))
 
 
-def analyze(recs):
+def run_beginning(recs, runs_dir=None):
+    """When this run began, from the evidence that exists.
+
+    Never later than the first card's start, and that is the point: the driver writes
+    the lane's inputs and releases the root AFTER them (see analyze).
+
+    The driver's own lane-open record is the first choice. A chain written before that
+    record existed has none, so the next evidence is the run's own MINT: `runs/current`,
+    the pointer beside the run directory, written when the run was created and never
+    rewritten. It is read only when it NAMES this run — a pointer to another run proves
+    nothing about this one.
+    """
+    stamps = [parse_ts(r["ts"]) for r in recs]
+    if runs_dir:
+        run_dir = os.path.normpath(runs_dir)
+        run_name = os.path.basename(run_dir)
+        for pointer in (os.path.join(run_dir, "current"),
+                        os.path.join(os.path.dirname(run_dir), "current")):
+            try:
+                with open(pointer) as f:
+                    named = f.read().strip()
+            except OSError:
+                continue
+            if named != run_name:
+                continue
+            stamps.append(mtime(pointer))
+            break
+    return min(stamps)
+
+
+def analyze(recs, runs_dir=None):
     """Rows per card plus the findings that make the chain wrong."""
     starts = [r for r in recs if r["event"] == "start"]
     dones = {r["card_id"]: r for r in recs if r["event"] == "done"}
     reworks = [r for r in recs if r["event"] == "rework"]
     if not starts:
         return [], []
-    run_start = min(parse_ts(r["ts"]) for r in starts)
+    # The run BEGINS when its first lane opens, not when its first card starts. The
+    # driver writes the lane's inputs at lane open and releases the root afterwards,
+    # deliberately ("Snapshot BEFORE unblocking", run.py's open_lane), so the idea
+    # snapshot always predates the first card's start — that is the ordering, not a
+    # leftover. It is not a small gap either: on 2026-09-12's blade-workspace run the
+    # root (P, the lane root of a `refinement: false` lane) started 28 s after the
+    # snapshot, because its declared parent Gi was archived by the very open that
+    # wrote the snapshot, and the promotion graph was one tick stale. The old
+    # `min(start)` baseline read the run's own snapshot as F3 three times.
+    run_start = run_beginning(recs, runs_dir)
     rows, findings = [], []
     # The producer of each lane document, for the continuity check.
     producers = {}
@@ -188,7 +227,7 @@ def main(argv=None):
         print(f"no chain log at {os.path.join(runs, 'chain.jsonl')} — "
               f"written by run.py for runs started since this landed", file=sys.stderr)
         return 2
-    rows, findings = analyze(recs)
+    rows, findings = analyze(recs, runs)
     if a.history:
         print(history(runs))
         return 1 if findings else 0

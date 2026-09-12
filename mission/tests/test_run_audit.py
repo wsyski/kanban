@@ -242,14 +242,19 @@ def test_a_warning_in_a_card_log_is_a_warning(tmp_path, monkeypatch):
 
 def test_prose_about_a_deprecated_field_is_not_a_warning(tmp_path, monkeypatch):
     """Card logs are transcripts: a worker quoting the tool schema is not the run
-    emitting a warning."""
+    emitting a warning. The line that tripped this on 2026-09-12 is a wrapped
+    continuation of the worker's own reasoning — no tool printed a warning at all."""
     clean_probe(monkeypatch)
     runs = fixture(tmp_path, chain_recs=worker_chain())
     home = tmp_path / "home" / "kanban" / "boards" / "b" / "logs"
     home.mkdir(parents=True)
     (home / "t_c.log").write_text(
         "Also need the result field. kanban_complete's `result` param is "
-        "deprecated legacy; prefer summary.\n")
+        "deprecated legacy; prefer summary.\r\n"
+        " that the card is already complete — calling kanban_block would be wrong. "
+        "The protocol\r\n"
+        " warning is based on stale state; the live read (kanban_show) showed "
+        "status done. So\r\n")
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / "home"))
     findings, _rows, _s = ra.audit(runs)
     assert "E13" not in codes(findings), findings
@@ -270,7 +275,13 @@ def test_the_word_is_a_warning_only_in_a_tool_form():
     for line in ('Item 4\'s warning: "A [TW] step that demands a FAIL its own '
                  'Findings contradict fails this item"',
                  "the plan has no [TW] steps, so a warning would be wrong here",
-                 "Potential item 4 issue: nothing to warn about"):
+                 "Potential item 4 issue: nothing to warn about",
+                 # A worker's reasoning is HARD-WRAPPED in the transcript, so a
+                 # continuation line can begin with the bare word and is still prose.
+                 # Live, RVa1 on 2026-09-12's blade-workspace run: the sentence
+                 # before it ended with "The protocol".
+                 " warning is based on stale state; the live read (kanban_show) "
+                 "showed status done. So"):
         assert not ra.WARN_LINE.search(line), line
 
 

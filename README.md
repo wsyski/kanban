@@ -577,7 +577,10 @@ the human's git write — or explicitly no write — closes the chain
   where you decide whether to commit, so the cost of the lane has to be
   readable while the answer can still change the decision. Once per lane per run; a re-run
   keeps the previous one because it writes into its own run directory.
-- The document chain: `boards/<slug>/runs/<run-id>/chain.jsonl`, one record per card as it
+- The document chain: `boards/<slug>/runs/<run-id>/chain.jsonl`, one record when a
+  lane opens (the run's own beginning — the lane's inputs are written and the root is
+  released after them, so this is the baseline a "written before the run" finding is
+  measured from, not the first card's start), one per card as it
   starts (the lane documents its filed body names, and any unresolved
   `<PLACEHOLDER>`) and as it finishes (the patch it attached, the staged set at
   that moment, its result). `mission/doc-chain.py --runs boards/<slug>/runs`

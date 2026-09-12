@@ -1,4 +1,4 @@
-## Idea 1: GPW small-cap candidate research
+## Idea 1: Portfolio Engineering
 
 Build a research pipeline that proposes *new* Polish small-cap investment
 candidates with a written thesis, and that can be measured after the fact.
