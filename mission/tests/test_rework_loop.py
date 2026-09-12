@@ -214,18 +214,28 @@ def board_env(monkeypatch, tmp_path):
 
 
 def test_revision_rounds_are_rendered_like_filed_cards(monkeypatch, board_env):
+    """Every owner's round renders like the card it revises: no placeholder survives,
+    and each carries the same workspace, ceiling and skill as a first filing."""
     calls = _capture_kb(monkeypatch)
     run.file_revision(_revision_state(), 1, 1, "1. fix the header", base="P",
                       reviewer_prefix="RVp", gate_code="Gp")
-    run.file_coder_revision(_revision_state(), 1, 1, "1. fix the parser")
+    for owner in ("C", "TW", "TI"):
+        run.file_code_revision(_revision_state(), 1, 1, f"1. fix the {owner}",
+                               owner=owner)
     created = [c for c in calls if c[0] == "create"]
-    assert len(created) == 4
+    assert len(created) == 8          # plan round + one round per owner, each 2 cards
     for c in created:
         assert not run.unresolved_placeholders(_arg(c, "--body")), c[1]
         assert _arg(c, "--workspace") == f"dir:{run.WORKDIR}"
         assert _arg(c, "--max-runtime") == "7m"
     rev_plan = next(c for c in created if c[1].startswith("P1-rev-1"))
     assert _arg(rev_plan, "--skill") == "writing-plans"
+    rev_tw = next(c for c in created if c[1].startswith("TW1-rev-1"))
+    assert _arg(rev_tw, "--assignee") == lanes.assignee_for("tester", None)
+    rev_ti = next(c for c in created if c[1].startswith("TI1-rev-1"))
+    # the integration level is CODER work (lanes.LANE_CARDS), so its revision goes
+    # to the coder role — not to the tester role it would have shared before
+    assert _arg(rev_ti, "--assignee") == lanes.assignee_for("coder", None)
 
 
 def test_plan_re_review_is_filed_as_a_verdict_card_not_a_gate(monkeypatch, board_env):
@@ -268,10 +278,50 @@ def _recording(monkeypatch):
     filed = []
     monkeypatch.setattr(run, "file_revision",
                         lambda st, lane, r, findings, **kw: filed.append(("rev", lane, r, findings, kw)))
-    monkeypatch.setattr(run, "file_coder_revision",
+    monkeypatch.setattr(run, "file_code_revision",
                         lambda st, lane, r, findings, **kw: filed.append(("code", lane, r, findings, kw)))
     monkeypatch.setattr(run, "escalate", lambda *a: filed.append(("escalate",) + a))
     return filed
+
+
+def test_the_house_default_is_three():
+    """Declared once, in the option table: a lane that says nothing gets 3, and the
+    option exists to ask for FEWER (a board that does not want a review spending
+    rounds), not to repeat the default in six manifests."""
+    assert lanes.MAX_REWORKS == 3
+    assert lanes.max_reworks() == 3
+    assert lanes.max_reworks({}) == 3
+
+
+def test_a_board_may_tighten_the_budget():
+    """One number for the lane — how many returns you allow is one judgement — and it
+    is NOT `max-retries`, the engine's per-card attempt budget, which stays 1."""
+    assert lanes.max_reworks({"max-reworks": 1}) == 1
+    assert lanes.max_reworks({"max-reworks": 2}) == 2
+
+
+def test_a_board_that_allows_one_return_escalates_on_the_second_reject(monkeypatch):
+    """The cap REACHES the driver: with one return allowed, the next REJECT asks a
+    human instead of filing another revision round."""
+    filed = _recording(monkeypatch)
+    monkeypatch.setattr(run, "lane_options", lambda lane: {"max-reworks": 1})
+    st = full_lane_state()
+    st[lanes.card_title("RVp", 1)].update(status="done", result="REJECT: nope",
+                                          completed_at=10)
+    st["P1-rev-1: plan revision round 1 - lane 1"] = card("P1-rev-1", status="done")
+    run.rework_rounds(st)
+    assert [f[0] for f in filed] == ["escalate"], filed
+
+
+def test_unset_means_todays_behaviour(monkeypatch):
+    filed = _recording(monkeypatch)
+    monkeypatch.setattr(run, "lane_options", lambda lane: None)
+    st = full_lane_state()
+    st[lanes.card_title("RVp", 1)].update(status="done", result="REJECT: nope",
+                                          completed_at=10)
+    run.rework_rounds(st)
+    assert [f[0] for f in filed] == ["rev"], filed
+    assert filed[0][4]["max_rounds"] == 3         # the house default
 
 
 def test_a_reject_without_a_colon_files_a_plan_revision(monkeypatch):
@@ -308,7 +358,57 @@ def test_an_implementation_reject_files_a_coder_round(monkeypatch):
     st[rva].update(status="done", result="REJECT: 1. parser", completed_at=10)
     run.rework_rounds(st)
     assert [(f[0], f[3]) for f in filed] == [("code", "1. parser")]
+    assert filed[0][4]["owner"] == "C"
     assert filed[0][4]["verdict_card_id"] == f"id-{rva}"
+
+
+def test_an_rva_reject_naming_the_tests_goes_to_the_tester(monkeypatch):
+    """The fork's own gap: the review judges the coder's patch AND the tester's tests
+    in one pass, and the coder may not edit the tester's files — a rejected test sent
+    to the coder could only burn its rounds to a human escalation."""
+    filed = _recording(monkeypatch)
+    st = full_lane_state()
+    rva = lanes.card_title("RVa", 1)
+    st[rva].update(status="done",
+                   result="REJECT: 1. the assertion is a tautology\nOWNER: TW",
+                   completed_at=10)
+    run.rework_rounds(st)
+    assert [(f[0], f[3]) for f in filed] == [("code", "1. the assertion is a tautology\nOWNER: TW")]
+    assert filed[0][4]["owner"] == "TW"
+    assert filed[0][4]["verdict_card_id"] == f"id-{rva}"
+
+
+def test_the_owner_of_a_code_round_comes_from_the_verdict_line():
+    assert run.rework_owner("REJECT: 1. a tautology\nOWNER: TW") == "TW"
+    assert run.rework_owner("REJECT: 1. mocks the parser OWNER: TI") == "TI"
+    assert run.rework_owner("REJECT: 1. x OWNER: C1") == "C"
+    assert run.rework_owner("REJECT: 1. x") == "C"           # before the fork: always the coder
+    assert run.rework_owner("REJECT: 1. x OWNER: banana") == "C"
+    assert run.rework_owner("") == "C"
+
+
+def test_code_rework_rounds_counts_whichever_card_owned_the_fix():
+    st = {"C1-rev-1: implementation revision round 1 - lane 1": {"id": "a", "status": "done"},
+          "TW1-rev-2: unit-test revision round 2 - lane 1": {"id": "b", "status": "done"},
+          "TI1-rev-3: integration-test revision round 3 - lane 1": {"id": "c", "status": "done"},
+          "TW2-rev-1: unit-test revision round 1 - lane 2": {"id": "d", "status": "done"}}
+    assert run.code_rework_rounds(st, 1) == 3
+    assert run.code_rework_rounds(st, 2) == 1
+
+
+def test_a_live_tester_revision_holds_the_code_loop():
+    title = "TW1-rev-1: unit-test revision round 1 - lane 1"
+    st = {title: {"id": "a", "status": "ready"}}
+    assert run.code_rework_hold(st, 1)
+    st[title]["status"] = "done"
+    assert not run.code_rework_hold(st, 1)
+
+
+def test_the_gate_waits_for_a_tester_revision_round():
+    st = full_lane_state()
+    st["TW1-rev-1: unit-test revision round 1 - lane 1"] = card("TW1-rev-1", status="ready")
+    gc = [p for t, p, k, l in run.lane_graph(st) if t.startswith("Gc1:")][0]
+    assert "TW1-rev-1" in gc, gc
 
 
 # --- holds behind a verdict --------------------------------------------------
@@ -358,11 +458,42 @@ def test_it_lane_re_review_repeats_the_final_review(monkeypatch, board_env):
     calls = _capture_kb(monkeypatch)
     st = _revision_state()
     st[lanes.card_title("RVc", 1)] = {"id": "id-RVc", "status": "done"}
-    run.file_coder_revision(st, 1, 1, "1. x", verdict_card_id="t_rv")
+    run.file_code_revision(st, 1, 1, "1. x", verdict_card_id="t_rv")
     rr = next(c for c in calls if c[0] == "create" and c[1].startswith("RVa1-r2"))
     assert "FULL suite" in _arg(rr, "--body")
+    assert "not mocks of the thing under test" in _arg(rr, "--body")
     rev = next(c for c in calls if c[0] == "create" and c[1].startswith("C1-rev-1"))
     assert "show t_rv" in _arg(rev, "--body")
+
+
+def test_a_reject_that_names_the_tests_files_the_testers_revision(monkeypatch, board_env):
+    """The card the round is filed FOR is the reviewer's choice, not the driver's:
+    a unit-test finding lands on the tester (whose body forbids implementation work),
+    and the round still ends in the same RVa re-review."""
+    calls = _capture_kb(monkeypatch)
+    run.file_code_revision(_revision_state(), 1, 2, "1. the assertion is a tautology",
+                           owner="TW", verdict_card_id="t_rv")
+    rev = next(c for c in calls if c[0] == "create" and c[1].startswith("TW1-rev-2"))
+    body = _arg(rev, "--body")
+    assert _arg(rev, "--assignee") == lanes.assignee_for("tester", None)
+    assert "1. the assertion is a tautology" in body
+    assert "Tests only — no implementation" in body, body          # tw-body's hard rule 5
+    assert "never edit them to make them pass" not in body, body   # NOT the coder's body
+    assert "show t_rv" in body
+    rr = next(c for c in calls if c[0] == "create" and c[1].startswith("RVa1-r3"))
+    assert _arg(rr, "--parent") == "t_1", "the re-review hangs off the revision card"
+    assert "RE-REVIEW ROUND 3" in _arg(rr, "--body")
+
+
+def test_an_integration_test_finding_files_the_integration_testers_revision(monkeypatch, board_env):
+    calls = _capture_kb(monkeypatch)
+    run.file_code_revision(_revision_state(), 1, 1, "1. it mocks the parser",
+                           owner="TI")
+    rev = next(c for c in calls if c[0] == "create" and c[1].startswith("TI1-rev-1"))
+    body = _arg(rev, "--body")
+    assert _arg(rev, "--assignee") == lanes.assignee_for("tester", None)
+    assert "integration tests" in body.lower(), body
+    assert "1. it mocks the parser" in body
 
 
 # --- halts are for spent retries ---------------------------------------------

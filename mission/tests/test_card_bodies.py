@@ -38,6 +38,44 @@ def all_texts():
         yield name, read(name)
 
 
+def test_the_integration_card_may_change_the_implementation_under_rules():
+    """An end-to-end test that cannot REACH the deliverable is a gap only the
+    integration level sees, so that card may change code — under rules that keep the
+    change reviewable: minimal, named, staged, attached separately, and never a
+    rewrite to make a test pass, never the tester's files, never the plan."""
+    ti = read("ti-body.txt")
+    assert "MAY also change the IMPLEMENTATION" in ti
+    assert "MINIMAL" in ti
+    assert "patch-code.diff" in ti
+    assert "WHY the end-to-end run needed it" in ti
+    assert "may not rewrite the implementation to make a test pass" in ti
+    assert "may not edit the tester's unit tests" in ti
+    assert "may not change the plan" in ti
+    assert "no implementation change needed" in ti
+    assert "do not edit the test and do not force it through" in ti
+    assert "routes the fix to whoever owns it" in ti
+
+
+def test_the_final_review_re_derives_the_code_checks_on_the_tree_the_gate_gets():
+    """The implementation review runs BEFORE the integration card, so its verdict
+    cannot cover a code change that card made: the final review is the one that
+    reviews the tree the gate receives."""
+    rvc = read("rvc-body.txt")
+    assert "as it STANDS is the plan's implementation" in rvc
+    assert "the implementation review saw it BEFORE these changes" in rvc
+    assert "minimal" in rvc
+    assert "OWNER: TI` for an integration test" in rvc
+    # and the earlier review knows the limit of its own verdict
+    rva = read("rva-body.txt")
+    assert "the FINAL review re-derives the code checks" in rva
+
+
+def test_the_plan_names_the_seam_the_integration_tests_drive():
+    checklist = read("_plan-checklist.txt")
+    assert "names the SEAM it drives" in checklist
+    assert "instead of inventing an interface at the end" in checklist
+
+
 def test_every_lane_card_has_a_body_file():
     for code, body, *_ in lanes.LANE_CARDS:
         assert os.path.exists(os.path.join(BODIES, body)), f"{code}: {body} missing"

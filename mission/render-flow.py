@@ -36,7 +36,7 @@ FILL = {"I": IDEA, "Gi": BUILD, "P": PLAN, "RVp": REVIEW, "Gp": BUILD,
         "TW": BUILD, "C": BUILD, "RVa": REVIEW, "TI": BUILD, "RVc": REVIEW, "Gc": BUILD}
 GATES = {"Gi", "Gp", "Gc"}
 SHORT = {"I": "refine idea", "Gi": "GATE — human accepts idea", "P": "plan",
-         "RVp": "review", "Gp": "GATE — human commits plan", "TW": "tests RED",
+         "RVp": "review", "Gp": "GATE — human commits plan", "TW": "unit tests",
          "C": "implement", "RVa": "review", "TI": "integration tests",
          "RVc": "final review", "Gc": "GATE — human commits code"}
 WHO = {code: "human" if assignee == "human-gate" else assignee
@@ -57,7 +57,6 @@ def drawio():
                      f'        </mxCell>')
         y += 34
         cards = lanes.lane_cards(lane, integration_tests=its)
-        prev = None
         for i, c in enumerate(cards):
             row, col = divmod(i, PER_ROW)
             style = f"rounded=1;whiteSpace=wrap;html=1;fillColor={FILL[c['code']]};"
@@ -69,13 +68,15 @@ def drawio():
                 f'style="{style}" vertex="1" parent="1">\n'
                 f'          <mxGeometry x="{40 + col * DX}" y="{y + row * DY}" '
                 f'width="{W}" height="{H}" as="geometry" />\n        </mxCell>')
-            if prev:
+            # Edges from the card's own parents, never from filing order: TW and C are
+            # siblings under the plan gate (lanes.PARENTS), and a positional chain
+            # would draw a picture of a graph the driver does not run.
+            for parent in c["parents"]:
                 edges.append(
-                    f'        <mxCell id="e-{prev}-{c["id"]}" '
+                    f'        <mxCell id="e-{parent}-{c["id"]}" '
                     f'style="edgeStyle=orthogonalEdgeStyle;rounded=1;" edge="1" parent="1" '
-                    f'source="{prev}" target="{c["id"]}">\n'
+                    f'source="{parent}" target="{c["id"]}">\n'
                     f'          <mxGeometry relative="1" as="geometry" />\n        </mxCell>')
-            prev = c["id"]
         y += ((len(cards) - 1) // PER_ROW + 1) * DY + 20
         if lane == 1:
             edges.append(
@@ -116,7 +117,9 @@ def mermaid():
             label = f"{cid}<br/>{SHORT[code]}<br/><i>{WHO[code]}</i>"
             out.append(f'    {cid}{{{{"{label}"}}}}' if code in GATES
                        else f'    {cid}["{label}"]')
-        out.append("    " + " --> ".join(c["id"] for c in cards))
+        for c in cards:
+            for parent in c["parents"]:
+                out.append(f"    {parent} --> {c['id']}")
         out.append("  end")
     out.append("  Gc1 -. lane 2 starts .-> I2")
     out.append("  classDef idea fill:#e1d5e7,stroke:#9673a6;")

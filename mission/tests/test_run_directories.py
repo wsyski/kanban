@@ -61,6 +61,51 @@ def test_mint_run_creates_the_directory_and_points_current(monkeypatch, tmp_path
     assert run._read_current_run() == "r1"
 
 
+def test_a_vanished_run_directory_stops_the_board(monkeypatch, tmp_path):
+    """USER RULE (2026-09-12): the board wipes nothing, in `runs/` or in `work/`.
+
+    So when a run's own directory is gone, something ELSE removed it — a desktop file
+    manager trashes the whole folder. Continuing would append this run's evidence into
+    a directory recreated behind the human's back and leave `current` pointing at a run
+    whose files sit in a trash can, so the driver stops and names the path instead.
+    """
+    import shutil
+    runs, run_dir = tmp_path / "runs", tmp_path / "runs" / "r1"
+    run_dir.mkdir(parents=True)
+    monkeypatch.setattr(run, "RUNS_ROOT", str(runs))
+    monkeypatch.setattr(run, "REPO", str(tmp_path))
+    monkeypatch.setattr(run, "RUN_DIR", str(run_dir))
+    monkeypatch.setattr(run, "_HALTED", {"reason": None})
+    run._remember_run_dir(str(run_dir))            # this process saw it on disk
+    assert run.run_directory_is_gone() is False
+    shutil.move(str(run_dir), str(tmp_path / "trash" / "r1"))   # a file manager, not us
+    assert run.tick() is True                      # truthy = the serve loop halts
+    assert "disappeared" in run._HALTED["reason"], run._HALTED
+    assert "r1" in run._HALTED["reason"]
+    # The note lands in runs/ itself: the run's own directory is what is missing.
+    assert (runs / "halt.txt").exists()
+
+
+def test_a_stale_current_pointer_does_not_stop_a_waiting_driver(monkeypatch, tmp_path):
+    """`runs/current` can name a run whose folder is already in the trash — the human
+    removed it before this process started. That is a stale pointer, not a
+    disappearance: the driver waits for an idea, and arming one mints a fresh
+    directory. Halting there would refuse to serve a board nobody has touched."""
+    monkeypatch.setattr(run, "RUNS_ROOT", str(tmp_path / "runs"))
+    monkeypatch.setattr(run, "RUN_DIR", str(tmp_path / "runs" / "trashed-run"))
+    run._remember_run_dir(str(tmp_path / "runs" / "trashed-run"))   # never existed
+    assert run.run_directory_is_gone() is False
+
+
+def test_a_board_nobody_armed_is_not_a_vanished_run(monkeypatch, tmp_path):
+    """Before the first idea is armed RUN_DIR *is* RUNS_ROOT — the driver's own
+    board-level state. That is a waiting driver, not a disappearance, and it must not
+    halt the board."""
+    monkeypatch.setattr(run, "RUNS_ROOT", str(tmp_path))
+    monkeypatch.setattr(run, "RUN_DIR", str(tmp_path))
+    assert run.run_directory_is_gone() is False
+
+
 def test_a_new_run_opens_its_own_timing_segment(monkeypatch, tmp_path):
     """record_timing writes its run-boundary marker once per PROCESS, and a serve-mode
     driver answers many ideas. With the flag left standing, the second run's

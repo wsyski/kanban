@@ -1,9 +1,7 @@
 # roman-evaluator-js — a small browser page
 
 One lane: a roman-number evaluator page whose parsing module is unit-tested,
-two ways to launch it, and page behaviour a human checks at the code gate. It
-moved here from `minimal-development` on 2026-09-11, when that board went back
-to being the cheapest possible smoke run.
+Two ways to launch it, and page behaviour a human checks at the code gate.
 
 Toolchain the idea implies: Node.js with npm (module tests, packages fetched
 into `work/`) and Google Chrome (the `file://` launch). The researcher records

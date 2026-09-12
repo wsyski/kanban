@@ -16,7 +16,7 @@ def _state(root_status="ready"):
     return st
 
 
-def _board_env(monkeypatch, tmp_path, calls, it=False):
+def _board_env(monkeypatch, tmp_path, calls, it=False, ut=True):
     monkeypatch.setattr(run, "kb", lambda *a, **k: calls.append(a) or "")
     # open_lane runs git -C WORKDIR; the stub keeps the test hermetic
     monkeypatch.setattr(run, "git", lambda *a: "")
@@ -29,12 +29,16 @@ def _board_env(monkeypatch, tmp_path, calls, it=False):
     # tick() also writes the document chain; without this the suite drops
     # chain.jsonl/halt.txt into the repo's boards/runs (BOARD is "" at import)
     monkeypatch.setattr(run, "RUN_DIR", str(tmp_path / "runs"))
+    # A run directory exists on disk for the whole life of a run — the driver now
+    # stops when its own directory disappears (nothing in the template removes it, so
+    # a missing one means someone else did), and a fixture without it is not a run.
+    (tmp_path / "runs").mkdir(exist_ok=True)
     monkeypatch.setattr(run, "board", lambda: _state())
     monkeypatch.setattr(run, "record_timing", lambda st: None)
     monkeypatch.setattr(run, "halt_if_exhausted", lambda st: False)
     monkeypatch.setattr(run, "rework_rounds", lambda st: None)
     monkeypatch.setattr(run, "lane_options",
-                        lambda lane: {"integration-tests": it, "unit-tests": True, "auto-gates": False,
+                        lambda lane: {"integration-tests": it, "unit-tests": ut, "auto-gates": False,
                                       "idea": "## Idea 1: is_even\n"})
     monkeypatch.setattr(run, "IDEAS_DIR", str(tmp_path))
     monkeypatch.setattr(run, "SNAP_DIR", str(tmp_path / "snapshots"))
@@ -75,6 +79,87 @@ def test_tick_opens_a_lane_whose_root_is_already_unblocked(monkeypatch, tmp_path
     assert ("unlink", "id-RVc", "id-Gc") in calls
     assert ("link", "id-RVa", "id-Gc") in calls
     assert not [c for c in calls if c[0] == "unblock"], "the root was already up"
+    run._OPENED.clear()
+
+
+def test_a_pruned_tester_narrows_the_review_in_the_drivers_graph(monkeypatch, tmp_path):
+    """The driver's own view of the fork. With TW archived (`unit-tests: false`) the
+    review must wait on C alone: `parents_done()` reads a missing parent as not-done,
+    so a stale TW entry in the graph would stall the review forever."""
+    calls = []
+    _board_env(monkeypatch, tmp_path, calls, ut=False)
+    st = _state()
+    st.pop(lanes.card_title("TW", 1))          # an archived card is absent from the board
+    monkeypatch.setattr(run, "board", lambda: st)
+    graph = run.lane_graph(st)
+    assert "TW1: unit tests - lane 1" not in [t for t, _p, _k, _l in graph]
+    rva = [p for t, p, _k, _l in graph if t.startswith("RVa1:")][0]
+    assert rva == ["C1"], rva
+    c1 = [p for t, p, _k, _l in graph if t.startswith("C1:")][0]
+    assert c1 == ["Gp1"], c1
+    run._OPENED.clear()
+
+
+def test_a_lane_without_unit_tests_unlinks_the_review_from_the_archived_tester(monkeypatch, tmp_path):
+    """`unit-tests: false` archives TW, and its filed edge into RVa has to go with it:
+    parents_done() reads a missing parent as not-done, so the review would wait forever
+    on an archived card. C needs no surgery at all — its parent is the plan gate."""
+    calls = []
+    _board_env(monkeypatch, tmp_path, calls, ut=False)
+    run.tick()
+    assert ("archive", "id-TW") in calls
+    assert ("unlink", "id-TW", "id-RVa") in calls
+    assert ("link", "id-Gp", "id-C") not in calls, "there is no TW->C edge to replace"
+    run._OPENED.clear()
+
+
+def test_a_lane_that_keeps_its_cells_archives_none(monkeypatch, tmp_path):
+    """The pruning branches read the RESOLVED options, not the manifest — so a lane that
+    ends up with both test levels (the board turned one off, the idea's header turned it
+    back on) loses no card, and the review still waits for the tester."""
+    calls = []
+    _board_env(monkeypatch, tmp_path, calls, it=True, ut=True)
+    st = _state()
+    for code in ("I", "Gi", "P", "RVp", "Gp"):
+        st[lanes.card_title(code, 1)]["status"] = "done"
+    monkeypatch.setattr(run, "board", lambda: st)
+    run.tick()
+    assert not [c for c in calls if c[0] == "archive"], calls
+    assert [c[1] for c in calls if c[0] == "unblock"] == ["id-TW", "id-C"]
+    run._OPENED.clear()
+
+
+def test_the_tester_and_the_coder_are_released_together(monkeypatch, tmp_path):
+    """The fork: TW and C are both children of the plan gate, so ONE tick releases both
+    and they work in parallel. RVa is the review that waits for the pair — releasing it
+    here would have it judge a tree half of whose evidence does not exist yet."""
+    calls = []
+    _board_env(monkeypatch, tmp_path, calls)
+    st = _state()
+    for code in ("I", "Gi", "P", "RVp", "Gp"):
+        st[lanes.card_title(code, 1)]["status"] = "done"
+    monkeypatch.setattr(run, "board", lambda: st)
+    run.tick()
+    unblocked = [c[1] for c in calls if c[0] == "unblock"]
+    assert unblocked == ["id-TW", "id-C"], unblocked
+    run._OPENED.clear()
+
+
+def test_the_review_waits_for_both_halves_of_the_fork(monkeypatch, tmp_path):
+    """One half done is not the implementation stage done: TW finishing first must not
+    open the review over a tree the coder is still writing."""
+    calls = []
+    _board_env(monkeypatch, tmp_path, calls)
+    st = _state()
+    for code in ("I", "Gi", "P", "RVp", "Gp", "TW"):
+        st[lanes.card_title(code, 1)]["status"] = "done"
+    monkeypatch.setattr(run, "board", lambda: st)
+    run.tick()
+    assert "id-RVa" not in [c[1] for c in calls if c[0] == "unblock"]
+    st[lanes.card_title("C", 1)]["status"] = "done"
+    calls.clear()
+    run.tick()
+    assert "id-RVa" in [c[1] for c in calls if c[0] == "unblock"]
     run._OPENED.clear()
 
 

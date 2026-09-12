@@ -22,7 +22,7 @@
         <mxCell id="Gp1" value="Gp1 GATE — human commits plan&#10;human" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeWidth=2;" vertex="1" parent="1">
           <mxGeometry x="740" y="54" width="150" height="60" as="geometry" />
         </mxCell>
-        <mxCell id="TW1" value="TW1 tests RED&#10;tester" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;" vertex="1" parent="1">
+        <mxCell id="TW1" value="TW1 unit tests&#10;tester" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;" vertex="1" parent="1">
           <mxGeometry x="40" y="160" width="150" height="60" as="geometry" />
         </mxCell>
         <mxCell id="C1" value="C1 implement&#10;coder" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;" vertex="1" parent="1">
@@ -52,7 +52,7 @@
         <mxCell id="Gp2" value="Gp2 GATE — human commits plan&#10;human" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeWidth=2;" vertex="1" parent="1">
           <mxGeometry x="740" y="320" width="150" height="60" as="geometry" />
         </mxCell>
-        <mxCell id="TW2" value="TW2 tests RED&#10;tester" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;" vertex="1" parent="1">
+        <mxCell id="TW2" value="TW2 unit tests&#10;tester" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;" vertex="1" parent="1">
           <mxGeometry x="40" y="426" width="150" height="60" as="geometry" />
         </mxCell>
         <mxCell id="C2" value="C2 implement&#10;coder" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;" vertex="1" parent="1">
@@ -61,7 +61,7 @@
         <mxCell id="RVa2" value="RVa2 review&#10;reviewer" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;" vertex="1" parent="1">
           <mxGeometry x="390" y="426" width="150" height="60" as="geometry" />
         </mxCell>
-        <mxCell id="TI2" value="TI2 integration tests&#10;tester" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;" vertex="1" parent="1">
+        <mxCell id="TI2" value="TI2 integration tests&#10;coder" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;" vertex="1" parent="1">
           <mxGeometry x="565" y="426" width="150" height="60" as="geometry" />
         </mxCell>
         <mxCell id="RVc2" value="RVc2 final review&#10;reviewer" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;" vertex="1" parent="1">
@@ -91,7 +91,10 @@
         <mxCell id="e-Gp1-TW1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;" edge="1" parent="1" source="Gp1" target="TW1">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e-TW1-C1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;" edge="1" parent="1" source="TW1" target="C1">
+        <mxCell id="e-Gp1-C1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;" edge="1" parent="1" source="Gp1" target="C1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-TW1-RVa1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;" edge="1" parent="1" source="TW1" target="RVa1">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
         <mxCell id="e-C1-RVa1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;" edge="1" parent="1" source="C1" target="RVa1">
@@ -118,7 +121,10 @@
         <mxCell id="e-Gp2-TW2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;" edge="1" parent="1" source="Gp2" target="TW2">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e-TW2-C2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;" edge="1" parent="1" source="TW2" target="C2">
+        <mxCell id="e-Gp2-C2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;" edge="1" parent="1" source="Gp2" target="C2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-TW2-RVa2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;" edge="1" parent="1" source="TW2" target="RVa2">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
         <mxCell id="e-C2-RVa2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;" edge="1" parent="1" source="C2" target="RVa2">

@@ -41,6 +41,7 @@ Every board.json is validated against the schema before the board is created.
 same set:
 
     {
+      "$schema": "../../mission/board.schema.json",  # the generated editor schema
       "slug": "my-board",              # optional; defaults to the dir name
       "name": "My Board",
       "default-workdir": "/abs/path/to/repo",  # ALWAYS absolute; omit it and the
@@ -51,11 +52,12 @@ same set:
       "auto-gates": false,
       "goal": false,
       "max-runtime": "60m",
-      "max-retries": 1,
-      "rework-max-retries": 1,                   # revision cards, separately
+      # no retry key: every card — first filing and revision alike — gets ONE attempt
       "goal-max-turns": 40,
       "timeout-min": 240,                        # the driver's own cap
       "assignees": {"reviewer": "senior"},       # optional: role -> hermes profile
+      "model_override": "glm-5.3",               # optional: the model the REVIEWS run on
+      "provider_override": "opencode-go",        # optional: its provider (needs the model)
       "targets": ["~/.hermes/profiles/trader"],  # optional: write roots outside it
     }
 
@@ -72,30 +74,70 @@ it is `--goal`, `default-workdir` because it is `--default-workdir`. A name
 invented for a parameter Hermes already named is a name nobody can grep for. The
 template's own options take the same hyphenated convention.
 
+Every `board.json` carries `"$schema": "../../mission/board.schema.json"`, and that
+file is GENERATED from this module's option table (`board_schema.py --write-schema`,
+`--check-schema` to test it is current) — never hand-written, because a second
+declaration of the option set is a copy that drifts. An editor that reads it validates
+and completes a manifest as it is written. It is a convenience, not the authority: this
+module still refuses what JSON Schema cannot state (a per-lane array whose length is
+not the board's lane count, an `abspath` that is not on this host, a
+`provider_override` with no model).
+
 `assignees` remaps a role to a different hermes profile for this board; a role it
 does not name keeps the card graph's own. The roles are researcher, manager, coder,
-tester, reviewer and human-gate.
+tester, reviewer and human-gate. The tester and reviewer roles have no profile of
+their own — their cards are worked on the coder profile — so a board that wants them
+worked elsewhere names it here.
+
+`model_override` — with `provider_override` beside it — is the model the board's
+REVIEW cards run on. The name is Hermes's own task property (`hermes kanban create
+--model`), and it lands on the judge cards only: the plan review, the implementation
+review and the final review, including their rework rounds. Set it when the judge
+should think with a stronger model than the worker. A board that omits it files no
+model flag at all and every card runs its profile's default. It is a BOARD option,
+never a per-lane one: no idea header can carry it, so a lane cannot quietly buy
+itself a different judge.
 
 `max-runtime` and `max-retries` are the per-card worker runtime ceiling
 ("45m", "90m", "1h30m", …) and retry budget, applied to every card the board
 files — per card, not shared. Omitted means the defaults, 60m and 1.
 
-`max-retries` and `rework-max-retries` must be 1. A failure — a timeout, a crash,
-a spawn that never started — is FINAL: the dispatcher blocks the card on it and
-the driver halts the board, and the only retry this board recognises is a REVIEW
-that failed, which asks for one by filing a revision card. Revision cards take
-`rework-max-retries` for the same reason.
+`max-reworks` is the OTHER budget: how many times a review may send work back — filing
+a revision round — before the lane asks a human. The house default is 3, so a board
+normally says nothing; name it in the manifest or in a lane's idea header to ask for
+FEWER (a lane whose rounds should be cheap). Neither the manifest nor an idea header can
+raise `max-retries` to express it: that name is the engine's flag for how many times
+the dispatcher may ATTEMPT one card (a timeout, a crash), which is the mechanism the
+one-attempt rule removes.
+
+`max-retries` is omitted, and naming it is the only way to state the rule rather than
+to choose a value: every card — the board's first filing AND every revision card — is
+filed with ONE attempt, because a failure is FINAL (a timeout, a crash, a spawn that
+never started: the dispatcher blocks the card and the driver halts the board). The
+schema refuses anything but 1, so a manifest cannot re-enable a dispatcher retry. The
+board's own retry mechanism is a REVIEW that sends work back, and `max-reworks` bounds
+how many times it may.
 
 `targets` lists extra write roots outside the work directory — a lane that
 installs into a Hermes profile, say. Cards may write there and reviewers count
 files there as the lane's; git never runs in a target root.
 
-`unit-tests`, `integration-tests` and `auto-gates` are the per-lane options: each
-takes one value for every lane, or a list with exactly one value per lane —
-`[false, true]` reads as "lane 1 without integration cards, lane 2 with". A
-per-idea header (`<!-- integration-tests: false -->`) still wins over both, and
-the header set IS the per-lane set — there is no option a board may set per lane
-that an idea may not override.
+`refinement`, `unit-tests`, `integration-tests` and `auto-gates` are the per-lane
+options: each takes one value for every lane, or a list with exactly one value per
+lane — `[false, true]` reads as "lane 1 without integration cards, lane 2 with". A
+per-idea header (`<!-- integration-tests: false -->`, `<!-- unit-tests: false -->`,
+`<!-- refinement: false -->`) still wins over both, in either direction: a board
+built without a level can turn it back on for one lane, and a board built with it can
+skip that lane's cell.
+
+`refinement: false` takes the researcher and the idea gate out of a lane: there is no
+refined idea, the plan card is the lane's ROOT, and it plans from the raw idea in
+`lane-<k>.md` — whose `### Done means` section is what the code gate then judges
+against. Use it for an idea you have already specified; the give-ups are that the
+human accepts a PLAN rather than a refinement, and that nothing before the plan
+establishes the facts the plan relies on. The header
+set IS the per-lane set — there is no option a board may set per lane that an idea
+may not override.
 
 The idea file is the ONE copy. There is no import step and no second copy
 under mission/: the file you edit is the file the board reads, and it stays
@@ -207,7 +249,29 @@ PY
 eval "$CFG"
 
 echo "== pre-flight =="
-for p in researcher manager coder tester reviewer; do
+# The profiles this board needs are DERIVED from its manifest, not listed here. A
+# hand-written list cannot know which roles a manifest remaps, and it cannot know
+# which roles need no profile at all (a gate never spawns a worker) — and it became
+# wrong the moment a role's profile was retired, refusing to create ANY board
+# however the manifest remapped. `lanes.required_profiles` is the one answer.
+REQUIRED=$(python3 - "$REPO" "$BOARD_DIR" <<'PY'
+import json, os, sys
+repo, board_dir = sys.argv[1:3]
+sys.path.insert(0, os.path.join(repo, "mission"))
+import lanes
+cfg = {}
+manifest = os.path.join(board_dir, "board.json")
+if os.path.exists(manifest):
+    with open(manifest) as f:
+        cfg = json.load(f)
+print(" ".join(lanes.required_profiles(
+    cfg.get("assignees"),
+    refinement=lanes.any_lane(cfg.get("refinement")),
+    unit_tests=lanes.any_lane(cfg.get("unit-tests")),
+    integration_tests=lanes.any_lane(cfg.get("integration-tests")))))
+PY
+) || exit 1
+for p in $REQUIRED; do
   hermes profile list | grep -q " $p " || { echo "profile $p not available" >&2; exit 1; }
 done
 

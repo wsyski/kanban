@@ -218,3 +218,61 @@ def test_the_driving_process_still_writes_the_summary(monkeypatch, tmp_path):
     monkeypatch.setattr(run, "_PROCESS_RECORDED", [True])
     run.write_summary({})
     assert json.load(open(path))["wall_min"] != 28.4
+
+
+def test_a_forked_pair_counts_its_overlap_once(monkeypatch, tmp_path):
+    """TW and C run together, so their minutes overlap. Summing them made the agent
+    total exceed the wall and the overhead go negative — which used to read as "a
+    restart happened". The summary now records the union and the overlap beside the
+    sum, and `restarts_observed` compares the union, which no single process can
+    exceed unless part of the run belongs to an earlier one."""
+    import time
+    _env(monkeypatch, tmp_path)
+    path = tmp_path / "runs" / "run-summary.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(run, "_PROCESS_RECORDED", [True])
+    monkeypatch.setattr(run.write_summary, "_t0", time.time() - 600, raising=False)
+    monkeypatch.setattr(run.runs_util, "board_runs", lambda board, cid: {
+        "id-TW": [{"outcome": "completed", "started_at": 1000, "ended_at": 1120}],
+        "id-C":  [{"outcome": "completed", "started_at": 1030, "ended_at": 1150}],
+    }[cid])
+    st = {lanes.card_title("TW", 1): {"id": "id-TW", "status": "done"},
+          lanes.card_title("C", 1): {"id": "id-C", "status": "done"}}
+    run.write_summary(st)
+    s = json.load(open(path))
+    assert s["agent_work_min"] == 4.0, s          # the sum: 2 min + 2 min
+    assert s["agent_union_min"] == 2.5, s         # in flight: 1000 → 1150 s
+    assert s["overlap_min"] == 1.5, s             # the 30 s two cards shared
+    assert s["restarts_observed"] is False, s     # 2.5 min of work, 10 min of wall
+    assert abs(s["overhead_min"] - 7.5) < 0.2, s
+
+
+# --- the finish sequence: the summary must exist when the log says "finished" ---
+
+def test_the_finish_banner_comes_after_the_summary(monkeypatch, tmp_path):
+    """run-audit.py reads `ALL GATES COMPLETE` as "this run finished" and then
+    demands run-summary.json, so a banner logged first opens a window — 3 s in the
+    is_even run of 2026-09-12 — where a FINISHED run audits as E4 "the run wrote no
+    summary". The banner is the last line, and it is the audit's marker."""
+    _env(monkeypatch, tmp_path)
+    monkeypatch.setattr(run, "board", lambda: {})
+    seen = []
+    monkeypatch.setattr(run, "write_summary", lambda st: seen.append("summary"))
+    monkeypatch.setattr(run, "log", lambda *a, **k: seen.append("banner"))
+    run.finish_run()
+    assert seen == ["summary", "banner"], seen
+
+
+def test_a_summary_that_fails_still_ends_the_run(monkeypatch, tmp_path):
+    """A run that finished did finish: a summary failure is a warning, never a
+    silent un-finished board waiting for a banner that never comes."""
+    _env(monkeypatch, tmp_path)
+    monkeypatch.setattr(run, "board", lambda: {})
+    lines = []
+    def boom(_st):
+        raise RuntimeError("summary generation failed")
+    monkeypatch.setattr(run, "write_summary", boom)
+    monkeypatch.setattr(run, "log", lambda *a, **k: lines.append(a[0] if a else ""))
+    run.finish_run()
+    assert any(s.startswith("WARNING") for s in lines), lines
+    assert any("ALL GATES COMPLETE" in s for s in lines), lines

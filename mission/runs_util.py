@@ -72,6 +72,29 @@ _UPDATE_BANNER = ("⚠ A previous `hermes update`", "Gateways may still be servi
                   "Run `hermes update` or `hermes gateway restart`")
 
 
+def union_min(intervals):
+    """Minutes covered by the union of [started_at, ended_at] epoch intervals.
+
+    A lane FORKS (TW and C are siblings under the plan gate), so two cards can hold
+    the clock at once: adding their minutes double-counts the overlap and reports
+    work that never happened. The union is how long work was in flight; the SUM is
+    still what a per-card ceiling is measured against, because one card's own
+    attempts are sequential. Both are reported, neither is silently preferred.
+    """
+    total = 0.0
+    end = None
+    for start, stop in sorted((s, e) for s, e in intervals
+                              if s is not None and e is not None and e > s):
+        if end is None or start > end:
+            total += stop - start
+        elif stop > end:
+            total += stop - end
+        else:
+            continue
+        end = stop
+    return total / 60
+
+
 def cli_env(env=None):
     """The environment for a `hermes` CLI subprocess.
 

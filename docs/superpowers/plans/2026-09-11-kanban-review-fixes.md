@@ -1,5 +1,11 @@
 # Kanban Review Fixes Implementation Plan
 
+> **Dated record, superseded.** This file is what the work said on 2026-09-11. The
+> board's current contract is `README.md`; where this file quotes code — card names,
+> option names, escalation strings — that text may no longer exist (the round budgets
+> became `max-reworks`, `rework-max-retries` was deleted, the roles stopped being
+> profiles). Read it for the reasoning, not for the current state.
+
 **Goal:** Make the generic kanban's prompts and driver agree with each other, so a plan written by the manager card can pass the plan review on its first attempt and every rework round runs on correctly rendered cards.
 
 **Architecture:** One renderer (`file_lanes.render_body`) resolves every placeholder and shared fragment for filed cards and rework rounds alike. The driver's verdict handling becomes robust (REWORK, REJECT without a colon, holds behind verdicts, halts only on spent retries). The card bodies are rewritten around one shared plan-acceptance checklist and a refined-idea template the idea gate checks. Boards and docs follow.

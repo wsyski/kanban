@@ -228,12 +228,12 @@ def file_board(board, repo, workdir, lane_count, key_prefix, max_runtime=None,
     # be read HERE, not only in run.py's rework/revision path: a manifest that
     # says `"goal": false` and a card filed with --goal anyway is how
     # 2026-09-11's run 10 wedged.
+    try:
+        board_cfg = _board_cfg(os.path.join(repo, "boards", board))
+    except Exception:
+        board_cfg = {}            # unreadable manifest: keep the documented defaults
     if goal_mode is None:
-        try:
-            goal_mode = bool(_board_cfg(os.path.join(repo, "boards", board))
-                             .get("goal", board_schema.OPTIONS["goal"][1]))
-        except Exception:
-            goal_mode = True      # unreadable manifest: keep the documented default
+        goal_mode = bool(board_cfg.get("goal", board_schema.OPTIONS["goal"][1]))
     made = {}
     for lane in range(1, lane_count + 1):
         cards = lanes.lane_cards(lane, integration_tests=True,
@@ -249,16 +249,21 @@ def file_board(board, repo, workdir, lane_count, key_prefix, max_runtime=None,
                     "--created-by", "manager", "--json"]
             if card["skill"]:
                 args += ["--skill", card["skill"]]
+            # The judge's model, when the manifest pins one. Which cards that is
+            # is decided in lanes.model_args (the reviews), not here.
+            args += lanes.model_args(card["role"], board_cfg)
             args += lanes.goal_args(card["code"], enabled=goal_mode,
                                     max_turns=goal_max_turns)
             cid = json.loads(kb(board, *args))["id"]
             made[card["id"]] = cid
             kb(board, "block", "--kind", "needs_input", cid,
                "parked: awaiting lane activation")
-        # edges last, so every card was `ready` when it was blocked
+        # edges last, so every card was `ready` when it was blocked. A card may wait
+        # on more than one parent (the fork: RVa waits for TW and C), so this loops
+        # rather than taking a single edge.
         for card in cards:
-            if card["parent"]:
-                kb(board, "link", made[card["parent"]], made[card["id"]])
+            for parent in card["parents"]:
+                kb(board, "link", made[parent], made[card["id"]])
     return made
 
 

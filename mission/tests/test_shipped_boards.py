@@ -39,6 +39,61 @@ def test_every_shipped_manifest_validates():
     assert not bad, "\n".join(f"{b}: {p}" for b, ps in bad.items() for p in ps)
 
 
+def test_a_board_can_be_built_without_unit_tests():
+    """THE BOARD-LEVEL PARAMETER, on the board that uses it. `unit-tests` is a board
+    option exactly like `integration-tests` (same table, same door — board_schema.OPTIONS
+    marks both as per-lane), and blade-workspace sets it false in its manifest AND repeats
+    it in its idea header. Either door leaves the lane without a tester cell and the
+    review waiting on the coder alone — and the cards are still FILED, which is what lets
+    a header turn the level back on for a single lane."""
+    cfg = json.load(open(os.path.join(BOARDS, "blade-workspace", "board.json")))
+    assert cfg["unit-tests"] is False
+    for lane, path in ideas("blade-workspace"):
+        parsed = lanes.read_idea(path)
+        assert parsed is not None, path
+        headers, _body = parsed
+        opts = lanes.resolve_lane_options(cfg, headers, lane)
+        assert opts["unit-tests"] is False, (path, opts)
+        cards = lanes.lane_cards(lane, integration_tests=opts["integration-tests"],
+                                 unit_tests=opts["unit-tests"])
+        codes = [c["code"] for c in cards]
+        assert "TW" not in codes, codes
+        assert "C" in codes and "RVa" in codes, codes
+        rva = [c for c in cards if c["code"] == "RVa"][0]
+        assert rva["parents"] == [f"C{lane}"], rva
+        # filed complete, pruned at lane open: that is what makes the header reversible
+        assert [c["code"] for c in lanes.lane_cards(lane)] == [
+            "I", "Gi", "P", "RVp", "Gp", "TW", "C", "RVa", "TI", "RVc", "Gc"]
+
+
+def test_the_two_lane_board_resolves_each_lane_its_own_options():
+    """THE PER-LANE ARRAY FORM, on the only shipped board that uses it. `lanes: 2`
+    with `"integration-tests": [false, true]` says lane 1 files and prunes the
+    integration cards while lane 2 keeps them — the one option shape no other board
+    exercises, and the one an off-by-one index would silently reverse. Both lanes
+    are FILED complete either way; the list decides what each lane keeps on opening."""
+    cfg = json.load(open(os.path.join(BOARDS, "roman-evaluator-java", "board.json")))
+    assert cfg["lanes"] == 2, cfg
+    assert isinstance(cfg["integration-tests"], list), cfg
+    shipped = [lane for lane, _ in ideas("roman-evaluator-java")]
+    assert shipped == [1, 2], shipped
+    for lane, path in ideas("roman-evaluator-java"):
+        parsed = lanes.read_idea(path)
+        assert parsed is not None, path
+        headers, _body = parsed
+        opts = lanes.resolve_lane_options(cfg, headers, lane)
+        assert opts["integration-tests"] is (lane == 2), (lane, opts)
+        assert opts["unit-tests"] is True, (lane, opts)
+        codes = [c["code"] for c in lanes.lane_cards(
+            lane, integration_tests=opts["integration-tests"],
+            unit_tests=opts["unit-tests"])]
+        assert ("TI" in codes) is (lane == 2), (lane, codes)
+        assert ("RVc" in codes) is (lane == 2), (lane, codes)
+        assert codes[-1] == "Gc", codes
+        assert [c["code"] for c in lanes.lane_cards(lane)] == [
+            "I", "Gi", "P", "RVp", "Gp", "TW", "C", "RVa", "TI", "RVc", "Gc"]
+
+
 def test_every_shipped_idea_validates():
     import board_schema
     bad = {}

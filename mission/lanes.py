@@ -23,12 +23,43 @@ LANE_CARDS = [
     ("RVp", "rvp-body.txt", "reviewer",   "P",   None),
     ("Gp",  "gp-body.txt",  "human-gate", "RVp", None),
     ("TW",  "tw-body.txt",  "tester",     "Gp",  "test-driven-development"),
-    ("C",   "c-body.txt",   "coder",      "TW",  None),
+    ("C",   "c-body.txt",   "coder",      "Gp",  None),
     ("RVa", "rva-body.txt", "reviewer",   "C",   None),
-    ("TI",  "ti-body.txt",  "tester",     "RVa", None),
+    # The integration level is CODER work, not tester work: an end-to-end run is in
+    # effect a review OF the whole deliverable, so the errors it uncovers are
+    # main-code errors — and they may sit anywhere, including code the earlier review
+    # already passed. A card that could only write tests would hand every one of them
+    # to a fresh revision card that rediscovers the context from a transcript; the same
+    # role, on its second pass, fixes what it just proved wrong. The JUDGEMENT stays
+    # independent: RVc reviews the tree the gate receives (its check (e)), so the card
+    # that authored the tests and the fixes never certifies them.
+    ("TI",  "ti-body.txt",   "coder",     "RVa", None),
     ("RVc", "rvc-body.txt", "reviewer",   "TI",  None),
     ("Gc",  "gc-body.txt",  "human-gate", "RVc", None),
 ]
+
+# The graph is a chain — each card's parent is the card filed before it — with ONE
+# FORK, declared here because a walk cannot express it.
+#
+#   Gp ─┬─ TW   (unit tests, when the lane runs them)
+#       └─ C    (implementation)
+#          └─┴─ RVa   (the review that waits for BOTH)
+#
+# The tester no longer blocks the coder. The plan already carries the real code (the
+# plan checklist forbids a TBD), so the coder has nothing to learn from a test file
+# that does not exist yet — and the LANE's done criterion was never "the tests are
+# green": it is RVa's verdict, which re-derives the suite itself. What the sequence
+# bought was the RED observation (a FAIL witnessed before the implementation existed),
+# and that is what moving TW beside C gives up; a lane that needs it back can prove it
+# from the two patches at review time.
+#
+# A code named here ignores the positional parent; the walk still advances past it, so
+# every other card keeps its chain. Cards a lane drops (UT_CODES / IT_CODES) are
+# filtered out of the parents — `unit-tests: false` narrows RVa to (C,) by itself.
+PARENTS = {
+    "C":   ("Gp",),
+    "RVa": ("TW", "C"),
+}
 
 LABELS = {
     "I":   "idea refinement",
@@ -36,7 +67,7 @@ LABELS = {
     "P":   "implementation plan",
     "RVp": "plan review",
     "Gp":  "plan gate",
-    "TW":  "unit tests (RED-first)",
+    "TW":  "unit tests",
     "C":   "implement",
     "RVa": "reviewer verdict",
     "TI":  "integration tests",
@@ -53,21 +84,45 @@ REFINED_SECTIONS = ("Problem", "Scope", "Open questions", "Assumptions", "Findin
 # tester AND the final review, because RVc reviews nothing else.
 IT_CODES = ("TI", "RVc")
 
+# The profile that works a role whose own profile was RETIRED. The card's job is
+# unchanged — it is still the unit tests, or the review — but the worker behind it
+# is the coder's: one profile, one skill set, and the protection is carried by the
+# CARD (a separate session, the plan alone, its own patch, RVa's checks (e) and (f)),
+# not by a second profile to maintain. A board's own `assignees` still wins.
+ROLE_FALLBACK = {"tester": "coder", "reviewer": "coder"}
+
+# Roles that never spawn a worker: a gate is completed by a person, or by the
+# driver when `auto-gates` is on, so no profile has to exist for it. The dispatcher
+# buckets a card whose assignee is not a profile as unspawnable — correct for a
+# gate, and the reason `required_profiles` must not demand one.
+NO_PROFILE_ROLES = frozenset({"human-gate"})
+
+# The role whose cards JUDGE the work. `model_override` is applied to these cards
+# and nothing else: declared as a role, not as the review codes, because that is
+# what the option names — the reviewer — and a board may remap it to any profile.
+JUDGE_ROLES = frozenset({"reviewer"})
+
+# codes dropped when a lane runs no REFINEMENT: the researcher who turns the raw
+# idea into a refined one, and the human gate that accepts that refinement. The lane
+# then plans from the raw idea itself, and P becomes the lane ROOT — the walk below
+# reparents it, exactly as it hands C to the plan gate when TW is dropped.
+REFINEMENT_CODES = ("I", "Gi")
+
 # codes dropped when a lane runs without unit tests. TW alone: RVa is the CODE
-# review (parented to C, "reviewer verdict") and the only review before the code
-# gate, so dropping it with the tests would leave the gate unguarded. Not a
-# mirror of IT_CODES, and deliberately so.
+# review and the only review before the code gate, so dropping it with the tests
+# would leave the gate unguarded. Not a mirror of IT_CODES, and deliberately so.
+# Dropping TW narrows RVa's declared parents to (C,) — see PARENTS and lane_cards.
 UT_CODES = ("TW",)
 
 
-def lane_root_code(integration_tests=True):
+def lane_root_code(integration_tests=True, refinement=True):
     """The card a lane starts from — the FIRST entry of LANE_CARDS.
 
     Positional, not code-based: open_lane's activation work (snapshot,
     pruning, linking) belongs to whatever card opens the lane, and hardcoding
     "i" there breaks the day I/Gi are removed or reordered.
     """
-    return lane_cards(1, integration_tests)[0]["code"]
+    return lane_cards(1, integration_tests, refinement=refinement)[0]["code"]
 
 
 def card_title(code, lane):
@@ -114,26 +169,112 @@ def skill_for(code):
 
 def assignee_for(role, assignees=None):
     """The hermes profile that works a role — the board's `assignees` remapping if
-    it names this role, else the role's own name.
+    it names this role, else the role's fallback profile, else the role's own name.
 
     One lookup, so a board that renames its tester renames it everywhere: filing,
     revision cards and the reviewer-feed retry rule all come through here.
     """
-    return (assignees or {}).get(role, role)
+    return (assignees or {}).get(role, ROLE_FALLBACK.get(role, role))
 
 
-def lane_cards(lane, integration_tests=True, unit_tests=True, assignees=None):
+def any_lane(value, default=True):
+    """A per-lane option as ONE answer, for a question asked of the whole board:
+    a list is per-lane, so the board needs the profile if ANY lane does."""
+    if value is None:
+        return default
+    return any(value) if isinstance(value, list) else bool(value)
+
+
+def required_profiles(assignees=None, refinement=True, unit_tests=True,
+                      integration_tests=True):
+    """Every hermes profile a board needs before its cards can dispatch.
+
+    create-board.sh's pre-flight asks this instead of carrying a list: a
+    hand-written one is wrong the moment a role's profile is retired — it then
+    refuses to create ANY board, however the manifest remaps — and it cannot tell
+    which roles need no profile at all.
+    """
+    remap = assignees or {}
+    # The lane-SHAPE options are part of the answer: a board that runs no refinement
+    # spawns no researcher, and demanding its profile would refuse a board that needs
+    # nothing of the sort — the same wrong refusal, one option over.
+    codes = {c["code"] for c in lane_cards(1, integration_tests=integration_tests,
+                                           unit_tests=unit_tests,
+                                           refinement=refinement)}
+    out = set()
+    for code, _body, role, _parent, _skill in LANE_CARDS:
+        if code not in codes:
+            continue
+        if role in NO_PROFILE_ROLES and role not in remap:
+            continue
+        out.add(assignee_for(role, remap))
+    return sorted(out)
+
+
+def max_reworks(cfg=None):
+    """This lane's rework budget: `max-reworks` when the board — or the lane's own
+    header — sets one, else the house default.
+
+    NOT `max-retries`, and the difference is the whole point: that is the engine's
+    flag for how many times the DISPATCHER may attempt one card (a timeout, a crash),
+    and it stays 1 because a failed card is final. This is the board's own retry
+    mechanism — a REVIEW that sends work back by filing a revision card — and this is
+    how many times it may do that before the lane asks a human.
+    """
+    set_to = (cfg or {}).get("max-reworks")
+    return int(set_to) if set_to else MAX_REWORKS        # see MAX_REWORKS below: the
+                                                        # option table holds it
+
+
+def model_args(role, cfg):
+    """`--model`/`--provider` for a card of this role — the manifest's
+    `model_override`, and ONLY on the cards that judge.
+
+    A verdict is where a stronger model pays (it is the card the lane's done
+    criterion hangs on), so the option lands on the review cards and on nothing
+    else; a board that names no model files none of these flags and every card
+    runs its profile's default. The provider is sent only alongside a model —
+    the engine's own rule — and it is what lets a judge run on a provider other
+    than the profile's own (the local llama-swap endpoint, say).
+    """
+    if role not in JUDGE_ROLES:
+        return []
+    model = (cfg or {}).get("model_override")
+    if not model:
+        return []
+    args = ["--model", model]
+    provider = (cfg or {}).get("provider_override")
+    if provider:
+        args += ["--provider", provider]
+    return args
+
+
+def lane_cards(lane, integration_tests=True, unit_tests=True, assignees=None,
+               refinement=True):
     """The card graph for one lane, in filing order (parents before children).
 
     A dropped card's child is reparented by the `prev_id` walk below, so
-    `unit-tests: false` hands C straight to the plan gate.
+    `unit-tests: false` hands C straight to the plan gate — and a card whose parents
+    are DECLARED (`lanes.PARENTS`, the fork) has the dropped ones filtered out of its
+    list instead, so RVa waits on TW only when the lane runs unit tests at all.
+    `refinement: false` drops the lane's first two cards, which leaves P with no
+    predecessor: it becomes the ROOT this lane opens on.
+
+    `parents` is a LIST: the fork is the one place a card waits for two.
     """
     rows = [r for r in LANE_CARDS
             if (integration_tests or r[0] not in IT_CODES)
-            and (unit_tests or r[0] not in UT_CODES)]
+            and (unit_tests or r[0] not in UT_CODES)
+            and (refinement or r[0] not in REFINEMENT_CODES)]
+    codes = {r[0] for r in rows}
     cards = []
     prev_id = None
     for code, body, assignee, _parent_code, skill in rows:
+        declared = PARENTS.get(code)
+        if declared:
+            parents = [f"{p}{lane}" for p in declared if p in codes]
+        else:
+            parents = [prev_id] if prev_id else []
         cards.append({
             "code": code,
             "id": f"{code}{lane}",
@@ -141,7 +282,7 @@ def lane_cards(lane, integration_tests=True, unit_tests=True, assignees=None):
             "body": body,
             "role": assignee,
             "assignee": assignee_for(assignee, assignees),
-            "parent": prev_id,
+            "parents": parents,
             "skill": skill,
         })
         prev_id = f"{code}{lane}"
@@ -157,6 +298,12 @@ import board_schema
 # once, in board_schema. A second copy here is what let the manifest and the
 # header spell the same option two different ways.
 HEADER_KEYS = board_schema.HEADER_KEYS
+
+# The house rework budget — how many times a review may send work back before the lane
+# asks a human. Read FROM the option table so there is one declaration of it, and it
+# lives here rather than with the function above because this module's board_schema
+# imports come after the graph (a module-level read up there is a NameError).
+MAX_REWORKS = board_schema.OPTIONS["max-reworks"][1]
 
 _HEADER_RE = re.compile(r"^<!--\s*([A-Za-z][A-Za-z0-9-]*)\s*:\s*(.*?)\s*-->\s*$")
 _BOOL = {"true": True, "false": False}

@@ -255,6 +255,32 @@ def test_prose_about_a_deprecated_field_is_not_a_warning(tmp_path, monkeypatch):
     assert "E13" not in codes(findings), findings
 
 
+def test_the_word_is_a_warning_only_in_a_tool_form():
+    """The FORM is the rule, not the word. A review reasoning about the checklist
+    quotes it — `Item 4's warning: "A [TW] step that demands a FAIL …"` — and that
+    sentence is the board's own text, carried in the card body: prose, whatever it is
+    about. Real case: 2026-09-12's blade-workspace run audited red (E13) on exactly
+    that line while no tool in it printed a warning at all."""
+    for line in ("warning: no handler for /x",
+                 "  WARNING: stale cache",
+                 "src/foo.c:12: warning: unused variable",
+                 "pytest: warning: fixture 'x' uses deprecated API",
+                 "DeprecationWarning: x is deprecated"):
+        assert ra.WARN_LINE.search(line), line
+    for line in ('Item 4\'s warning: "A [TW] step that demands a FAIL its own '
+                 'Findings contradict fails this item"',
+                 "the plan has no [TW] steps, so a warning would be wrong here",
+                 "Potential item 4 issue: nothing to warn about"):
+        assert not ra.WARN_LINE.search(line), line
+
+
+def test_a_possessive_warning_in_a_verdict_is_prose():
+    """The same guard on the result field: 'item 4\'s warning does not apply' is a
+    reviewer citing a checklist item, not a run reporting a warning."""
+    assert not ra.WARN_TEXT.search("PASS: item 4\'s warning does not apply")
+    assert ra.WARN_TEXT.search("PASS: 2 warnings (deprecation)")
+
+
 def test_a_card_log_from_an_earlier_run_is_ignored(tmp_path, monkeypatch):
     clean_probe(monkeypatch)
     runs = fixture(tmp_path, chain_recs=worker_chain())
@@ -304,6 +330,20 @@ def test_a_cache_left_in_work_is_an_error(tmp_path, monkeypatch):
     assert "E16" not in codes(findings, "ERROR"), findings
     assert ra.report(findings, _rows, _s, None) == 0
     assert [f for f in findings if f[0] == "INFO"][0][2].startswith("not a deliverable, left in place")
+
+
+def test_the_report_measures_overhead_against_time_in_flight(tmp_path, capsys):
+    """The fork (TW ∥ C) made the summed agent total exceed the wall, and a negative
+    overhead reads as a bug. The report measures against the union and says how much
+    of the run had two cards at once."""
+    runs = fixture(tmp_path, summary_extra={
+        "wall_min": 5.0, "agent_work_min": 4.0, "agent_union_min": 2.5,
+        "overlap_min": 1.5})
+    findings, rows, stats = ra.audit(runs)
+    ra.report(findings, rows, stats, 4.0)
+    out = capsys.readouterr().out
+    assert "overlap 1.5 min (two cards at once)" in out, out
+    assert "overhead 2.5 min" in out, out
 
 
 def test_the_ceiling_parser():

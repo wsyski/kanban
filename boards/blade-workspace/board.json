@@ -1,4 +1,5 @@
 {
+  "$schema": "../../mission/board.schema.json",
   "slug": "blade-workspace",
   "name": "Blade Workspace (external project)",
   "lanes": 1,
@@ -8,5 +9,8 @@
   "auto-gates": true,
   "goal": false,
   "max-runtime": "10m",
-  "max-retries": 1
+  "max-reworks": 2,
+  "model_override": "glm-5.3-flash",
+  "provider_override": "opencode-go",
+  "refinement": false
 }

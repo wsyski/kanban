@@ -19,10 +19,10 @@ import json, re, subprocess, sys, os, collections, datetime
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "mission"))
-import lanes  # noqa: E402  — card code -> assignee, so roles are never hardcoded here
+import lanes  # noqa: E402  — card code -> role, so roles are never hardcoded here
 import runs_util  # noqa: E402  — runs parsing shared with the driver
 
-ASSIGNEE = {row[0]: row[2] for row in lanes.LANE_CARDS}
+ROLE = {row[0]: row[2] for row in lanes.LANE_CARDS}
 _CODE_RE = re.compile(r"^([A-Za-z]+)\d+:")
 _LANE_RE = re.compile(r"- lane (\d+)$")
 
@@ -111,6 +111,7 @@ def runs_elapsed(card_id):
                 and r.get("ended_at") and r.get("started_at"):
             out.append({"outcome": r["outcome"],
                         "elapsed_min": runs_util.elapsed_min(r),
+                        "started_at": r.get("started_at"), "ended_at": r.get("ended_at"),
                         "note": (r.get("summary") or r.get("error") or "")[:80]})
     return out
 
@@ -161,6 +162,7 @@ def main():
     order = sorted({k[0] for k in tr if len(k) == 2},
                    key=lambda t: tr.get((t, "running"), t1) or t1)
     work_total = 0.0
+    intervals = []
     per_card = {}
     for title in order:
         cid = tr.get((title, "done", "id")) or tr.get((title, "running", "id")) or "?"
@@ -168,6 +170,8 @@ def main():
         rows = runs_elapsed(cid)
         agent = sum(r.get("elapsed_min") or 0
                     for r in rows if r.get("outcome") in runs_util.CLOSED_OUTCOMES)
+        intervals += [(r.get("started_at"), r.get("ended_at")) for r in rows
+                      if r.get("outcome") in runs_util.CLOSED_OUTCOMES]
         work_total += agent
         fr = tr.get((title, "running"))
         dn = tr.get((title, "done"))
@@ -200,11 +204,12 @@ def main():
                   f"{wall:>8.1f}m")
         print()
 
-    # Per role. Which profile is actually burning the budget — invisible above,
+    # Per ROLE, not per profile: the role is the identity and several of them share
+    # one profile now (tester and reviewer are worked on the coder). Invisible above,
     # where reviewer time is spread over three separate cards per lane.
     by_role = collections.defaultdict(float)
     for title, d in per_card.items():
-        by_role[ASSIGNEE.get(card_code(title), "?")] += d["agent"]
+        by_role[ROLE.get(card_code(title), "?")] += d["agent"]
     if any(by_role.values()):
         print(f"{'role':<14} {'agent':>9}   share")
         print("-" * 36)
@@ -213,10 +218,14 @@ def main():
             if mins:
                 print(f"{role:<14} {mins:>8.1f}m   {100*mins/tot:>3.0f}%")
         print()
-    print(f"total agent work time: {work_total:.1f} min")
+    union = runs_util.union_min(intervals)
+    overlap = max(0.0, work_total - union)
+    print(f"total agent work time: {work_total:.1f} min"
+          + (f" ({union:.1f} min in flight, {overlap:.1f} min with two cards at once)"
+             if overlap > 0.05 else ""))
     print(f"total wall time: {(t1-t0)/60:.1f} min")
-    print(f"overhead ratio: {(t1-t0)/60 - work_total:.1f} min non-agent time "
-          f"({100*((t1-t0)/60 - work_total)/max((t1-t0)/60,.1):.0f}%)")
+    print(f"overhead ratio: {(t1-t0)/60 - union:.1f} min non-agent time "
+          f"({100*((t1-t0)/60 - union)/max((t1-t0)/60,.1):.0f}%)")
     # budget exhaustion flags
     for title in order:
         cid = tr.get((title, "done", "id")) or tr.get((title, "running", "id"))

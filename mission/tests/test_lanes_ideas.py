@@ -74,7 +74,8 @@ def test_resolve_prefers_header_over_board_default():
     defaults = {"integration-tests": True, "auto-gates": False}
     opts = lanes.resolve_lane_options(
         defaults, {"integration-tests": "false", "auto-gates": "true"})
-    assert opts == {"integration-tests": False, "unit-tests": True,
+    assert opts == {"refinement": True, "max-reworks": 3,
+                    "integration-tests": False, "unit-tests": True,
                     "auto-gates": True}
 
 
@@ -83,6 +84,20 @@ def test_resolve_falls_back_to_board_default():
     opts = lanes.resolve_lane_options(defaults, {})
     assert opts["integration-tests"] is False
     assert opts["auto-gates"] is True
+
+
+def test_a_header_decides_a_test_level_whatever_the_board_said():
+    """TWO DOORS, TWO DIRECTIONS, BOTH LEVELS — a board may be built without unit or
+    integration tests, or a lane's own header may skip that cell at runtime, and the
+    header wins either way: a board built without a level can re-enable it for one
+    lane, a board built with it can skip it for one lane."""
+    for key in ("unit-tests", "integration-tests"):
+        for board_value in (True, False):
+            header = {key: "false" if board_value else "true"}
+            opts = lanes.resolve_lane_options({key: board_value}, header)
+            assert opts[key] is not board_value, (key, board_value, opts)
+            # and with no header the board's own value stands, for both values
+            assert lanes.resolve_lane_options({key: board_value}, {})[key] is board_value
 
 
 def test_bool_values_are_exactly_true_or_false():

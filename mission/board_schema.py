@@ -62,6 +62,10 @@ OPTIONS = {
     "lanes":             ("count",    1,     False, None),
     "default-workdir":   ("abspath",  None,  False, "--default-workdir"),
     "targets":           ("paths",    [],    False, None),
+    # The idea's refinement (the researcher's card and the human idea gate behind
+    # it). Per-lane like the test levels, so a board built with it can turn it off
+    # for one lane and vice versa; `lanes.REFINEMENT_CODES` is what it drops.
+    "refinement":        ("bool",     True,  True,  None),
     "unit-tests":        ("bool",     True,  True,  None),
     "integration-tests": ("bool",     True,  True,  None),
     "auto-gates":        ("bool",     False, True,  None),
@@ -69,9 +73,21 @@ OPTIONS = {
     "max-runtime":       ("duration", "60m", False, "--max-runtime"),
     "max-retries":       ("count",    1,     False, "--max-retries"),
     "goal-max-turns":    ("count",    40,    False, "--goal-max-turns"),
-    "rework-max-retries": ("count",   1,     False, None),
+    # TWO different budgets, and the names say which is which:
+    #   `max-retries` is the ENGINE's per-card attempt budget (`hermes kanban create
+    #   --max-retries`), and the one-attempt rule pins it to 1.
+    #   `max-reworks` is the BOARD's own mechanism: how many times a review may send
+    #   work back by filing a revision card before a human is asked.
+    "max-reworks":       ("count",   3,     True,  None),
     "timeout-min":       ("count",    240,   False, None),
     "assignees":         ("roles",    {},    False, None),
+    # The model a REVIEW runs on, named exactly as the engine names the task
+    # property it becomes (`model_override`, with its provider beside it). Board
+    # level, NOT per-lane: the header door is for options a lane's own idea may
+    # decide, and how strong a judge the board buys is a property of the board.
+    # `lanes.model_args` sends them, on the judge cards only.
+    "model_override":    ("text",     None,  False, None),
+    "provider_override": ("text",     None,  False, None),
 }
 
 BOARD_KEYS = frozenset(OPTIONS)
@@ -81,10 +97,7 @@ PASS_THROUGH = {k: o[3] for k, o in OPTIONS.items() if o[3]}
 # `timeout-min` is the DRIVER's cap, not a card's: start-board.sh passes it to
 # run.py, so it has no `hermes kanban` flag even though the name is Hermes-shaped.
 # Options the driver applies itself rather than passing through under that name.
-# `rework-max-retries` becomes `--max-retries` on a REVISION card only, so it
-# cannot be a pass-through: the same flag already carries `max-retries` for the
-# board's first filing.
-DRIVER_OPTIONS = frozenset({"timeout-min", "rework-max-retries"})
+DRIVER_OPTIONS = frozenset({"timeout-min"})
 
 # The roles the card graph fills. `assignees` remaps role -> hermes profile for one
 # board; a role it does not mention keeps the graph's own name. Declared here rather
@@ -103,9 +116,6 @@ ROLES = frozenset({"researcher", "manager", "coder", "tester", "reviewer",
 ONE_ATTEMPT = {
     "max-retries": ("a failed card is final — only a REVIEW sends work back, by "
                     "filing a revision card"),
-    "rework-max-retries": ("a failed revision card is final — the round budget "
-                           "(2 idea / 3 plan / 2 code rounds) is what retries work, "
-                           "not the dispatcher"),
 }
 
 # `<n><unit>` one or more times, as run-audit.py's ceiling parser reads it, so a
@@ -185,6 +195,13 @@ def validate(cfg, *, where="board.json", only=None, lists=True):
     allowed = BOARD_KEYS if only is None else frozenset(only)
 
     for key in sorted(set(cfg) - allowed):
+        if key.startswith("$"):
+            # A JSON META-KEY, not a board option: `$schema` is the editor's
+            # reference to the generated schema and riding along in the manifest is
+            # the point of it. Not in the option table on purpose — a board does not
+            # "set" it, and the generated schema's `additionalProperties: false` is
+            # what keeps a typo'd option loud in the editor.
+            continue
         if key in BOARD_KEYS:
             problems.append(f"{where}: {key!r} is a board-level option — set it "
                             f"in board.json; only {sorted(allowed)} are per-lane")
@@ -226,6 +243,15 @@ def validate(cfg, *, where="board.json", only=None, lists=True):
             err = _kind_error(kind, entry)
             if err:
                 problems.append(f"{where}: {key!r} lane {i}: {err}")
+
+    # The engine's own rule (kanban_db._validate_model_override), refused where the
+    # board is declared rather than at spawn: a provider names a backend, not a
+    # model, so `provider_override` alone would ask the worker for a model nobody
+    # named — and a spawn failure is final.
+    if "provider_override" in allowed and cfg.get("provider_override") \
+            and not cfg.get("model_override"):
+        problems.append(f"{where}: 'provider_override' requires 'model_override' "
+                        f"— a provider alone does not say which model to run")
     return problems
 
 
@@ -465,10 +491,93 @@ def schema_text():
     return "\n".join(rows)
 
 
+# The generated editor schema. DERIVED from the table above — never hand-written,
+# or it becomes a second declaration of the option set and drifts from the first
+# (the failure the header/manifest split already taught). `--check-schema` fails
+# when the file on disk disagrees with this module, and the suite runs that.
+SCHEMA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           "board.schema.json")
+
+# kind -> the JSON Schema a manifest value of that kind satisfies. `lanes`-length is
+# the one rule JSON Schema cannot state (an array of exactly N entries needs a
+# cross-field check), so the Python validator keeps that half; the schema carries it
+# as a comment for whoever reads the file in an editor.
+_KIND_SCHEMA = {
+    "slug":     {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+    "text":     {"type": "string", "minLength": 1},
+    "count":    {"type": "integer", "minimum": 1},
+    "bool":     {"type": "boolean"},
+    "duration": {"type": "string", "pattern": "^(?:\\d+(?:\\.\\d+)?[hms])+$"},
+    "abspath":  {"type": "string", "pattern": "^/"},
+    "paths":    {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "roles":    {"type": "object",
+                 "propertyNames": {"enum": sorted(ROLES)},
+                 "additionalProperties": {"type": "string", "minLength": 1}},
+}
+
+
+def json_schema():
+    """The manifest's JSON Schema, for editors (IntelliJ, VS Code) to validate and
+    complete a `board.json` as it is written.
+
+    It is a CONVENIENCE, not the authority: `validate` above is what a board is
+    actually judged by, and it decides three things this cannot — a per-lane array's
+    length against `lanes`, an `abspath` that exists on this host, and the cross-key
+    rule that `provider_override` needs `model_override`.
+    """
+    props = {"$schema": {"type": "string",
+                         "description": "Path to this generated schema."}}
+    for key, (kind, default, per_lane, _flag) in OPTIONS.items():
+        spec = dict(_KIND_SCHEMA[kind])
+        if default is not None:
+            spec["default"] = default
+        if key in ONE_ATTEMPT:
+            spec = {"const": 1, "description": ONE_ATTEMPT[key]}
+        if per_lane:
+            # one value for the whole board, or one per lane
+            spec = {"oneOf": [spec, {"type": "array", "items": spec, "minItems": 1,
+                                     "description":
+                                     "one entry per lane, in lane order"}]}
+        props[key] = spec
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "kanban board.json",
+        "$comment": ("Generated by mission/board_schema.py --write-schema; that "
+                     "module is the authority. A per-lane array must have exactly "
+                     "`lanes` entries and an abspath must exist on the host — "
+                     "checks JSON Schema cannot express, so a manifest that the "
+                     "editor accepts can still be refused by board_schema.py."),
+        "type": "object",
+        "additionalProperties": False,
+        "properties": props,
+        "required": ["lanes"],
+    }
+
+
+def write_schema(path=None):
+    path = path or SCHEMA_PATH
+    with open(path, "w") as f:
+        json.dump(json_schema(), f, indent=2, sort_keys=True)
+        f.write("\n")
+    return path
+
+
+def schema_is_current(path=None):
+    path = path or SCHEMA_PATH
+    try:
+        with open(path) as f:
+            return json.load(f) == json_schema()
+    except (OSError, ValueError):
+        return False
+
+
 USAGE = """mission/board_schema.py — validate a board's files against the schema
 
   board_schema.py <board.json|lane-<k>.md>...   validate each; non-zero on any fault
   board_schema.py --schema                      print the option table
+  board_schema.py --jsonschema                  print the manifest's JSON Schema
+  board_schema.py --write-schema [path]         (re)generate it, for editors
+  board_schema.py --check-schema [path]         fail if the file is stale
   board_schema.py --help                        this text
 
 A `.md` path is judged as an idea file: its headers against the per-lane options, and
@@ -484,6 +593,17 @@ if __name__ == "__main__":
         sys.exit(0 if args else 2)
     if args[0] == "--schema":
         print(schema_text())
+    elif args[0] in ("--jsonschema", "--write-schema", "--check-schema"):
+        target = args[1] if len(args) > 1 else None
+        if args[0] == "--jsonschema":
+            print(json.dumps(json_schema(), indent=2, sort_keys=True))
+        elif args[0] == "--write-schema":
+            print(f"wrote {write_schema(target)}")
+        elif schema_is_current(target):
+            print(f"{target or SCHEMA_PATH} is current")
+        else:
+            sys.exit(f"{target or SCHEMA_PATH} is stale — regenerate it with "
+                     f"`mission/board_schema.py --write-schema`")
     else:
         for path in args:
             validate_or_die(path)

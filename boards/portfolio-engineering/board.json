@@ -1,8 +1,10 @@
 {
+  "$schema": "../../mission/board.schema.json",
   "slug": "portfolio-engineering",
   "name": "Portfolio Engineering",
   "lanes": 1,
   "default-workdir": "/home/wos/.hermes/profiles/trader",
   "integration-tests": false,
-  "auto-gates": false
+  "auto-gates": false,
+  "max-reworks": 2
 }

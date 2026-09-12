@@ -9,6 +9,17 @@ BANNER = ("⚠ A previous `hermes update` pulled new code but did not restart ru
           "  Run `hermes update` or `hermes gateway restart`.\n")
 
 
+def test_two_cards_at_once_count_their_overlap_once():
+    """The lane FORKS (TW ∥ C), so 2 minutes beside 2 minutes is 2.5 minutes of work in
+    flight, not 4 — while the sum stays what a per-card ceiling is measured against."""
+    assert runs_util.union_min([(0, 120), (30, 150)]) == 2.5       # 1000→1150s = 2.5m
+    assert runs_util.union_min([(0, 60), (60, 120)]) == 2.0        # touching, no gap
+    assert runs_util.union_min([(0, 600), (60, 120)]) == 10.0      # one nested in another
+    assert runs_util.union_min([(300, 120), (0, 60)]) == 1.0       # unsorted, junk skipped
+    assert runs_util.union_min([]) == 0.0
+    assert runs_util.union_min([(None, 60), (0, None), (5, 5)]) == 0.0
+
+
 def test_cli_error_drops_the_update_banner_and_keeps_the_real_error():
     err = BANNER + "kanban: board 'minimal-development' does not exist.\n"
     assert runs_util.cli_error(err) == "kanban: board 'minimal-development' does not exist."

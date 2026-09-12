@@ -1,8 +1,10 @@
 {
+  "$schema": "../../mission/board.schema.json",
   "slug": "roman-evaluator-js",
   "name": "Roman Evaluator JS",
   "lanes": 1,
   "integration-tests": false,
   "auto-gates": true,
-  "max-runtime": "10m"
+  "max-runtime": "10m",
+  "max-reworks": 2
 }

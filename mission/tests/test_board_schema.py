@@ -27,12 +27,56 @@ def test_a_minimal_manifest_is_valid():
     assert problems(slug="b") == []
 
 
+def test_a_manifest_may_carry_the_editors_schema_reference():
+    """`$schema` is a JSON meta-key, not a board option: it is how an editor finds
+    the generated schema, and refusing it would make the reference unusable."""
+    assert board_schema.validate(
+        {"lanes": 1, "$schema": "../../mission/board.schema.json"}, where="b") == []
+
+
+def test_a_typo_next_to_it_is_still_refused():
+    assert board_schema.validate({"lanes": 1, "$schema": "x", "max_retry": 1},
+                                 where="b")
+
+
+def test_the_generated_schema_is_current():
+    """DERIVED from the option table, so a stale file describes options that moved
+    and an editor would validate against yesterday's set. Same contract as the
+    generated flow diagram: regenerate with `--write-schema`."""
+    assert board_schema.schema_is_current(), \
+        "stale mission/board.schema.json — run mission/board_schema.py --write-schema"
+
+
+def test_the_generated_schema_describes_the_same_options():
+    """A relationship between two pieces of data, never a snapshot: every option is
+    in it, nothing else is, the per-lane ones take a list, and the one-attempt ones
+    are const 1."""
+    props = board_schema.json_schema()["properties"]
+    assert set(props) == set(board_schema.BOARD_KEYS) | {"$schema"}
+    for key in board_schema.PER_LANE:
+        assert "oneOf" in props[key], key
+    for key in board_schema.ONE_ATTEMPT:
+        assert props[key]["const"] == 1, key
+    for role in sorted(board_schema.ROLES):
+        assert role in props["assignees"]["propertyNames"]["enum"], role
+
+
+def test_every_shipped_manifest_points_at_the_schema():
+    import glob, json
+    boards = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__)))), "boards")
+    for path in sorted(glob.glob(os.path.join(boards, "*", "board.json"))):
+        assert json.load(open(path)).get("$schema") == \
+            "../../mission/board.schema.json", path
+
+
 def test_the_header_set_is_the_per_lane_set():
     """Not a second list. A per-lane option gets its header for free, and cannot
     be added to one side only — which is how the two sets drifted before."""
     assert board_schema.HEADER_KEYS is board_schema.PER_LANE
     assert board_schema.PER_LANE < board_schema.BOARD_KEYS
-    assert board_schema.PER_LANE == {"unit-tests", "integration-tests", "auto-gates"}
+    assert board_schema.PER_LANE == {"refinement", "max-reworks", "unit-tests",
+                                     "integration-tests", "auto-gates"}
 
 
 def test_a_per_lane_list_of_strings_is_rejected():
@@ -338,25 +382,22 @@ def test_a_dirty_index_in_the_work_directory_is_a_notice_not_a_fault(tmp_path):
 # ---- options added for what the manifest could not say ---------------------
 
 def test_the_rework_retry_budget_is_its_own_option():
-    """`max-retries` is the first filing; a revision is a second attempt at work a
-    reviewer rejected. BOTH are 1 by rule (2026-09-12): a failure is final, and the
-    only thing that retries work is the REVIEW that sent it back — by filing the
-    revision card. The option stays declared (Hermes names it) and refuses anything
-    else, so a manifest cannot re-enable a dispatcher retry."""
-    assert problems(slug="b", **{"rework-max-retries": 1}) == []
-    assert "must be 1" in problems(slug="b", **{"rework-max-retries": 2})[0]
-    assert problems(slug="b", **{"rework-max-retries": 0})
+    """1 by rule (2026-09-12): a failure is final, and the only thing that retries work
+    is the REVIEW that sent it back, by filing the revision card. The option stays
+    declared because Hermes names it, and refuses anything else, so a manifest cannot
+    re-enable a dispatcher retry. A revision card takes the same 1 — the board option
+    that used to hold a second number is gone."""
     assert "must be 1" in problems(slug="b", **{"max-retries": 3})[0]
     assert "unknown option" in problems(slug="b", **{"max_retries": 2})[0]
-    assert "rework-max-retries" in board_schema.DRIVER_OPTIONS
-    assert "rework-max-retries" not in board_schema.PASS_THROUGH
+    assert "rework-max-retries" not in board_schema.BOARD_KEYS
+    assert "rework-max-retries" not in board_schema.DRIVER_OPTIONS
 
 
-def test_the_driver_reads_the_rework_budget_rather_than_a_literal(monkeypatch):
+def test_a_revision_card_is_one_attempt_too():
+    """No manifest value can change it: the knob that could ask for a second attempt at
+    a revision is gone, and the count a board may choose is `max-reworks` (rounds the
+    DRIVER files), not dispatcher retries."""
     import run
-    monkeypatch.setattr(run, "manifest", lambda: {"rework-max-retries": 1})
-    assert run.rework_retries() == "1"
-    monkeypatch.setattr(run, "manifest", lambda: {})
     assert run.rework_retries() == "1"
 
 

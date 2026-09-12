@@ -1,4 +1,5 @@
 {
+  "$schema": "../../mission/board.schema.json",
   "slug": "minimal-goal-mode",
   "name": "Minimal Goal Mode",
   "lanes": 1,
@@ -6,5 +7,5 @@
   "auto-gates": true,
   "goal": true,
   "max-runtime": "6m",
-  "max-retries": 1
+  "max-reworks": 2
 }

@@ -2,6 +2,12 @@
 
 # Kanban review — prompts, ideas, skills, coder leak (2026-09-11)
 
+> **Dated record, superseded.** This file is what the work said on 2026-09-11. The
+> board's current contract is `README.md`; where this file quotes code — card names,
+> option names, escalation strings — that text may no longer exist (the round budgets
+> became `max-reworks`, `rework-max-retries` was deleted, the roles stopped being
+> profiles). Read it for the reasoning, not for the current state.
+
 Scope: `mission/card-bodies/*`, `mission/{lanes,file_lanes,run}.py`, the three boards' ideas, the five
 Hermes kanban profiles (SOUL.md persona, enabled skills), and the last recorded run
 (`boards/minimal-development/runs/`, 2026-09-10 23:04–23:31).

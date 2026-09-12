@@ -61,16 +61,28 @@ ERROR_VOCAB = re.compile(
     r"skipped|not found)\b")
 DONE_STATES = ("done", "archived", "triage")
 
-# Warnings the board's other voice prints: CLI-shaped lines, never prose. The
-# RED test phase legitimately prints ModuleNotFoundError, so an error vocabulary
-# here would fire on every healthy run; "0 warnings" in a verdict is not one.
+# Warnings the board's other voice prints: CLI-shaped lines, never prose. A
+# tester running before the coder's file exists can legitimately print
+# ModuleNotFoundError, so an error vocabulary here would fire on healthy runs;
+# "0 warnings" in a verdict is not one.
 # Real warning FORMS (Python/CLI), never the word in prose: the card logs are
 # transcripts, so a worker quoting the tool schema ("`result` is a deprecated
 # legacy field") is not a warning the run emitted — it was flagged as one on
 # 2026-09-11 and the run was clean.
-WARN_LINE = re.compile(r"(^warning\b|(^|\s)warnings?\s*:|DeprecationWarning|"
-                       r"RuntimeWarning|UserWarning|FutureWarning)")
-WARN_TEXT = re.compile(r"(?i)(?<!no )(?<!\b0 )(?<!\bzero )warnings?\b")
+# The FORM is what tells them apart, and it is narrower than "the word with a colon
+# after it": the word must LEAD its own line (`warning: …`, `  WARNING: …`) or follow
+# a POSITION prefix the way a tool prints it (`foo.c:12: warning: …`,
+# `pytest: warning: …`), or be a Python warning class. A sentence that merely mentions
+# one is prose — a plan review reasoning about the checklist quoted item 4 ("Item 4's
+# warning: \"A [TW] step that demands a FAIL …\"") and was reported as E13 on
+# 2026-09-12's blade-workspace run, where no tool printed a warning at all.
+# The FORM is case-insensitive the way tools print it (`warning:`, `WARNING:`,
+# `foo.c:12: warning:`), never a sentence that mentions the word.
+WARN_LINE = re.compile(r"(?i)(^\s*warnings?\b|:\s*warnings?\s*:)|"
+                       r"(DeprecationWarning|RuntimeWarning|UserWarning|FutureWarning)")
+# A possessive is prose in a verdict too ("item 4's warning does not apply"), so the
+# same guard applies to the result field: only the word standing on its own counts.
+WARN_TEXT = re.compile(r"(?i)(?<!no )(?<!'s )(?<!\b0 )(?<!\bzero )warnings?\b")
 
 
 def _driver_alive():
@@ -146,10 +158,17 @@ def summary_findings(summary, ceiling):
     for name, minutes in over.items():
         out.append(("WARNING", "E6",
                     f"{name} took {minutes} of a {ceiling}-minute ceiling"))
-    agent = summary.get("agent_work_min")
+    # The union when the summary has one (a forked lane double-counts on the sum):
+    # overhead is wall minus the minutes anyone was working, and `overlap_min` is
+    # reported beside it so two cards holding the clock at once is visible rather
+    # than inferred from a negative overhead.
+    agent = summary.get("agent_union_min")
+    if agent is None:
+        agent = summary.get("agent_work_min")
     if cards and not agent:
         out.append(("WARNING", "E10", f"agent_work_min={agent!r} with {len(cards)} cards"))
-    return out, {"cards": cards, "agent": agent, "wall": summary.get("wall_min")}
+    return out, {"cards": cards, "agent": agent, "wall": summary.get("wall_min"),
+                 "overlap": summary.get("overlap_min")}
 
 
 def result_findings(rows):
@@ -363,9 +382,11 @@ def report(findings, rows, stats, ceiling):
                   f" {'+' + str(len(row['staged'])) + ' staged' if row['staged'] else '':>12}{flag}")
     if stats.get("agent") is not None:
         wall, agent = stats.get("wall"), stats.get("agent")
+        overlap = stats.get("overlap") or 0.0
         overhead = (wall or 0) - (agent or 0)
         print(f"wall {wall} min, agent {agent} min, overhead {overhead:.1f} min"
-              f"{f' of a {ceiling}m ceiling' if ceiling else ''}")
+              + (f", overlap {overlap:.1f} min (two cards at once)" if overlap else "")
+              + f"{f' of a {ceiling}m ceiling' if ceiling else ''}")
     # Only an error or a warning fails a run (E16's notes above): a note is a fact
     # about the tree that is left exactly as it is.
     return 1 if (errors or warns) else 0

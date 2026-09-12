@@ -51,6 +51,16 @@ def _read_current_run():
         return None
 
 
+# The run directory this process has actually seen on disk. A `current` pointer to a
+# folder the human already trashed is a stale pointer, not a disappearance; only a
+# directory that was there and went away stops the board.
+_RUN_DIR_SEEN = {"path": None}
+
+
+def _remember_run_dir(path):
+    _RUN_DIR_SEEN["path"] = os.path.abspath(path) if path and os.path.isdir(path) else None
+
+
 def use_run(run_id):
     """Point every per-run path at runs/<run-id>. Reassigns the module globals so
     the paths stay plain strings: a hundred call sites join them, tests patch
@@ -61,6 +71,7 @@ def use_run(run_id):
     TIMING_PATH = os.path.join(RUN_DIR, "timing.jsonl")
     CARDS_DIR = os.path.join(RUN_DIR, "cards")
     VERDICTS_PATH = os.path.join(RUN_DIR, "verdicts.jsonl")
+    _remember_run_dir(RUN_DIR)
     return RUN_DIR
 
 
@@ -93,6 +104,7 @@ def mint_run(run_id, armed):
                          f"directory")
     path = use_run(run_id)
     os.makedirs(path, exist_ok=True)
+    _remember_run_dir(path)               # it exists now: losing it later means a `rm`
     tmp = CURRENT_RUN + ".tmp"
     with open(tmp, "w") as f:
         f.write(run_id + "\n")
@@ -155,11 +167,26 @@ def lane_graph(state):
     """
     rows = []
     for lane in range(1, board_lane_count(state) + 1):
-        present = [c for c in lanes.lane_cards(lane, integration_tests=True)
-                   if c["title"] in state]
+        # Resolved BY CODE, not by generated title: a title embeds the LABELS text, so
+        # an exact-title match reads a relabelled card as missing — and a card read as
+        # missing is dropped from its children's parent lists below.
+        present = []
+        for c in lanes.lane_cards(lane, integration_tests=True):
+            t, live = title_of_prefix(state, f"{c['id']}:")
+            if live:
+                present.append({**c, "title": t})
+        live_ids = {c["id"] for c in present}
         prev = None
         for c in present:
-            parents = [prev] if prev else ([f"Gc{lane - 1}"] if lane > 1 else [])
+            chain = [prev] if prev else ([f"Gc{lane - 1}"] if lane > 1 else [])
+            if c["parents"]:
+                # A DECLARED parent list (the fork: TW and C both children of Gp, RVa
+                # waiting for both). A parent the lane pruned is dropped rather than
+                # waited on — parents_done() reads a missing parent as not-done, so a
+                # card listing one is never promoted again.
+                parents = [p for p in c["parents"] if p in live_ids] or chain
+            else:
+                parents = chain
             # Rework cards gate the review ONLY once a round has been filed, and the
             # parent names the NEWEST round: a family grows (r2, r3 …), and naming
             # the first one left a gate satisfied while its own newest round was
@@ -186,8 +213,9 @@ def lane_graph(state):
             # tick()'s comment claimed the parents did. Linked now, for RVa and
             # Gc alike; Gc keeps its positional parent (RVa, or RVc on a lane
             # with integration tests) and the round is added to it.
-            code_rework = [p for p in (newest_round(f"C{lane}-rev"),
-                                       newest_round(f"RVa{lane}-r")) if p]
+            code_rework = [p for p in ([newest_round(f"{b}{lane}-rev")
+                                        for b in CODE_REWORK_BASES]
+                                       + [newest_round(f"RVa{lane}-r")]) if p]
             if c["code"] in ("RVa", "Gc"):
                 parents += code_rework
             rows.append((c["title"], parents, c["code"].lower(), lane))
@@ -267,6 +295,19 @@ def title_of_prefix(state, prefix):
         if nxt in (":", "-") or (nxt.isdigit() and not ends_digit):
             return t, card
     return None, None
+
+def live_card(state, code, lane):
+    """This lane's card by CODE, whatever its label currently says.
+
+    Titles embed the LABELS text (`TW1: unit tests - lane 1`), so an exact-title
+    lookup silently finds nothing the day a label is reworded — and a pruning branch
+    that finds nothing skips its own relinking, leaving the lane waiting on a card it
+    just archived. Resolved at the ':' boundary, which is what every parent lookup in
+    this file already does.
+    """
+    _t, card = title_of_prefix(state, f"{code}{lane}:")
+    return card
+
 
 def newest_of_prefix(state, prefix):
     """(title, card) of the NEWEST card in a round family ('RVp1-r', 'P1-rev').
@@ -388,25 +429,43 @@ def rework_hold(state, lane, base, gate_code):
     return False
 
 
+CODE_REWORK_BASES = ("C", "TW", "TI")
+"""Which cards a code-loop revision round can belong to.
+
+The fork is why this is not just the coder: the implementation review judges the
+coder's patch AND the tester's tests in one pass, so a round can be `TW1-rev-2` (a
+unit test that cannot fail) or `TI1-rev-1` (an integration test that mocks the thing
+under test). Counting or holding on `C{lane}-rev` alone would file a second round on
+top of a live one and let the gate count rounds that never happened.
+"""
+
+
 def code_rework_hold(state, lane):
-    """True while a CODER revision or RVa re-review round is live."""
+    """True while ANY code-loop revision or RVa re-review round is live."""
     for t, c in state.items():
-        if (t.startswith(f"C{lane}-rev") or t.startswith(f"RVa{lane}-r")) \
+        if (t.startswith(f"RVa{lane}-r")
+                or any(t.startswith(f"{b}{lane}-rev") for b in CODE_REWORK_BASES)) \
                 and c["status"] not in ("done", "archived"):
             return True
     return False
 
 
-def rework_retries():
-    """Retry budget for a REVISION card, from `rework-max-retries`.
+def code_rework_rounds(state, lane):
+    """How many code-loop rounds this lane has filed, whoever owned each fix."""
+    return len([t for t in state
+                if any(t.startswith(f"{b}{lane}-rev") for b in CODE_REWORK_BASES)])
 
-    Separate from `max-retries`, which is the board's first filing: a revision is a
-    second attempt at work a reviewer already rejected, so a board may want it
-    tighter or looser than the original without changing both. Default 1, as this
-    was when it was a literal.
+
+def rework_retries():
+    """Retry budget for a REVISION card — 1, always.
+
+    It used to be a `rework-max-retries` option, and that option is gone: a revision
+    is a card like any other, and the one-attempt rule makes every card's budget 1. A
+    knob whose only legal value is 1 is noise in a manifest, in the option table and
+    here — and it was the name that invited reading it as "how many reworks", which is
+    `max-reworks` (a count of ROUNDS, enforced by the driver, not by the dispatcher).
     """
-    return str(manifest().get("rework-max-retries")
-               or board_schema.OPTIONS["rework-max-retries"][1])
+    return "1"
 
 
 def _round_settings(lane):
@@ -512,6 +571,9 @@ def file_revision(state, lane, round_no, findings, base="P", reviewer_prefix="RV
                "--parent", rev_id, "--workspace", f"dir:{WORKDIR}", "--max-runtime", runtime,
                "--max-retries", rework_retries(), "--idempotency-key",
                f"{BOARD}-rr-{base}{lane}-r{round_no + 1}", "--created-by", "manager", "--json"]
+    # A re-review IS a review: without this a rework round would silently drop
+    # back to the worker's default model, which is the one thing the pin avoids.
+    rr_args += lanes.model_args(rr_assignee, manifest())
     rr_id = json.loads(kb(*rr_args))["id"]
     kb("link", rr_id, gate_id)
     # This gate now also guards the DOWNSTREAM card against starting while
@@ -740,6 +802,31 @@ def rejection_findings(text, limit=4000):
     return (text[m.end():] if m else (text or "")).strip()[:limit]
 
 
+REWORK_OWNERS = ("C", "TW", "TI")
+
+
+def rework_owner(verdict_text):
+    """Which card owns the fix a code-loop REJECT asks for, read from its OWNER line.
+
+    The fork is why this exists. The implementation review judges the coder's patch AND
+    the tester's tests in one pass, but the coder may not edit the tester's files
+    (c-body hard rule 3) — so a REJECT naming a bad test, sent to the coder the way
+    every round was sent before the fork, could only burn its rounds to a human
+    escalation. The reviewer names the owner (`OWNER: C` / `OWNER: TW` / `OWNER: TI`)
+    and the round is filed for that card. No line, or a line naming nothing usable,
+    means the coder: that is what every lane did before the fork, and a verdict that
+    forgets the line must not stall.
+    """
+    m = re.search(r"\bOWNER\b\s*[:=-]?\s*([A-Za-z]+)", verdict_text or "")
+    if not m:
+        return "C"
+    word = m.group(1).upper()
+    for code in REWORK_OWNERS:
+        if word == code or word.startswith(code):
+            return code
+    return "C"
+
+
 def is_rework(text):
     """The idea gate's send-back: the result's first word is REWORK, in any case."""
     return bool(re.match(r"\s*REWORK\b", text or "", re.IGNORECASE))
@@ -938,16 +1025,24 @@ def open_lane(state, lane):
     if opts is None:
         log(f"LANE {lane}: no idea entered ({IDEAS_DIR}/lane-{lane}.md) — chain stops here")
         return "stopped"
+    if not opts.get("refinement", True):
+        # No researcher and no idea gate: this lane opens on the plan card, which
+        # plans from the RAW idea. Archiving I is what makes P the root, and
+        # `lane_refinement` is what every root lookup reads.
+        for code in lanes.REFINEMENT_CODES:
+            card = live_card(state, code, lane)
+            if card and card["status"] != "done":
+                kb("archive", card["id"])
+                log(f"LANE {lane}: refinement=no — archived {code}{lane}")
     if not opts["integration-tests"]:
         for code in lanes.IT_CODES:
-            title = lanes.card_title(code, lane)
-            card = state.get(title)
+            card = live_card(state, code, lane)
             if card and card["status"] != "done":
                 kb("archive", card["id"])
                 log(f"LANE {lane}: integration-tests=no — archived {code}{lane}")
-        gc = state.get(lanes.card_title("Gc", lane))
-        rva = state.get(lanes.card_title("RVa", lane))
-        rvc = state.get(lanes.card_title("RVc", lane))
+        gc = live_card(state, "Gc", lane)
+        rva = live_card(state, "RVa", lane)
+        rvc = live_card(state, "RVc", lane)
         if gc and rvc:
             # archiving RVc does NOT drop the RVc -> Gc dependency edge; left
             # in place the gate waits forever on an archived parent.
@@ -966,26 +1061,21 @@ def open_lane(state, lane):
                 log(f"LANE {lane}: link RVa{lane}->Gc{lane} skipped ({e})")
     if not opts["unit-tests"]:
         # TW only — RVa is the CODE review and the only one before the code gate
-        # (lanes.UT_CODES says why). Its child C must be reparented to the plan
-        # gate, or it waits forever on an archived parent, the same failure the
-        # RVc -> Gc unlink above exists to avoid.
-        tw = state.get(lanes.card_title("TW", lane))
-        c = state.get(lanes.card_title("C", lane))
-        gp = state.get(lanes.card_title("Gp", lane))
+        # (lanes.UT_CODES says why). RVa's parents are DECLARED as (TW, C), so
+        # archiving TW leaves the filed TW -> RVa edge in place and the review waits
+        # forever on an archived parent: the same failure the RVc -> Gc unlink above
+        # exists to avoid. C needs no surgery at all — its parent is the plan gate in
+        # the graph itself (lanes.PARENTS), so there is no TW -> C edge to remove.
+        tw = live_card(state, "TW", lane)
+        rva = live_card(state, "RVa", lane)
         if tw and tw["status"] != "done":
             kb("archive", tw["id"])
             log(f"LANE {lane}: unit-tests=no — archived TW{lane}")
-        if tw and c:
+        if tw and rva:
             try:
-                kb("unlink", tw["id"], c["id"])
+                kb("unlink", tw["id"], rva["id"])
             except RuntimeError as e:
-                log(f"LANE {lane}: unlink TW{lane}->C{lane} skipped ({e})")
-        if gp and c:
-            try:
-                kb("link", gp["id"], c["id"])
-                log(f"LANE {lane}: relinked Gp{lane} -> C{lane}")
-            except RuntimeError as e:
-                log(f"LANE {lane}: link Gp{lane}->C{lane} skipped ({e})")
+                log(f"LANE {lane}: unlink TW{lane}->RVa{lane} skipped ({e})")
     # Snapshot BEFORE unblocking: the card bodies already point at this path,
     # and workers must never read the mutable source (spec D8).
     os.makedirs(SNAP_DIR, exist_ok=True)
@@ -1037,14 +1127,16 @@ def rework_rounds(st):
                 and not rework_hold(st, lane, "P", "Gp"):
             v_card, v = latest_verdict_card(st, lane, "RVp")
             if verdict_token(v) == "REJECT":
+                cap = lanes.max_reworks(lane_options(lane))
                 rounds = len([t for t in st if t.startswith(f"P{lane}-rev")])
-                if rounds < 3:
+                if rounds < cap:
                     file_revision(st, lane, rounds + 1, rejection_findings(v), base="P",
-                                  reviewer_prefix="RVp", gate_code="Gp",
+                                  reviewer_prefix="RVp", gate_code="Gp", max_rounds=cap,
                                   verdict_card_id=(v_card or {}).get("id"))
                 else:
                     escalate(gp_card["id"], f"Gp{lane}",
-                             "3 plan revision rounds exhausted — human escalation required")
+                             f"{cap} plan reworks exhausted — human escalation "
+                             f"required")
         # --- code loop: Gc parked, newest implementation/final-review verdict REJECT ---
         # (RVa REJECT once had no loop at all: the gate waited forever, found live
         # 2026-09-09 23:19.)
@@ -1053,28 +1145,34 @@ def rework_rounds(st):
                 and not code_rework_hold(st, lane):
             v_card, v = latest_verdict_card(st, lane, "RVa", final_code="RVc")
             if verdict_token(v) == "REJECT":
-                rounds = len([t for t in st if t.startswith(f"C{lane}-rev")])
-                if rounds < 2:
-                    file_coder_revision(st, lane, rounds + 1, rejection_findings(v),
-                                        max_rounds=2, verdict_card_id=(v_card or {}).get("id"))
+                cap = lanes.max_reworks(lane_options(lane))
+                rounds = code_rework_rounds(st, lane)
+                owner = rework_owner(v)
+                if rounds < cap:
+                    file_code_revision(st, lane, rounds + 1, rejection_findings(v),
+                                       owner=owner, max_rounds=cap,
+                                       verdict_card_id=(v_card or {}).get("id"))
                 else:
                     escalate(gc_card["id"], f"Gc{lane}",
-                             "2 implementation rework rounds exhausted — human escalation required")
+                             f"{cap} code reworks exhausted — human escalation "
+                             f"required")
         # --- idea loop: P parked, newest idea-gate verdict REWORK ---
         _, p_card = title_of_prefix(st, f"P{lane}:")
         if p_card and p_card["status"] in ("blocked", "ready", "todo") \
+                and lane_refinement(lane) \
                 and not rework_hold(st, lane, "I", "Gi"):
             v_card, v = latest_verdict_card(st, lane, "Gi")
             if is_rework(v):
+                cap = lanes.max_reworks(lane_options(lane))
                 rounds = len([t for t in st if t.startswith(f"I{lane}-rev")])
-                if rounds < 2:      # 2 rounds: an idea needing three human
-                                    # round-trips is a wrong idea
+                if rounds < cap:
                     file_revision(st, lane, rounds + 1, rework_answers(v), base="I",
-                                  reviewer_prefix="Gi", gate_code="Gi", max_rounds=2,
+                                  reviewer_prefix="Gi", gate_code="Gi", max_rounds=cap,
                                   verdict_card_id=(v_card or {}).get("id"))
                 else:
                     escalate(p_card["id"], f"P{lane}",
-                             "2 idea rework rounds exhausted — human escalation required")
+                             f"{cap} idea reworks exhausted — human escalation "
+                             f"required")
 
 
 # --- document chain -----------------------------------------------------------
@@ -1159,6 +1257,15 @@ def ledger(record):
         log(f"ledger: cannot append to {VERDICTS_PATH} ({e})")
 
 
+def lane_refinement(lane):
+    """Does this lane run the idea's refinement? Resolved like every lane option
+    (the manifest's default, the idea's header winning either way) — and it decides
+    which card is the lane ROOT: I when the lane refines, P when it does not
+    (`lanes.lane_root_code` is positional, so it is asked, never assumed).
+    """
+    return bool((lane_options(lane) or {}).get("refinement", True))
+
+
 def lane_paths_agree(state, lane):
     """Does the lane's root card name the run the driver is writing to?
 
@@ -1167,7 +1274,7 @@ def lane_paths_agree(state, lane):
     nothing downstream can recover: the worker writes where its body says and the
     gate reads where the driver says.
     """
-    title = lanes.card_title(lanes.lane_root_code(True), lane)
+    title = lanes.card_title(lanes.lane_root_code(True, lane_refinement(lane)), lane)
     card = state.get(title)
     if not card:
         return True                      # nothing filed yet; open_lane handles it
@@ -1211,9 +1318,17 @@ def chain_inputs(body, lane):
     # THIS run's paths: a body filed under runs/<run-id>/ names that run, and
     # comparing against the run-less form matches nothing — the chain would record
     # every card as having been given no documents at all.
-    return {role.strip("<>"): path for role, path
-            in file_lanes.lane_paths(REPO, BOARD, lane,
-                                     _read_current_run()).items() if path in body}
+    given = {role.strip("<>"): path for role, path
+             in file_lanes.lane_paths(REPO, BOARD, lane,
+                                      _read_current_run()).items() if path in body}
+    # A body is rendered from ONE file per code for EVERY lane shape, so the plan
+    # card's text always mentions the refined idea — it names the raw one as the
+    # contract when the lane runs no refinement. What the card was GIVEN is the
+    # lane's option, not the word: on `refinement: false` there is no refined
+    # document, and naming it would report the lane's own shape as a missing hand-off.
+    if not lane_refinement(lane):
+        given.pop("REFINED", None)
+    return given
 
 
 def chain_record(event, card, lane, ts=None, **extra):
@@ -1344,7 +1459,8 @@ def open_lanes(state):
     for lane in range(1, board_lane_count(state) + 1):
         if lane in _OPENED:
             continue
-        root = state.get(lanes.card_title(lanes.lane_root_code(True), lane))
+        root = state.get(lanes.card_title(
+            lanes.lane_root_code(True, lane_refinement(lane)), lane))
         if not root or root["status"] in ("done", "archived"):
             continue
         if lane > 1 and not parents_done(state, [f"Gc{lane - 1}"]):
@@ -1388,7 +1504,53 @@ def unstage_run_paths():
         f"(nothing run-generated stays in the index)")
 
 
+def run_directory_is_gone():
+    """True when the run directory this process recorded into is no longer on disk.
+
+    The board deletes nothing (user rule, 2026-09-12), so a missing run directory means
+    something else removed it: a desktop file manager sends the whole folder to the
+    trash, a stray `rm` does not, and `runs/current` still names the run either way.
+    Two cases are NOT this: RUN_DIR *is* RUNS_ROOT before the first idea is armed (the
+    driver's own board-level state, never a run), and a `current` pointer naming a run
+    that was already gone when this process started (a stale pointer — the driver waits
+    for an idea, and minting makes a fresh directory).
+    """
+    return (RUN_DIR != RUNS_ROOT
+            and _RUN_DIR_SEEN["path"] == os.path.abspath(RUN_DIR)
+            and not os.path.isdir(RUN_DIR))
+
+
+def halt_run_directory_gone():
+    """Stop the board when the run's own directory goes missing under it.
+
+    Continuing would append this run's evidence into a directory recreated behind the
+    human's back and leave a `current` pointer to a run whose files are in a trash
+    can. Stopping names the path and leaves the decision where it belongs: restore it,
+    or re-arm the idea for a fresh run. The halt note goes to runs/ itself because the
+    run's own directory is exactly what is missing.
+    """
+    if _HALTED["reason"]:
+        return _HALTED["reason"]
+    _HALTED["reason"] = (
+        f"run directory disappeared: {os.path.relpath(RUN_DIR, REPO)} — the board "
+        f"deleted nothing (a file manager's trash holds it if that is where it went); "
+        f"restore it or arm the idea for a new run")
+    log(f"BOARD HALTED: {_HALTED['reason']}")
+    try:
+        with open(os.path.join(RUNS_ROOT, "halt.txt"), "w") as f:
+            f.write(f"{BOARD} halted: {_HALTED['reason']}\n")
+    except OSError:
+        pass
+    return _HALTED["reason"]
+
+
 def tick():
+    # Nothing in this template removes a run directory (see clean_work_noise), so a
+    # missing one is someone else's `rm` or trash can: say so and stop, rather than
+    # record a run into a directory that came back without its evidence.
+    if run_directory_is_gone():
+        halt_run_directory_gone()
+        return True
     st = state = board()
     record_timing(st)
     if halt_if_exhausted(st):
@@ -1414,7 +1576,7 @@ def tick():
         if not card or card["status"] != "blocked":
             continue
         code = title.split(":")[0]
-        root_code = lanes.lane_root_code(True)   # positional: first LANE_CARDS entry
+        root_code = lanes.lane_root_code(True, lane_refinement(lane))  # positional
         is_root = code == f"{root_code}{lane}"
         if is_root:
             # lane root (whatever card LANE_CARDS puts first — positional per
@@ -1505,25 +1667,42 @@ def tick():
 
 
 
-def file_coder_revision(state, lane, round_no, findings, max_rounds=2, verdict_card_id=None):
-    """File one implementation-rework round: coder revision + RVa re-review,
-    linked to Gc. Mirrors file_revision; findings text is phrased for the coder."""
-    rev_title = f"C{lane}-rev-{round_no}: implementation revision round {round_no} - lane {lane}"
+CODE_REWORK_ROLES = {
+    "C": ("c-body.txt", "coder", "implementation"),
+    "TW": ("tw-body.txt", "tester", "unit-test"),
+    "TI": ("ti-body.txt", "coder", "integration"),
+}
+
+
+def file_code_revision(state, lane, round_no, findings, owner="C", max_rounds=2,
+                       verdict_card_id=None):
+    """File one code-rework round: the revision card its owner fixes + RVa's re-review.
+
+    Mirrors file_revision. The owner is the card the REVIEW named (`rework_owner`), not
+    always the coder: the fork's implementation review judges the tester's tests as
+    well as the coder's patch, and the coder may not edit the tester's files — a
+    rejected test sent to the coder could not be fixed. Whoever owns it, the round
+    ends in the SAME re-review card, so the loop keeps one shape: revision → RVa
+    round → verdict, bounded by max_rounds, then escalation.
+    """
+    body_file, role, what = CODE_REWORK_ROLES.get(owner, CODE_REWORK_ROLES["C"])
+    rev_title = (f"{owner}{lane}-rev-{round_no}: {what} revision round {round_no}"
+                 f" - lane {lane}")
     rr_title = f"RVa{lane}-r{round_no + 1}: implementation re-review round {round_no + 1} - lane {lane}"
     if title_of_prefix(state, rev_title)[0]:
         return  # already filed
     gate_id = card_id(state, lanes.card_title("Gc", lane))
     runtime, render = _round_settings(lane)
-    rbody = render("c-body.txt")
+    rbody = render(body_file)
     rbody += (f"\nREVISION ROUND {round_no} of {max_rounds} (max {max_rounds}, then human "
               f"escalation).\n\nThe review returned the work. Address EXACTLY:\n{findings}\n"
               f"Fix only these, re-stage your files, re-attach, complete with a change summary.\n")
     rbody += _full_verdict_pointer(verdict_card_id)
     args = ["create", rev_title, "--body", rbody,
-            "--assignee", lanes.assignee_for("coder", manifest().get("assignees")),
+            "--assignee", lanes.assignee_for(role, manifest().get("assignees")),
             "--workspace", f"dir:{WORKDIR}", "--max-runtime", runtime, "--max-retries", rework_retries(),
-            "--idempotency-key", f"{BOARD}-rev-C{lane}-{round_no}",
-            "--created-by", "manager", "--json"] + _skill_args("C") + _goal_args("coder", "C")
+            "--idempotency-key", f"{BOARD}-rev-{owner}{lane}-{round_no}",
+            "--created-by", "manager", "--json"] + _skill_args(owner) + _goal_args(role, owner)
     rev_id = json.loads(kb(*args))["id"]
     rrbody = render("rva-body.txt")
     rrbody += (f"\nRE-REVIEW ROUND {round_no + 1} of {max_rounds + 1}. The previous review's "
@@ -1535,13 +1714,18 @@ def file_coder_revision(state, lane, round_no, findings, max_rounds=2, verdict_c
         # lane's final review (full suite, staged set) would never be repeated.
         rrbody += ("This lane has integration tests, so this re-review is also its final "
                    "review: run the FULL suite — unit and integration — from a clean run, and "
-                   "check the staged set and the success criteria as the final review does.\n")
+                   "check the staged set and the success criteria as the final review does. "
+                   "That includes the final review's check (c): the integration tests exercise "
+                   "real behaviour, not mocks of the thing under test — a mocked collaborator "
+                   "is the defect this round is most likely to have repeated.\n")
     rr_args = ["create", rr_title, "--body", rrbody,
                "--assignee", lanes.assignee_for("reviewer",
                                                 manifest().get("assignees")),
                "--parent", rev_id, "--workspace", f"dir:{WORKDIR}", "--max-runtime", runtime,
                "--max-retries", rework_retries(), "--idempotency-key",
                f"{BOARD}-rr-C{lane}-r{round_no + 1}", "--created-by", "manager", "--json"]
+    # The re-review judges the revision: same pin as the review it repeats.
+    rr_args += lanes.model_args("reviewer", manifest())
     rr_id = json.loads(kb(*rr_args))["id"]
     kb("link", rr_id, gate_id)
     log(f"filed code rework round {round_no}: {rev_title} + {rr_title}")
@@ -1827,6 +2011,24 @@ def preserve_artifacts():
                 shutil.copy2(src, dst)
                 log(f"artifact kept: {os.path.relpath(dst, REPO)}")
 
+def finish_run():
+    """Everything the driver does when the lane's last gate closes: the run's
+    summary, and then the banner that says the run is finished.
+
+    THE ORDER IS LOAD-BEARING. `run-audit.py` reads `ALL GATES COMPLETE` as "this
+    run finished" and only then demands `run-summary.json`; logged the other way
+    round (observed: 3 s in the is_even run of 2026-09-12) there is a window in
+    which an audit of a FINISHED run reports E4 "the run wrote no summary" — a
+    false finding that reads exactly like a missing artefact. A summary that fails
+    must not cost the banner: the run really did finish, and the warning says so.
+    """
+    try:
+        write_summary(board())
+    except Exception:
+        log("WARNING: summary generation failed (non-fatal)")
+    log("ALL GATES COMPLETE — scenario finished")
+
+
 def write_summary(state):
     """One-shot per-run summary: gate verdicts, per-card agent minutes, budget
     events, overhead ratio — one jq-able file per completed run.
@@ -1845,6 +2047,7 @@ def write_summary(state):
         return
     rows = {}
     total = 0.0
+    intervals = []
     for title, c in state.items():
         if c["status"] != "done":
             continue
@@ -1855,6 +2058,7 @@ def write_summary(state):
             outcome = r.get("outcome")
             if outcome in runs_util.CLOSED_OUTCOMES:
                 mins += runs_util.elapsed_min(r)
+                intervals.append((r.get("started_at"), r.get("ended_at")))
                 if outcome == "gave_up":
                     gave_up = True
         rows[title] = {"card_id": c["id"], "agent_min": round(mins, 2)}
@@ -1863,21 +2067,32 @@ def write_summary(state):
         total += mins
     t0 = getattr(write_summary, "_t0", None) or time.time()
     wall = (time.time() - t0) / 60
-    # agent_work_min sums EVERY closed run per card, including attempts made by
-    # EARLIER driver processes (post-halt restarts reset budgets but history
-    # stays). wall_min measures only the current process, so summing across
-    # restarts can exceed wall (observed: overhead -2.3). Report both truths:
-    # the unclamped sum (real labor across the run's lifetime) and a clamped
-    # overhead at >= 0 (never negative — that reads as a bug to a human).
+    # TWO truths, because the lane FORKS (TW ∥ C) and cards can also have been made
+    # by EARLIER driver processes (a post-halt restart resets budgets but the runs
+    # history stays):
+    #   agent_work_min  the SUM of closed card minutes — what a per-card ceiling is
+    #                   measured against, and comparable across runs
+    #   agent_union_min the minutes work was actually in flight — the sum minus the
+    #                   overlap, so this is the honest "how long was anyone working"
+    #   overlap_min     the difference: how much of that time two cards held at once
+    # `overhead` is the wall time nobody was working, measured against the union; a
+    # sum-based overhead goes negative the moment two cards run together, which was
+    # previously read as "a restart happened" (`restarts_observed`) — hence that
+    # flag is now the union's comparison: it is the union that cannot exceed this
+    # process's own wall time unless part of the run belongs to another process.
     agent_total = total
-    overhead = max(0.0, wall - agent_total)
+    union = runs_util.union_min(intervals)
+    overlap = max(0.0, agent_total - union)
+    overhead = max(0.0, wall - union)
     summary = {
         "finished_at": datetime.datetime.now().isoformat(timespec="seconds"),
         "wall_min": round(wall, 1),
         "agent_work_min": round(agent_total, 1),
+        "agent_union_min": round(union, 1),
+        "overlap_min": round(overlap, 1),
         "overhead_min": round(overhead, 1),
         "cards": rows,
-        "restarts_observed": agent_total > wall,
+        "restarts_observed": union > wall,
         "gates": {t.split(":")[0]: (c.get("result") or "")[:200]
                   for t, c in state.items() if re.match(r"^G[ipc]\d+:", t)},
         "lanes_with_ideas": [l for l in range(1, board_lane_count(state) + 1)
@@ -2266,12 +2481,7 @@ def main():
                         "for human inspection")
                     return 1
                 if not idle:
-                    log("ALL GATES COMPLETE — scenario finished")
-                    try:
-                        st = board()
-                        write_summary(st)
-                    except Exception:
-                        log("WARNING: summary generation failed (non-fatal)")
+                    finish_run()
                 if not SERVE:
                     return 0
                 if not idle:

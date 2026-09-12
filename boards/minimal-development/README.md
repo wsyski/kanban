@@ -24,9 +24,19 @@ the check on the card bodies themselves. A timed-out card is a HARD FAILURE: the
 driver blocks it and halts the board on the first one, and nothing is retried —
 only a review that REJECTS sends work back, by filing a revision card.
 
+`"model_override": "glm-5.3-flash"` (with `"provider_override": "opencode-go"`) makes
+this board the one that exercises the judge's model: its review cards — `RVp`, `RVa`
+and any rework round of theirs — are filed with `--model`/`--provider`, while every
+worker card runs the coder profile's default. Everything else here is deliberately
+cheap, so a lane that shows the pin working costs about what the plain smoke lane
+costs. It carries no `"assignees"` map: the two roles that have no profile of their
+own (`tester`, `reviewer`) resolve to `coder` through `lanes.ROLE_FALLBACK`, exactly
+as they do on every other board, and a board only needs that key when it wants a role
+worked somewhere else.
+
 `"goal": false` — this board files no card under the goal judge. The judge
-is a worker self-check that needs a REACHABLE auxiliary model, and on 2026-09-11
-this machine's judge was reachable but failing (`400 MissingSessionID` from the
+is a worker self-check that needs a REACHABLE auxiliary model, and this machine's
+judge is reachable but failing (`400 MissingSessionID` from the
 OpenCode provider): `judge_goal` reports a transport failure as the verdict
 `continue` — "not done yet" — so every goal-mode card became uncompletable and
 the lane wedged (ERRORS O10). Workers here complete on their own evidence;

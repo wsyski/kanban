@@ -6,11 +6,19 @@ flowchart LR
     P1["P1<br/>plan<br/><i>manager</i>"]
     RVp1["RVp1<br/>review<br/><i>reviewer</i>"]
     Gp1{{"Gp1<br/>GATE — human commits plan<br/><i>human</i>"}}
-    TW1["TW1<br/>tests RED<br/><i>tester</i>"]
+    TW1["TW1<br/>unit tests<br/><i>tester</i>"]
     C1["C1<br/>implement<br/><i>coder</i>"]
     RVa1["RVa1<br/>review<br/><i>reviewer</i>"]
     Gc1{{"Gc1<br/>GATE — human commits code<br/><i>human</i>"}}
-    I1 --> Gi1 --> P1 --> RVp1 --> Gp1 --> TW1 --> C1 --> RVa1 --> Gc1
+    I1 --> Gi1
+    Gi1 --> P1
+    P1 --> RVp1
+    RVp1 --> Gp1
+    Gp1 --> TW1
+    Gp1 --> C1
+    TW1 --> RVa1
+    C1 --> RVa1
+    RVa1 --> Gc1
   end
   subgraph L2["lane 2 — integration-tests: true"]
     direction LR
@@ -19,13 +27,23 @@ flowchart LR
     P2["P2<br/>plan<br/><i>manager</i>"]
     RVp2["RVp2<br/>review<br/><i>reviewer</i>"]
     Gp2{{"Gp2<br/>GATE — human commits plan<br/><i>human</i>"}}
-    TW2["TW2<br/>tests RED<br/><i>tester</i>"]
+    TW2["TW2<br/>unit tests<br/><i>tester</i>"]
     C2["C2<br/>implement<br/><i>coder</i>"]
     RVa2["RVa2<br/>review<br/><i>reviewer</i>"]
-    TI2["TI2<br/>integration tests<br/><i>tester</i>"]
+    TI2["TI2<br/>integration tests<br/><i>coder</i>"]
     RVc2["RVc2<br/>final review<br/><i>reviewer</i>"]
     Gc2{{"Gc2<br/>GATE — human commits code<br/><i>human</i>"}}
-    I2 --> Gi2 --> P2 --> RVp2 --> Gp2 --> TW2 --> C2 --> RVa2 --> TI2 --> RVc2 --> Gc2
+    I2 --> Gi2
+    Gi2 --> P2
+    P2 --> RVp2
+    RVp2 --> Gp2
+    Gp2 --> TW2
+    Gp2 --> C2
+    TW2 --> RVa2
+    C2 --> RVa2
+    RVa2 --> TI2
+    TI2 --> RVc2
+    RVc2 --> Gc2
   end
   Gc1 -. lane 2 starts .-> I2
   classDef idea fill:#e1d5e7,stroke:#9673a6;

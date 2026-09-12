@@ -1,9 +1,12 @@
 # kanban-smoke-test
 
 **coding-team kanban**: multi-profile agents (researcher refines the idea,
-manager plans, tester tests RED-first, coder implements, reviewer gates the
-verdict, human gate commits) building real work on a kanban board, from a
-generic lane template instantiated per board.
+manager plans, coder implements and writes the unit tests, reviewer judges the
+verdict, human gate commits) building real work on a kanban board, from a generic
+lane template instantiated per board. Those are ROLES: the tester and reviewer roles
+are worked on the coder profile, so one profile is what you maintain, and the
+judgement is kept apart by the CARDS — a review runs in its own session, from the
+plan alone, with its own patch — rather than by a second profile to keep in sync.
 
 A lane opens on a RAW idea and reaches the manager only through a gate: `I`
 refines what you typed into a stated problem, scope, open questions and success
@@ -17,16 +20,18 @@ the board runs them in order. See §3.
 
 ## The boards (current state)
 
-Six board directories ship as runnable examples; two of them have run.
+Six board directories ship as runnable examples. What each one *is* — its idea, its
+lane shape and its ceilings — is the table; how its runs went is not kept here (see
+§4: the runs describe themselves).
 
-| board | idea | lanes | gates | last run (details: [docs/RUNS.md](docs/RUNS.md)) |
-|---|---|---|---|---|
-| `minimal-development` | one Python function (`is_even`) and its tests — the cheap smoke board, no build tool, no dependencies | 1 | auto, **4 min/card** | **run 15** — 2026-09-11 23:32 → 23:42  |
-| `roman-evaluator-js` | a browser page: `roman-evaluator.html`, a DOM-free parsing module with unit tests, `run.sh`, two launch modes | 1 | auto, **10 min/card** | **run 1** — 2026-09-11 23:58 → 2026-09-12 00:16  |
-| `roman-evaluator-java` | the same problem twice: a roman CLI (`roman-cli/`) then a spec-first Spring Boot service (`roman-service/`) consuming lane 1's rule; needs JDK 17, Maven, a warm `~/.m2` | 2 | auto, **10 min/card** | never run |
-| `portfolio-engineering` | a GPW small-cap research pipeline installed into the Hermes `trader` profile | 1 | auto, 60 min/card (default) | never run |
-| `minimal-goal-mode` | the same shape as `minimal-development` (one Python function, `sign`) with **`goal: true`** — the cheap probe for whether this machine's goal judge works at all | 1 | auto, 6 min/card | never run |
-| `blade-workspace` | a documentation pass on an **external** project: `default-workdir` points at a repository this repo does not contain | 1 | auto, 10 min/card | never run |
+| board | idea | lanes | gates |
+|---|---|---|---|
+| `minimal-development` | one Python function (`is_even`) and its tests — the cheap smoke board, no build tool, no dependencies. Also the board that exercises the **judge's model** (`"model_override": "glm-5.3-flash"`) | 1 | auto, **4 min/card** |
+| `roman-evaluator-js` | a browser page: `roman-evaluator.html`, a DOM-free parsing module with unit tests, `run.sh`, two launch modes | 1 | auto, **10 min/card** |
+| `roman-evaluator-java` | the same problem twice: a roman CLI (`roman-cli/`) then a spec-first Spring Boot service (`roman-service/`) consuming lane 1's rule; needs JDK 17, Maven, a warm `~/.m2` | 2 | auto, **10 min/card** |
+| `portfolio-engineering` | a GPW small-cap research pipeline installed into the Hermes `trader` profile | 1 | auto, 60 min/card (default) |
+| `minimal-goal-mode` | the same shape as `minimal-development` (one Python function, `sign`) with **`goal: true`** — the cheap probe for whether this machine's goal judge works at all | 1 | auto, 6 min/card |
+| `blade-workspace` | a documentation pass on an **external** project: `default-workdir` points at a repository this repo does not contain. Built without refinement, unit or integration tests (`"refinement": false`, `"unit-tests": false`, `"integration-tests": false`), so its lane is just `P RVp Gp C RVa Gc` | 1 | auto, 10 min/card |
 
 The output of a finished run lives beside the board: `boards/<slug>/work/` — the
 deliverable, **tracked**, so the human's commit at a gate puts it in history and
@@ -65,6 +70,7 @@ Board instances live in
 | Per-card patch = OWN paths only (`git diff --cached -- <own paths>`) | card bodies; a bare diff bundles every earlier card's staged files |
 | The board's only git writes are stage and unstage | `mission/run.py` — `git add` by workers, one `restore --staged` for its own leftovers. Never commit, branch, checkout, reset or push: a work directory that moves under a live run is REPORTED, not corrected |
 | Nothing is deleted — not `work/`, not a run directory | `mission/reset.sh` archives cards and unstages; deleting either tree is a human's own `rm`. No exception: a lane that runs a suite leaves `__pycache__/`/`.pytest_cache/` behind, the board reports it as a note (E16) and leaves it exactly where it is |
+| A run's directory disappearing stops the board, and says so | `mission/run.py` — nothing here ever removed one, so a missing `runs/<run-id>/` is someone else's `rm` or trash can: the driver halts instead of recording the run into a fresh directory and pointing `current` at evidence that is gone. A `current` pointer to an already-truncated run is a stale pointer, not a stop |
 | One run, one directory — `runs/<run-id>/`, minted when an idea is armed | `mission/run.py` `mint_run`; `runs/current` names the live run, and an earlier one stays auditable |
 | A board's options are validated before anything is filed — manifest and idea headers alike | `mission/board_schema.py`, at all three doors: `create-board.sh`, `start-board.sh`, and the driver when a Triage card is armed (the finding goes back as a comment on that card) |
 | Nobody commits before the gate — not even the driver | gate cards + `auto-gates` (board.json) complete gates with "NOTHING COMMITTED" |
@@ -76,9 +82,21 @@ Board instances live in
 | Verdicts in the result field | reviewer card bodies mandate it |
 | The plan is judged on what it was told | `mission/card-bodies/_plan-checklist.txt` — the plan card's self-check and the plan review's only REJECT grounds |
 
-Lane shape without integration tests:
-`I → Gi → P → RVp → Gp → TW → C → RVa → Gc`.
-With integration tests, `TI` (integration tests) and a final `RVc` come before `Gc`.
+Lane shape without integration tests — the plan gate releases the tester and the
+coder TOGETHER, and the review waits for both:
+`I → Gi → P → RVp → Gp → (TW ∥ C) → RVa → Gc`.
+With integration tests, `TI` (integration tests) and a final `RVc` follow the code
+review, before `Gc`. The optional levels take their cards with them: no unit tests
+and there is no `TW` (the review waits on `C` alone); no integration tests and
+`RVc` goes with `TI`, because it reviews nothing else.
+
+`TW ∥ C` is the template's one deliberate fork. The plan already carries the real
+code (the checklist forbids a TBD), so the coder never waits on a test file — and
+"the tests are green" was never the lane's done criterion: the review verdict is,
+and it re-derives the suite itself. What the old sequence did buy was the RED
+observation (a FAIL witnessed while the implementation did not exist); that is now
+a prediction in the plan, re-derived by `RVa` from the two patches
+(`mission/card-bodies/rva-body.txt`, check f).
 
 Three gates per lane, in the order the cost of being wrong falls:
 `Gi` (is this the right idea?), `Gp` (is this the right plan?), `Gc` (is this
@@ -91,7 +109,8 @@ card itself — and still commits nothing (§6).
 ## 2. Prerequisites
 
 ```
-hermes profile list                            # researcher/manager/coder/tester/reviewer exist
+hermes profile list                            # researcher/manager/coder exist; the
+                                               # tester and reviewer roles run on coder
 lsof ~/.hermes/kanban/.dispatcher.lock         # SOMETHING owns dispatch
 ```
 
@@ -121,7 +140,11 @@ nothing about it lives under `mission/`:
     boards/<slug>/
         README.md             this board's preconditions and toolchain
         board.json            the board's options — `mission/board_schema.py --schema`
-                              prints the set; validated before the board exists
+                              prints the set; validated before the board exists.
+                              Carries `$schema` → mission/board.schema.json, which
+                              is GENERATED from that table (--write-schema; the
+                              suite's --check-schema keeps it honest) so an editor
+                              validates the manifest as it is written
         lane-1.md             the idea for lane 1 — the one copy, edited in place
         work/                 what the lane builds — code, tests, build files
         runs/current          a file naming the live run
@@ -419,11 +442,19 @@ flowchart LR
     P1["P1<br/>plan<br/><i>manager</i>"]
     RVp1["RVp1<br/>review<br/><i>reviewer</i>"]
     Gp1{{"Gp1<br/>GATE — human commits plan<br/><i>human</i>"}}
-    TW1["TW1<br/>tests RED<br/><i>tester</i>"]
+    TW1["TW1<br/>unit tests<br/><i>tester</i>"]
     C1["C1<br/>implement<br/><i>coder</i>"]
     RVa1["RVa1<br/>review<br/><i>reviewer</i>"]
     Gc1{{"Gc1<br/>GATE — human commits code<br/><i>human</i>"}}
-    I1 --> Gi1 --> P1 --> RVp1 --> Gp1 --> TW1 --> C1 --> RVa1 --> Gc1
+    I1 --> Gi1
+    Gi1 --> P1
+    P1 --> RVp1
+    RVp1 --> Gp1
+    Gp1 --> TW1
+    Gp1 --> C1
+    TW1 --> RVa1
+    C1 --> RVa1
+    RVa1 --> Gc1
   end
   subgraph L2["lane 2 — integration-tests: true"]
     direction LR
@@ -432,13 +463,23 @@ flowchart LR
     P2["P2<br/>plan<br/><i>manager</i>"]
     RVp2["RVp2<br/>review<br/><i>reviewer</i>"]
     Gp2{{"Gp2<br/>GATE — human commits plan<br/><i>human</i>"}}
-    TW2["TW2<br/>tests RED<br/><i>tester</i>"]
+    TW2["TW2<br/>unit tests<br/><i>tester</i>"]
     C2["C2<br/>implement<br/><i>coder</i>"]
     RVa2["RVa2<br/>review<br/><i>reviewer</i>"]
-    TI2["TI2<br/>integration tests<br/><i>tester</i>"]
+    TI2["TI2<br/>integration tests<br/><i>coder</i>"]
     RVc2["RVc2<br/>final review<br/><i>reviewer</i>"]
     Gc2{{"Gc2<br/>GATE — human commits code<br/><i>human</i>"}}
-    I2 --> Gi2 --> P2 --> RVp2 --> Gp2 --> TW2 --> C2 --> RVa2 --> TI2 --> RVc2 --> Gc2
+    I2 --> Gi2
+    Gi2 --> P2
+    P2 --> RVp2
+    RVp2 --> Gp2
+    Gp2 --> TW2
+    Gp2 --> C2
+    TW2 --> RVa2
+    C2 --> RVa2
+    RVa2 --> TI2
+    TI2 --> RVc2
+    RVc2 --> Gc2
   end
   Gc1 -. lane 2 starts .-> I2
   classDef idea fill:#e1d5e7,stroke:#9673a6;
@@ -461,12 +502,13 @@ ASCII fallback:
 
 ```
   lane 1 (integration-tests: false)
-  I1 → Gi1 → P1 → RVp1 → Gp1 → TW1 → C1 → RVa1 → Gc1 ──┐
-   │     │                                             │
+  I1 → Gi1 → P1 → RVp1 → Gp1 ─┬─ TW1 ─┬─ RVa1 → Gc1 ──┐
+   │     │                     └─ C1 ──┘               │
    │     └─ the refined idea is accepted here          │ lane 2 starts
    └─ researcher: raw idea → refined.md                ▼
                                                   lane 2 (integration-tests: true)
-  I2 → Gi2 → P2 → RVp2 → Gp2 → TW2 → C2 → RVa2 → TI2 → RVc2 → Gc2
+  I2 → Gi2 → P2 → RVp2 → Gp2 ─┬─ TW2 ─┬─ RVa2 → TI2 → RVc2 → Gc2
+                              └─ C2 ──┘
 ```
 
 There is no rework loop on `I` by default: the idea gate is the loop, and you
@@ -480,14 +522,19 @@ Rework loops (driven by verdicts; all three share one shape):
 
 ```
 RVp(n)     ──REJECT──→ P(n)-rev-N → RVp(n)-r(N+1) ──PASS───→ Gp(n) opens, up to 3 rounds
-RVa/RVc(n) ──REJECT──→ C(n)-rev-N → RVa(n)-r(N+1) ──PASS───→ Gc(n) opens, up to 2 rounds
+RVa/RVc(n) ──REJECT+OWNER─→ (C|TW|TI)(n)-rev-N → RVa(n)-r(N+1) ──PASS──→ Gc(n) opens, up to 2 rounds
 Gi(n)      ──REWORK──→ I(n)-rev-N → Gi(n)-r(N+1)  ──ACCEPT─→ P(n) opens, up to 2 rounds
 ```
 
 A revision card is rendered exactly like the card it revises — same paths,
 workdir, ceiling and skill — plus the numbered findings and a pointer to the
-full verdict. On a lane with integration tests the code re-review also repeats
-the final review, and `TI` waits until the newest implementation verdict is PASS.
+full verdict. The code loop's revision goes to the card the VERDICT names,
+`OWNER: C` / `OWNER: TW` / `OWNER: TI`: the implementation review judges the
+coder's patch and the tester's tests in one pass, and the coder may not edit the
+tester's files, so a rejected test filed against the coder could never be fixed.
+No usable owner line means the coder — what every lane did before the fork. On a
+lane with integration tests the code re-review also repeats the final review, and
+`TI` waits until the newest implementation verdict is PASS.
 
 Gates cost 0 agent minutes because the driver completes them itself — on an
 auto-gated board as "auto-gate: … NOTHING COMMITTED", with auto-gates off as
@@ -514,7 +561,12 @@ the human's git write — or explicitly no write — closes the chain
   and the human still owns the commit.
 - On completion the driver writes `boards/<slug>/runs/<run-id>/run-summary.json` (one
   jq-able file per run): per-card agent minutes (real minutes, from runs
-  epoch fields), wall + overhead totals, gate results.
+  epoch fields), wall + overhead totals, gate results. Because a lane forks
+  (`TW ∥ C`), card minutes are recorded twice over: `agent_work_min` is the SUM
+  (what a per-card ceiling is measured against), `agent_union_min` is the minutes
+  work was actually in flight — the sum minus `overlap_min` — and `overhead_min`
+  is the wall time nobody was working, measured against the union, so two cards
+  sharing the clock never read as a negative overhead.
 - If ≥2 cards end up blocked/needs_input, a DEADMAN notice is logged and
   written to the board's `runs/` (Telegram sent if env tokens set).
 - Per-card provenance patches are preserved to
@@ -538,8 +590,9 @@ the human's git write — or explicitly no write — closes the chain
   (latest run segment only). The board is required — timing data is per-board.
 - The report carries three views: the per-card table, a per-lane breakdown
   (cards, agent minutes, wall time — shown only when the board has more than
-  one lane), and a per-role share, which is where you see that reviewers cost
-  roughly 30-35% of the budget. Roles come from `lanes.LANE_CARDS`, so the
+  one lane), and a per-role share, which is where you see how the wall clock
+  divides between the roles that do the reviewing and the roles that do the work.
+  Roles come from `lanes.LANE_CARDS`, so the
   report cannot disagree with the card graph.
 - Gate cards are the chain checkpoints: gate completion timestamps delimit
   planning vs build vs review phases per task.
@@ -548,17 +601,16 @@ the human's git write — or explicitly no write — closes the chain
 
 ## 4. Run records
 
-The latest run of each board that has run — per-card timings, verdicts and the
-audit — is in [docs/RUNS.md](docs/RUNS.md). It is kept separate because it is
-rewritten by every run, while the sections around it are the board's contract.
-
-Per-run state itself lives beside the board, in
-`boards/<slug>/runs/<run-id>/`, and no run directory is ever deleted:
+Per-run state lives beside the board, in `boards/<slug>/runs/<run-id>/`: one
+timestamped directory per run, never rewritten by the next one and never deleted.
+Nothing here keeps a summary of them — a hand-maintained copy ages out on every run
+and is one more thing to drift — so the readers read the runs themselves:
 
     mission/run-audit.py   --runs boards/<slug>/runs              # the current run
     mission/run-audit.py   --runs boards/<slug>/runs/<run-id>     # any earlier one
     mission/doc-chain.py   --runs boards/<slug>/runs [--history]
     mission/timing-report.py --board <slug>
+    mission/runs-report.py --board <slug>                      # what runs/ holds, newest first
 
 **Audit every run; that is the loop's stopping rule.** `run-audit.py` exits 0 only
 when a finished run has no errors and no warnings — it reads the driver log
@@ -580,17 +632,18 @@ audit, fix, run again — no cycle is done while the auditor reports anything.
   budgets on archived cards and can re-stage stale file content into the index.
 - **Turn budgets are global, not per-profile:** `agent.max_turns` (80) in
   `~/.hermes/config.yaml` governs every kanban worker. A profile-level
-  shadow value caused two run-killing exhaustions — never set
-  `agent.max_turns` on a worker profile.
+  shadow value kills runs — never set `agent.max_turns` on a worker profile.
 - **Plan/revision cards need turn-diet guidance in their bodies:** targeted
   patches to the existing file, re-verify ONLY the fixed lines, never
-  re-read/re-verify the whole plan. A complete plan-fix fit in 18 tool
-  calls when framed this way, and died at the budget when framed as
-  "re-verify everything".
+  re-read/re-verify the whole plan. Framed this way a plan fix fits inside the
+  turn ceiling; framed as "re-verify everything" it dies at the budget.
 - **Rework loop live-guard:** run.py files a revision round only when the
   previous round's cards are all done (`rework_hold`) — REJECT/REWORK as
   latest verdict alone does NOT trigger another filing (that would file all
-  rounds instantly). Idea loop: max 2 rounds; plan loop: max 3; code loop: max 2.
+  rounds instantly). Every loop allows 3 reworks — `max-reworks`
+  (manifest or per-lane header) asks for fewer, and it is the knob for "how many
+  returns do I allow a review", as distinct from `max-retries`, the engine's per-card
+  ATTEMPT budget that stays 1.
 - **Turn bounds are turn-based, not loop-based:** worker cards (I, P, TW, C,
   TI and their revision rounds) are filed with a turn ceiling; reviewers and
   gates never are — a goal judge could complete a card whose success case is
@@ -601,7 +654,37 @@ audit, fix, run again — no cycle is done while the auditor reports anything.
   driver halts the board there. A timed-out card is blocked by the driver too, so
   nothing re-claims it while the dispatcher would still have retried it. Work comes
   back only through a review that REJECTS, by filing a revision card: that is the
-  board's retry mechanism, and `max-retries`/`rework-max-retries` are both 1.
+  board's retry mechanism, and `max-retries` is 1 — omitted from every shipped
+  manifest, because the schema refuses any other value: naming it states the rule, it
+  does not choose a number. A revision card is a card like any other, so it takes the
+  same 1; the count you CAN choose is `max-reworks`.
+- **Roles are not profiles:** the graph fills six roles — researcher, manager,
+  coder, tester, reviewer, human-gate — and three of them are worked on the coder
+  profile: `tester` and `reviewer` have no profile of their own. `lanes.ROLE_FALLBACK`
+  is the one place that says so, a manifest's `assignees` overrides it per board, and
+  `create-board.sh`'s pre-flight DERIVES the profiles a board needs from its manifest
+  (`lanes.required_profiles`) instead of carrying a list. A card whose assignee is not
+  a profile is never spawned — the dispatcher buckets it as unspawnable and nothing
+  says so afterwards — so a role that loses its profile must be remapped in the same
+  change. A gate needs no profile at all: a person completes it, or the driver does
+  when `auto-gates` is on.
+- **The judge can think with a stronger model:** `model_override` — with
+  `provider_override` beside it, the engine's own task-property names, the ones
+  `hermes kanban create --model/--provider` take — is filed on the REVIEW cards only:
+  the plan review, the implementation review, the final review, and their rework
+  rounds. Every other card keeps its profile's default. It is a board-level option,
+  never a per-lane one: no idea header can carry it, so a lane cannot quietly buy
+  itself a different judge. `board_schema` refuses a `provider_override` without a
+  model, as the engine does.
+- **The idea's refinement is an option too:** `refinement: false` — in `board.json`
+  or an idea header, the same two doors as the test levels — drops the researcher and
+  the idea gate from that lane, and the plan card becomes its ROOT, planning from the
+  raw idea (`<IDEA>`) instead of `<REFINED>`. The give-ups are stated in the bodies
+  because they are real: the human's first veto point moves from the idea gate to the
+  plan gate, and with no researcher the plan card is the only card that can establish
+  a fact — so on those lanes it may probe, and cites every fact it relies on. The idea
+  file still has to say what done means: its `### Done means` section is what the code
+  gate judges the lane against.
 - **Idempotent gates:** run.py gate actions use explicit pathspecs (never
   `git status` parsing), skip when the gate card is already done, and treat
   "already terminal" as success. A stalled run recovers with a single driver

@@ -1,4 +1,5 @@
 {
+  "$schema": "../../mission/board.schema.json",
   "slug": "minimal-development",
   "name": "Minimal Development",
   "lanes": 1,
@@ -7,5 +8,7 @@
   "auto-gates": true,
   "goal": false,
   "max-runtime": "4m",
-  "max-retries": 1
+  "max-reworks": 2,
+  "model_override": "glm-5.3-flash",
+  "provider_override": "opencode-go"
 }

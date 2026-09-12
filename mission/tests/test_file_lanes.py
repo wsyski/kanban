@@ -145,6 +145,19 @@ def test_intra_lane_edges_are_linked(monkeypatch, tmp_path):
     assert (made["RVc1"], made["Gc1"]) in fake.links()
 
 
+def test_the_fork_is_filed_as_two_edges_into_the_review(monkeypatch, tmp_path):
+    """TW and C are siblings under the plan gate, so the board gets Gp→TW, Gp→C and
+    BOTH edges into RVa. Filing a chain here would leave the coder blocked on a test
+    file and the review released by one half of its evidence."""
+    fake, made = file_two_lanes(monkeypatch, tmp_path)
+    links = fake.links()
+    assert (made["Gp1"], made["TW1"]) in links
+    assert (made["Gp1"], made["C1"]) in links
+    assert (made["TW1"], made["RVa1"]) in links
+    assert (made["C1"], made["RVa1"]) in links
+    assert (made["TW1"], made["C1"]) not in links, "the coder does not wait for the tester"
+
+
 def test_no_cross_lane_edge_is_filed(monkeypatch, tmp_path):
     """Lane sequencing is the driver's job (lane_graph gates lane k on Gc{k-1});
     a board edge here would let the dispatcher run ahead of open_lane."""
