@@ -128,6 +128,29 @@ def targets_text(targets):
     return ", ".join(os.path.expanduser(t) for t in targets)
 
 
+def render_body_values(*, repo, board, workdir, lane, targets=(), run_id=None):
+    """Every placeholder render_body resolves, and what it resolves to.
+
+    Split out so the set can be READ rather than restated: a test that keeps its own
+    list of known placeholders drifts the moment one is added, and drifts silently.
+    """
+    return {"<WORKDIR>": os.path.abspath(workdir),
+            # A PATH, not the reading itself: every lane's cards are filed in one
+            # moment, so a string frozen here tells lane 2 what the tree looked like
+            # before lane 1 built anything in it. The driver writes this file when
+            # the lane OPENS, beside the idea snapshot and under the same guarantee.
+            "<WORKDIR-STATE>": workdir_state_path(repo, board, lane, run_id),
+            "<BOARD>": board,
+            "<N>": str(lane),
+            "<TARGETS>": targets_text(targets),
+            # The run's own state, as a body names it. Deliberately NOT a lane
+            # document (lane_paths): scratch lives here, and the chain checks
+            # hand-offs — a directory that changes while a card works would read as a
+            # document written after the card started.
+            "<RUNS>": run_dir(repo, board, run_id),
+            **lane_paths(repo, board, lane, run_id)}
+
+
 def render_body(body_file, *, repo, board, workdir, lane, targets=(), bodies_dir=None,
                 run_id=None):
     """A card body with every placeholder resolved.
@@ -143,21 +166,8 @@ def render_body(body_file, *, repo, board, workdir, lane, targets=(), bodies_dir
         if placeholder in text:
             with open(os.path.join(bodies_dir, name)) as f:
                 text = text.replace(placeholder, f.read().strip())
-    values = {"<WORKDIR>": os.path.abspath(workdir),
-              # A PATH, not the reading itself: every lane's cards are filed in
-              # one moment, so a string frozen here tells lane 2 what the tree
-              # looked like before lane 1 built anything in it. The driver writes
-              # this file when the lane OPENS, beside the idea snapshot and under
-              # the same guarantee — before the lane's root is unblocked.
-              "<WORKDIR-STATE>": workdir_state_path(repo, board, lane, run_id),
-              "<BOARD>": board,
-              "<N>": str(lane), "<TARGETS>": targets_text(targets),
-              # The board's run state, as a body names it. Deliberately NOT a
-              # lane document (lane_paths): scratch lives here, and the chain
-              # checks hand-offs — a directory that changes while a card works
-              # would read as a document written after the card started.
-              "<RUNS>": run_dir(repo, board, run_id),
-              **lane_paths(repo, board, lane, run_id)}
+    values = render_body_values(repo=repo, board=board, workdir=workdir, lane=lane,
+                                targets=targets, run_id=run_id)
     for placeholder, value in values.items():
         text = text.replace(placeholder, value)
     return text

@@ -1077,6 +1077,22 @@ def lane_paths_agree(state, lane):
     return False
 
 
+# The one placeholder a filed body is SUPPOSED to still carry: the worker learns its
+# own card id from the dispatcher, so render_body leaves it alone.
+LEFT_FOR_THE_WORKER = frozenset({"<YOUR-CARD-ID>"})
+
+# Hyphens included. `<[A-Z_]+>` missed every hyphenated name — <WORKDIR-STATE> among
+# them — so F4 could not see the placeholder it was meant to catch, and the only
+# reason it looked correct was that the other intentionally-unresolved name is
+# hyphenated too.
+_PLACEHOLDER_RE = re.compile(r"<[A-Z][A-Z_-]*>")
+
+
+def unresolved_placeholders(body):
+    """Placeholders a filed body still carries that a worker cannot act on."""
+    return sorted(set(_PLACEHOLDER_RE.findall(body or "")) - LEFT_FOR_THE_WORKER)
+
+
 def chain_inputs(body, lane):
     """The lane documents a card's FILED body points at, by role.
 
@@ -1122,7 +1138,7 @@ def record_chain_start(card, lane, observed=False):
           if isinstance(card.get("started_at"), (int, float)) else None)
     chain_record("start", card, lane, ts=ts, observed=observed,
                  inputs=chain_inputs(body, lane),
-                 unresolved=sorted(set(re.findall(r"<[A-Z_]+>", body))))
+                 unresolved=unresolved_placeholders(body))
 
 
 def record_chain_starts(state):
@@ -1854,8 +1870,14 @@ def validate_armed(armed):
     it and letting the next tick re-read it is the whole recovery.
     """
     problems = []
-    manifest_problems = board_schema.validate(file_lanes.read_board(BOARD_DIR),
-                                             where="board.json")
+    cfg = file_lanes.read_board(BOARD_DIR)
+    # The same checks the shell doors run, including the ones that touch disk: a
+    # missing work directory and a dirty index in it. This is the moment a run is
+    # about to start, so it is the moment those matter most — the shell doors ran
+    # when the board was created and when the driver launched, both of which may be
+    # days ago.
+    manifest_problems = (board_schema.validate(cfg, where="board.json")
+                         + board_schema.workdir_problems(cfg, where="board.json"))
     for lane, text, cid in armed:
         found = [f"lane {lane}: {p}" for p in
                  board_schema.validate_idea(text, where=f"lane-{lane}.md")]

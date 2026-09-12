@@ -91,3 +91,40 @@ def test_the_refile_refuses_before_it_adopts_anything(monkeypatch, tmp_path):
     import inspect
     src = inspect.getsource(run.adopt_and_refile)
     assert src.index("validate_armed") < src.index("open(dst")
+
+
+def test_a_dirty_index_in_the_work_directory_stops_the_arm(monkeypatch, tmp_path):
+    """`git diff --cached` lists the whole index, so the operator's pending edits
+    become the lane's evidence. The shell doors check this when the board is created
+    and when the driver launches — both possibly days before an idea is armed, which
+    is the moment a run actually starts."""
+    import json
+    import subprocess
+    wd = tmp_path / "ext"
+    wd.mkdir()
+    subprocess.run(["git", "init", "-q", str(wd)], check=True)
+    (wd / "theirs.txt").write_text("mine, not the lane's\n")
+    subprocess.run(["git", "-C", str(wd), "add", "theirs.txt"], check=True)
+    comments = _fixture(monkeypatch, tmp_path,
+                        manifest={"slug": "b", "lanes": 1,
+                                  "default-workdir": str(wd)})
+    good = "## Idea\n\nbody\n\n### Done means\n\n- it works\n"
+    assert run.validate_armed([(1, good, "c1")]) is False
+    assert "index" in comments[0][2] and "theirs.txt" in comments[0][2]
+
+
+def test_a_missing_work_directory_stops_the_arm(monkeypatch, tmp_path):
+    comments = _fixture(monkeypatch, tmp_path,
+                        manifest={"slug": "b", "lanes": 1,
+                                  "default-workdir": str(tmp_path / "nope")})
+    good = "## Idea\n\nbody\n\n### Done means\n\n- it works\n"
+    assert run.validate_armed([(1, good, "c1")]) is False
+    assert "does not exist on this host" in comments[0][2]
+
+
+def test_a_board_owned_work_directory_arms_without_disk_checks(monkeypatch, tmp_path):
+    """A board that omits default-workdir builds in its own work/, which the board
+    creates — none of those questions apply."""
+    _fixture(monkeypatch, tmp_path)
+    good = "## Idea\n\nbody\n\n### Done means\n\n- it works\n"
+    assert run.validate_armed([(1, good, "c1")]) is True

@@ -221,7 +221,7 @@ def test_revision_rounds_are_rendered_like_filed_cards(monkeypatch, board_env):
     created = [c for c in calls if c[0] == "create"]
     assert len(created) == 4
     for c in created:
-        assert not re.findall(r"<[A-Z_]+>", _arg(c, "--body")), c[1]
+        assert not run.unresolved_placeholders(_arg(c, "--body")), c[1]
         assert _arg(c, "--workspace") == f"dir:{run.WORKDIR}"
         assert _arg(c, "--max-runtime") == "7m"
     rev_plan = next(c for c in created if c[1].startswith("P1-rev-1"))

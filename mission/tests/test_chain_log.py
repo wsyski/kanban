@@ -136,3 +136,31 @@ def test_chain_inputs_match_a_body_filed_under_its_own_run(monkeypatch, tmp_path
     found = run.chain_inputs(body, 1)
     assert found.get("IDEA") == paths["<IDEA>"]
     assert found.get("REFINED") == paths["<REFINED>"]
+
+
+def test_a_hyphenated_placeholder_left_unresolved_is_reported():
+    """`<[A-Z_]+>` matched no hyphenated name, so F4 was blind to <WORKDIR-STATE> —
+    and looked correct only because the one placeholder that is SUPPOSED to survive
+    filing (<YOUR-CARD-ID>, which the worker learns from the dispatcher) is
+    hyphenated too."""
+    assert run.unresolved_placeholders("read <WORKDIR-STATE>") == ["<WORKDIR-STATE>"]
+    assert run.unresolved_placeholders("<IDEA> and <TOOLCHAIN_BOUNDARY>") == \
+        ["<IDEA>", "<TOOLCHAIN_BOUNDARY>"]
+
+
+def test_the_workers_own_card_id_is_not_a_finding():
+    assert run.unresolved_placeholders("your id is <YOUR-CARD-ID>") == []
+
+
+def test_every_placeholder_in_every_shipped_body_is_either_rendered_or_the_workers():
+    """The real guarantee: render a body the way filing renders it, and nothing is
+    left that a worker cannot act on."""
+    import glob
+    import file_lanes
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for path in sorted(glob.glob(os.path.join(here, "card-bodies", "*.txt"))):
+        if os.path.basename(path).startswith("_"):
+            continue                      # a fragment, spliced into a body
+        text = file_lanes.render_body(os.path.basename(path), repo=here + "/..",
+                                      board="b", workdir=here, lane=1, run_id="r1")
+        assert run.unresolved_placeholders(text) == [], path

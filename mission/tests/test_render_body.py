@@ -4,16 +4,20 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import file_lanes
+import run
 import lanes
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-PLACEHOLDER = re.compile(r"<[A-Z_]+>")
+# run.unresolved_placeholders, not a local regex: `<[A-Z_]+>` cannot see a
+# hyphenated placeholder, so this assertion passed for <WORKDIR-STATE> however the
+# body was rendered.
 
 
 def test_every_lane_body_renders_without_placeholders(tmp_path):
     for _code, body, *_ in lanes.LANE_CARDS:
         text = file_lanes.render_body(body, repo=REPO, board="b", workdir=str(tmp_path), lane=2)
-        assert not PLACEHOLDER.findall(text), f"{body}: {PLACEHOLDER.findall(text)}"
+        left = run.unresolved_placeholders(text)
+        assert not left, f"{body}: {left}"
 
 
 def test_render_body_resolves_every_placeholder_to_an_absolute_path(tmp_path):

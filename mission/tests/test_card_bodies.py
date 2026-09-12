@@ -5,12 +5,21 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import file_lanes
 import lanes
+import run
 
 BODIES = os.path.join(os.path.dirname(__file__), "..", "card-bodies")
 BANNED = re.compile(r"wordcount|mvn |spring|maven|pom\.xml|task 1|task 2", re.I)
-ALLOWED_PLACEHOLDERS = {
-    "<RUNS>","<WORKDIR>", "<BOARD>", "<N>", "<IDEA>", "<REFINED>", "<PLAN>",
-                        "<TARGETS>", "<PLAN_CHECKLIST>", "<TOOLCHAIN_BOUNDARY>", "<RESULT_FIELD>"}
+def allowed_placeholders():
+    """Every placeholder render_body actually resolves, plus the one it deliberately
+    leaves for the worker.
+
+    Derived, not listed: a hand-kept copy beside a computable set drifts the moment a
+    placeholder is added, and it drifts SILENTLY — the check below then passes for a
+    name nothing resolves.
+    """
+    values = file_lanes.render_body_values(repo="/r", board="b", workdir="/w",
+                                           lane=1, targets=(), run_id="r1")
+    return set(values) | set(file_lanes.FRAGMENTS) | run.LEFT_FOR_THE_WORKER
 FRAGMENT_FILES = sorted(file_lanes.FRAGMENTS.values())
 
 
@@ -46,9 +55,14 @@ def test_bodies_carry_no_scenario_specific_language():
 
 
 def test_bodies_use_only_known_placeholders():
+    """The regex has to allow hyphens. `<[A-Z_]+>` matched no hyphenated name, so
+    <WORKDIR-STATE> and <YOUR-CARD-ID> were never checked at all and a typo in either
+    would have shipped."""
+    allowed = allowed_placeholders()
+    assert "<WORKDIR-STATE>" in allowed and "<YOUR-CARD-ID>" in allowed
     for name, text in all_texts():
-        for ph in set(re.findall(r"<[A-Z_]+>", text)):
-            assert ph in ALLOWED_PLACEHOLDERS, f"{name}: unknown placeholder {ph}"
+        for ph in set(run._PLACEHOLDER_RE.findall(text)):
+            assert ph in allowed, f"{name}: unknown placeholder {ph}"
 
 
 def test_gate_bodies_never_instruct_a_commit_as_a_requirement():

@@ -3,6 +3,7 @@ import sys, os
 import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import file_lanes
+import run
 
 def test_read_board_defaults_slug_from_directory_name(tmp_path):
     """The directory names the board. board.json may say so too, but it does not
@@ -218,4 +219,4 @@ def test_filed_bodies_carry_no_raw_placeholders(monkeypatch, tmp_path):
     fake, _ = file_two_lanes(monkeypatch, tmp_path)
     for a in fake.created():
         body = a[a.index("--body") + 1]
-        assert not re.findall(r"<[A-Z_]+>", body), a[1]
+        assert not run.unresolved_placeholders(body), a[1]
