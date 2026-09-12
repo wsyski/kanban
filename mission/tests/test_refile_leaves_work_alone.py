@@ -41,7 +41,7 @@ def _fixture(monkeypatch, tmp_path):
 
 def test_minting_the_next_run_leaves_the_work_directory_intact(monkeypatch, tmp_path):
     work, _runs, _prev = _fixture(monkeypatch, tmp_path)
-    run.mint_run("b-20260912-100000")
+    run.mint_run("b-20260912-100000", [(1, "## Idea\n\n### Done means\n- x\n", "c1")])
     assert (work / "src" / "existing.py").read_text() == "what the previous run built\n"
 
 
@@ -50,7 +50,7 @@ def test_the_incoming_run_cannot_see_the_previous_hand_offs(monkeypatch, tmp_pat
     the refined idea's STRUCTURE, so a leftover from the last run passes it and the
     plan is built on the old idea. The path simply differs."""
     _work, _runs, previous = _fixture(monkeypatch, tmp_path)
-    run.mint_run("b-20260912-100000")
+    run.mint_run("b-20260912-100000", [(1, "## Idea\n\n### Done means\n- x\n", "c1")])
     incoming = os.path.join(run.RUN_DIR, "artifacts", "lane-1", "refined.md")
     assert not os.path.exists(incoming)
     assert (previous / "artifacts" / "lane-1" / "refined.md").exists()
@@ -58,11 +58,11 @@ def test_the_incoming_run_cannot_see_the_previous_hand_offs(monkeypatch, tmp_pat
 
 def test_the_previous_runs_evidence_survives_the_refile(monkeypatch, tmp_path):
     _work, _runs, previous = _fixture(monkeypatch, tmp_path)
-    run.mint_run("b-20260912-100000")
+    run.mint_run("b-20260912-100000", [(1, "## Idea\n\n### Done means\n- x\n", "c1")])
     assert (previous / "chain.jsonl").read_text() == '{"kind":"run"}\n'
 
 
 def test_current_names_the_new_run(monkeypatch, tmp_path):
     _work, runs, _prev = _fixture(monkeypatch, tmp_path)
-    run.mint_run("b-20260912-100000")
+    run.mint_run("b-20260912-100000", [(1, "## Idea\n\n### Done means\n- x\n", "c1")])
     assert (runs / "current").read_text().strip() == "b-20260912-100000"

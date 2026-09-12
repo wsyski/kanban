@@ -15,24 +15,29 @@ hermes 0.21.2 — so this is now a matter of spending the wall clock, not of mis
 tooling. The tests cover the edges; whether lane 2's researcher can build on what
 lane 1 committed is the part only a run can answer.
 
-## 2. The two enforced invariants, and what still rests on convention
+## 2. Nothing outstanding here — the invariants are enforced
 
-Two guarantees are now checked at runtime rather than trusted:
+Recorded because it was the last thing resting on convention, and so that a change
+here is a deliberate one.
 
-- **A lane opens only if its cards name the run the driver is writing to.**
-  `lane_paths_agree` reads the lane root's filed body and compares its `<IDEA>` path
-  against the current run; a mismatch refuses the lane with the reason, instead of
-  letting the researcher write a refined idea the gate will never find. That covers
-  every cause — a run minted on a restart, a hand-edited `runs/current`, a board
-  refiled against the wrong directory — not just the one that was imagined.
-- **The work directory cannot move under a live run unnoticed.** A branch switch, a
-  commit or reset, or a path staged in an external tree that is not the lane's are
-  reported once and fail the audit (E17). Reported, never corrected: the board's only
-  git writes are stage and unstage.
+Three checks hold the run layout together, none of them a matter of remembering:
 
-What still rests on convention is narrower: `adopt_and_refile` being the only caller
-of `mint_run`, pinned by a source-inspection test. That test is weaker than the
-runtime check above — it would pass a second caller added inside
-`adopt_and_refile` — but a wrong mint is now caught at the next lane open anyway, so
-the source test is a hint about intent rather than the guarantee.
+- **A run is minted only for an armed idea.** `mint_run(run_id, armed)` refuses an
+  empty `armed`, so a call on driver start or restart cannot ask for a run, and it
+  refuses to re-mint the current one, so two sets of cards cannot land in one
+  directory.
+- **A restart rejoins.** `use_run(_read_current_run())` at import is the only rejoin,
+  proved by a test that imports the driver in a fresh interpreter and asserts nothing
+  was minted.
+- **A lane opens only if its cards name the run the driver is on.**
+  `lane_paths_agree` reads the lane root's filed body and refuses the lane otherwise
+  — which catches a wrong run whatever caused it, including a hand-edited
+  `runs/current`.
 
+Together they are why a lane cannot inherit a stale `refined.md`: not because
+anything is cleared, but because the paths differ and every way of getting that wrong
+is refused at the point it would matter.
+
+Nothing prunes `runs/`, by design. `scratch/<card-id>/` grows without bound, since a
+worker can write anything there; `mission/runs-report.py` shows what it costs and
+deletes nothing.

@@ -55,7 +55,7 @@ def test_use_run_moves_every_per_run_path_together(monkeypatch, tmp_path):
 def test_mint_run_creates_the_directory_and_points_current(monkeypatch, tmp_path):
     monkeypatch.setattr(run, "RUNS_ROOT", str(tmp_path))
     monkeypatch.setattr(run, "CURRENT_RUN", str(tmp_path / "current"))
-    run.mint_run("r1")
+    run.mint_run("r1", [(1, "## Idea\n\n### Done means\n- x\n", "c1")])
     assert os.path.isdir(tmp_path / "r1")
     assert (tmp_path / "current").read_text().strip() == "r1"
     assert run._read_current_run() == "r1"
@@ -67,10 +67,10 @@ def test_minting_a_second_run_leaves_the_first_alone(monkeypatch, tmp_path):
     auditor had just reported on."""
     monkeypatch.setattr(run, "RUNS_ROOT", str(tmp_path))
     monkeypatch.setattr(run, "CURRENT_RUN", str(tmp_path / "current"))
-    run.mint_run("r1")
+    run.mint_run("r1", [(1, "## Idea\n\n### Done means\n- x\n", "c1")])
     (tmp_path / "r1" / "chain.jsonl").write_text('{"kind":"run"}\n')
     (tmp_path / "r1" / "driver.log").write_text("[00:00:00] LANE 1 open\n")
-    run.mint_run("r2")
+    run.mint_run("r2", [(1, "## Idea\n\n### Done means\n- x\n", "c1")])
     assert (tmp_path / "r1" / "chain.jsonl").exists()
     assert (tmp_path / "r1" / "driver.log").exists()
     assert run.RUN_DIR == str(tmp_path / "r2")
@@ -111,13 +111,42 @@ def test_a_restart_rejoins_the_run_it_finds(monkeypatch, tmp_path):
     assert sorted(os.listdir(tmp_path)) == ["current", "r1"]   # no second run
 
 
-def test_only_the_refile_mints():
-    """One caller, so the invariant above is checkable by reading one function."""
+def test_minting_requires_an_armed_idea(monkeypatch, tmp_path):
+    """"One run per armed idea" was a convention pinned by reading the source, which
+    a second call added inside the refile would have satisfied. It is now a
+    precondition: a caller with no armed idea has no run to mint, so a mint on driver
+    start or restart cannot compile past this."""
+    import pytest
+    monkeypatch.setattr(run, "RUNS_ROOT", str(tmp_path))
+    monkeypatch.setattr(run, "CURRENT_RUN", str(tmp_path / "current"))
+    monkeypatch.setattr(run, "log", lambda m: None)
+    with pytest.raises(ValueError, match="no armed idea"):
+        run.mint_run("r1", [])
+    assert not os.path.exists(tmp_path / "r1"), "nothing is created by a refused mint"
+    assert not os.path.exists(tmp_path / "current")
+
+
+def test_minting_the_current_run_again_is_refused(monkeypatch, tmp_path):
+    """Two sets of cards filed into one run's directory is the old flat layout with
+    extra steps, and the second set would overwrite the first's hand-offs."""
+    import pytest
+    monkeypatch.setattr(run, "RUNS_ROOT", str(tmp_path))
+    monkeypatch.setattr(run, "CURRENT_RUN", str(tmp_path / "current"))
+    monkeypatch.setattr(run, "log", lambda m: None)
+    armed = [(1, "## Idea\n\n### Done means\n- x\n", "c1")]
+    run.mint_run("r1", armed)
+    with pytest.raises(ValueError, match="already the current run"):
+        run.mint_run("r1", armed)
+
+
+def test_the_refile_is_still_the_only_caller():
+    """Weaker than the precondition above and kept as a statement of intent: the
+    precondition is what holds if this ever stops being true."""
     import inspect
-    src = inspect.getsource(run)
-    callers = [ln.strip() for ln in src.splitlines()
+    callers = [ln.strip() for ln in inspect.getsource(run).splitlines()
                if "mint_run(" in ln and "def mint_run" not in ln]
-    assert callers == ["mint_run(key)"], callers
+    assert len(callers) == 1, callers
+    assert callers[0].startswith("mint_run(key, armed)"), callers
 
 
 # ---- a restart is a new PROCESS, so prove it at import ---------------------

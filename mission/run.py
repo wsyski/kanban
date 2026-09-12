@@ -64,8 +64,8 @@ def use_run(run_id):
     return RUN_DIR
 
 
-def mint_run(run_id):
-    """Create runs/<run-id>/ and make it current. Called once per armed idea.
+def mint_run(run_id, armed):
+    """Create runs/<run-id>/ and make it current. One run per ARMED IDEA.
 
     Nothing is deleted here, or anywhere: a finished run's evidence stays exactly
     as it was and the next run starts on empty paths because they are NEW paths,
@@ -73,7 +73,24 @@ def mint_run(run_id):
     snapshot_run_evidence and clear_lane_outputs — a fresh directory cannot hold a
     previous run's refined idea, so the stale-hand-off failures (#31, F2) stop
     being something a driver has to remember to prevent.
+
+    `armed` is the ideas this run exists to execute, and it is required because
+    "one run per armed idea" was otherwise only a convention: a call on driver
+    start, or a second call anywhere, would mint a directory whose cards are
+    already filed against a different one, and every hand-off would be written
+    where nothing reads it. A caller with no armed idea has no run to mint, so it
+    cannot ask for one. `open_lane` checks the other end — that a lane's cards name
+    the run the driver is on — and between them the invariant no longer rests on
+    anybody remembering it.
     """
+    if not armed:
+        raise ValueError("mint_run: no armed idea — a run is minted when a human "
+                         "arms a Triage card, never on driver start or restart "
+                         "(a restart rejoins runs/current)")
+    if run_id == _read_current_run():
+        raise ValueError(f"mint_run: {run_id} is already the current run — minting "
+                         f"it again would file a second set of cards into one run's "
+                         f"directory")
     path = use_run(run_id)
     os.makedirs(path, exist_ok=True)
     tmp = CURRENT_RUN + ".tmp"
@@ -1910,7 +1927,7 @@ def adopt_and_refile(state):
     # One id for the cards' idempotency keys AND the run directory, so a card in
     # the engine names the directory holding its evidence.
     key = f"{BOARD}-{datetime.datetime.now():%Y%m%d-%H%M%S}"
-    mint_run(key)
+    mint_run(key, armed)
     made = file_lanes.file_board(BOARD, REPO, WORKDIR, lanes_n, key,
                                  max_runtime=cfg.get("max-runtime"),
                                  max_retries=cfg.get("max-retries"),
