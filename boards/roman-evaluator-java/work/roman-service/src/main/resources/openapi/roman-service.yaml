@@ -1,0 +1,54 @@
+openapi: 3.0.3
+info:
+  title: Roman Evaluator API
+  version: 0.1.0
+servers:
+  - url: http://localhost:8080
+paths:
+  /evaluate:
+    post:
+      operationId: evaluateRoman
+      tags:
+        - evaluator
+      summary: Evaluate one roman numeral
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EvaluationRequest'
+      responses:
+        '200':
+          description: The numeral's value
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvaluationResponse'
+        '400':
+          description: The numeral or the request body is not acceptable
+  /evaluate/health:
+    get:
+      operationId: evaluateHealth
+      tags:
+        - evaluator
+      summary: Liveness check
+      responses:
+        '200':
+          description: The service is up
+components:
+  schemas:
+    EvaluationRequest:
+      type: object
+      required:
+        - roman
+      properties:
+        roman:
+          type: string
+    EvaluationResponse:
+      type: object
+      required:
+        - value
+      properties:
+        value:
+          type: integer
+          format: int32

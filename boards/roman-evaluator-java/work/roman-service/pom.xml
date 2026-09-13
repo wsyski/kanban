@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>com.example.roman</groupId>
+    <artifactId>roman-parent</artifactId>
+    <version>0.1.0</version>
+  </parent>
+
+  <artifactId>roman-service</artifactId>
+  <packaging>jar</packaging>
+
+  <properties>
+    <spring-boot.version>3.3.8</spring-boot.version>
+    <openapi-generator.version>7.8.0</openapi-generator.version>
+  </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-dependencies</artifactId>
+        <version>${spring-boot.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <dependencies>
+    <!-- The evaluation rule itself: lane 1's module, consumed, never reimplemented. -->
+    <dependency>
+      <groupId>com.example.roman</groupId>
+      <artifactId>roman-cli</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
+    <!-- Emitted by the generator on the generated interface (@Tag / @Generated). -->
+    <dependency>
+      <groupId>io.swagger.core.v3</groupId>
+      <artifactId>swagger-annotations</artifactId>
+      <version>2.2.40</version>
+    </dependency>
+    <dependency>
+      <groupId>jakarta.annotation</groupId>
+      <artifactId>jakarta.annotation-api</artifactId>
+    </dependency>
+    <!-- Emitted by the generator on required model fields (@NotNull). -->
+    <dependency>
+      <groupId>jakarta.validation</groupId>
+      <artifactId>jakarta.validation-api</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <version>${junit.version}</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.openapitools</groupId>
+        <artifactId>openapi-generator-maven-plugin</artifactId>
+        <version>${openapi-generator.version}</version>
+        <executions>
+          <execution>
+            <id>oas-generate-evaluator-api</id>
+            <goals>
+              <goal>generate</goal>
+            </goals>
+            <configuration>
+              <inputSpec>${project.basedir}/src/main/resources/openapi/roman-service.yaml</inputSpec>
+              <generatorName>spring</generatorName>
+              <apiPackage>com.example.roman.api</apiPackage>
+              <modelPackage>com.example.roman.api.model</modelPackage>
+              <invokerPackage>com.example.roman.api</invokerPackage>
+              <configOptions>
+                <interfaceOnly>true</interfaceOnly>
+                <useSpringBoot3>true</useSpringBoot3>
+                <skipDefaultInterface>true</skipDefaultInterface>
+                <useBeanValidation>false</useBeanValidation>
+                <openApiNullable>false</openApiNullable>
+                <documentationProvider>none</documentationProvider>
+                <annotationLibrary>none</annotationLibrary>
+                <useTags>true</useTags>
+              </configOptions>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+      <!-- Present so the recipe's manual cross-check `spring-boot:run` exists. -->
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+        <version>${spring-boot.version}</version>
+      </plugin>
+      <!-- The slow layer: *IT.java only, on `verify`. Surefire keeps *Test.java. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-failsafe-plugin</artifactId>
+        <version>3.5.6</version>
+        <executions>
+          <execution>
+            <goals>
+              <goal>integration-test</goal>
+              <goal>verify</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>

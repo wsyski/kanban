@@ -11,6 +11,7 @@
 
   <modules>
     <module>roman-cli</module>
+    <module>roman-service</module>
   </modules>
 
   <properties>

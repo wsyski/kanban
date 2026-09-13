@@ -32,4 +32,24 @@ describe('parseRoman', () => {
   test('a character outside MDCLXVI is rejected', () => {
     expect(() => parseRoman('A')).toThrow();
   });
+
+  test('XL is 40', () => {
+    expect(parseRoman('XL')).toBe(40);
+  });
+
+  test('XC is 90', () => {
+    expect(parseRoman('XC')).toBe(90);
+  });
+
+  test('CD is 400', () => {
+    expect(parseRoman('CD')).toBe(400);
+  });
+
+  test('CM is 900', () => {
+    expect(parseRoman('CM')).toBe(900);
+  });
+
+  test('MMMM is rejected, 3999 is the valid upper bound', () => {
+    expect(() => parseRoman('MMMM')).toThrow();
+  });
 });
