@@ -56,7 +56,7 @@ def test_the_first_driver_still_wins_the_empty_lockfile(monkeypatch, tmp_path):
 def _reset(repo, board, env):
     import subprocess
     return subprocess.run(["bash", os.path.join(repo, "mission", "reset.sh"),
-                           "--board", str(board), "--yes"],
+                           "--board", str(board), "--batch"],
                           capture_output=True, text=True, env=env, timeout=60)
 
 

@@ -204,7 +204,7 @@ disagreement loudly — the header is an HTML comment, invisible in a rendered v
 
 Re-create a board after engine changes:
 
-    mission/reset.sh --board boards/<slug> --yes    # stop driver + workers, archive cards, unstage
+    mission/reset.sh --board boards/<slug> --batch  # stop driver + workers, archive cards, unstage
     hermes kanban boards rm <slug>                  # reset archives cards, not the board
     mission/create-board.sh --board boards/<slug>
     mission/start-board.sh --slug <slug>            # then drag Triage → Todo

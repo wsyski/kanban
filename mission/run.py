@@ -2028,7 +2028,7 @@ def record_halt(reason, where=None):
 
 
 # The documented way back from a board whose run cannot be driven (README "Resetting").
-RESET_STEPS = ("mission/reset.sh --board boards/{b} --yes; hermes kanban boards rm {b}; "
+RESET_STEPS = ("mission/reset.sh --board boards/{b} --batch; hermes kanban boards rm {b}; "
                "mission/create-board.sh --board boards/{b}; "
                "mission/start-board.sh --slug {b}")
 

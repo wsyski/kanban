@@ -2,8 +2,9 @@
 # Reset ONE board: stop its driver and workers, clear its stale index entries, archive its cards.
 #
 # Usage:
-#   mission/reset.sh --board boards/<slug>        # interactive
-#   mission/reset.sh --board boards/<slug> --yes  # unattended
+#   mission/reset.sh --board boards/<slug>            # interactive: asks once
+#   mission/reset.sh --board boards/<slug> --batch    # unattended: never asks
+#   mission/reset.sh --board boards/<slug> --batch -q # unattended, no output at all
 #
 # NOTHING IS DELETED, by this script or any other. The work directory holds the
 # board's product and runs/<run-id>/ holds each run's evidence; both are a human's
@@ -24,7 +25,8 @@ cat <<'USAGE'
 mission/reset.sh — reset ONE board: archive its cards, unstage its run state
 
   --board <dir>   board directory (required)
-  --yes           do not ask
+  --batch         never ask — for a batch job, a cron entry or a background process
+  -q, --quiet     no standard output; it does NOT answer the prompt (errors still shown)
   -h, --help      this text
 
 NOTHING IS DELETED — not the work directory, not the run directories. What a
@@ -47,16 +49,27 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 # the kanban CLI refuses every mutation in that context — the pre-flight dies, or
 # a driver started here has each worker's attach/complete refused. Drop it once.
 unset HERMES_DELEGATED_CHILD_CONTEXT
-BOARD_DIR= YES=0
+BOARD_DIR= BATCH=0 QUIET=0
 need() { [ "$#" -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }; }
 while [ $# -gt 0 ]; do
   case "$1" in
     --board) need "$@"; BOARD_DIR=$2; shift 2 ;;
-    --yes) YES=1; shift ;;
+    --batch) BATCH=1; shift ;;
+    -q|--quiet) QUIET=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
+
+# Two orthogonal switches, because they answer two different questions. --batch says
+# nobody is here to answer, so never ask. --quiet hides the standard output a person
+# reads — the progress report and every subprocess line — and nothing else: it never
+# answers the prompt, so `-q` on its own still asks (the prompt and the errors go to
+# stderr, which stays visible). Combine them for a run that is both unattended and
+# invisible; take -q alone when you want the errors without the report. The command
+# substitutions below feed the script through their own capture pipe, so silencing
+# fd 1 here does not starve them.
+if [ "$QUIET" = 1 ]; then exec >/dev/null; fi
 
 [ -f "$REPO/mission/lanes.py" ] || { echo "refusing: no mission/lanes.py — wrong repo?" >&2; exit 1; }
 [ -n "$BOARD_DIR" ] || { echo "--board <dir> is required" >&2; exit 2; }
@@ -86,7 +99,7 @@ echo "archiving: this board's cards; unstaging its leftover index entries"
 echo "KEEPING:  $WORKDIR (the product)"
 echo "KEEPING:  $BOARD_DIR/runs (every run's evidence) — both yours to rm, never this script's"
 echo "keeping:  $BOARD_DIR/board.json, lane-*.md, README.md"
-[ "$YES" = 1 ] || { read -rp "Archive ALL live cards on '$SLUG' and unstage its run state? [y/N] " a
+[ "$BATCH" = 1 ] || { read -rp "Archive ALL live cards on '$SLUG' and unstage its run state? [y/N] " a
                     [ "$a" = y ] || exit 1; }
 
 # Nothing is deleted here — not the work directory and not the run directories

@@ -133,7 +133,7 @@ on this day it was not.
 
 ## 5. Reproducing a board from scratch
 
-    mission/reset.sh --board boards/<slug> --yes          # stop this board's workers, archive its cards
+    mission/reset.sh --board boards/<slug> --batch        # stop this board's workers, archive its cards
     env -u HERMES_HOME hermes kanban boards rm <slug>     # drop the board itself
     mission/create-board.sh --board boards/<slug>
     env -u HERMES_HOME mission/start-board.sh --slug <slug> --once
