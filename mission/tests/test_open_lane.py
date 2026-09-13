@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 
@@ -16,8 +17,30 @@ def _state(root_status="ready"):
     return st
 
 
+_PARKED_SHOW = json.dumps({"events": [{"kind": "blocked",
+                                       "payload": {"reason": "initial_status",
+                                                   "kind": "needs_input"}}]})
+
+
+def _kb(calls):
+    """A stub that answers `show --json` the way a real board's cards do.
+
+    Every card on a live board carries the block event its filing wrote
+    (`create --initial-status blocked`, reason `initial_status`), and the promotion
+    loop now READS that history: it releases the board's own parking brake and
+    refuses to undo anybody else's stop. A stub that answers "" everywhere models a
+    board with no history at all, which exists nowhere.
+    """
+    def kb(*a, **k):
+        calls.append(a)
+        if a[:1] == ("show",):
+            return _PARKED_SHOW
+        return ""
+    return kb
+
+
 def _board_env(monkeypatch, tmp_path, calls, it=False, ut=True):
-    monkeypatch.setattr(run, "kb", lambda *a, **k: calls.append(a) or "")
+    monkeypatch.setattr(run, "kb", _kb(calls))
     # open_lane runs git -C WORKDIR; the stub keeps the test hermetic
     monkeypatch.setattr(run, "git", lambda *a: "")
     monkeypatch.setattr(run, "REPO", str(tmp_path))
@@ -46,6 +69,14 @@ def _board_env(monkeypatch, tmp_path, calls, it=False, ut=True):
     run._OPENED.clear()
     # tick() also remembers which gate messages it has already logged
     run._WAITING.clear()
+    # Driver memory outlives a test unless it is cleared here: the re-promotion
+    # allowance, the provider re-queues, the escalate-once set and the halt holder
+    # are all per-driver-run by design, and one test leaking them into the next is
+    # how an escalation silently stops commenting.
+    run._HALTED["reason"] = None
+    run._REPROMOTED.clear()
+    run._REQUEUED.clear()
+    run._ESCALATED.clear()
 
 
 def test_the_lane_is_prepared_before_its_root_is_released(monkeypatch, tmp_path):
@@ -59,6 +90,8 @@ def test_the_lane_is_prepared_before_its_root_is_released(monkeypatch, tmp_path)
 
     def kb(*a, **k):
         calls.append(a)
+        if a[:1] == ("show",):
+            return _PARKED_SHOW
         if a and a[0] == "unblock" and a[1] == "id-I":
             # the hand-off the root card is told to read must already be there
             assert os.path.exists(snap), "root released before the lane was prepared"
@@ -130,6 +163,8 @@ def test_a_lane_that_prunes_its_idea_cards_releases_its_root_at_once(monkeypatch
 
     def kb(*a, **k):
         calls.append(a)
+        if a[:1] == ("show",):
+            return _PARKED_SHOW
         if a and a[0] == "archive":
             for title, card in list(live.items()):
                 if card["id"] == a[1]:
@@ -392,6 +427,8 @@ def test_the_reading_is_written_before_the_root_is_released(monkeypatch, tmp_pat
 
     def kb(*a, **k):
         calls.append(a)
+        if a[:1] == ("show",):
+            return _PARKED_SHOW
         if a and a[0] == "unblock" and a[1] == "id-I":
             seen.append(reading.exists())
         return ""

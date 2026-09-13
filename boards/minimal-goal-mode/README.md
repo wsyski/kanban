@@ -30,7 +30,7 @@ Both halves of that have bitten on this host, and each has its own lever:
 
 | Symptom | Cause | Lever |
 |---|---|---|
-| Every judge call fails `400 MissingSessionID` | The judge runs *after* a turn, and a turn resets the ambient conversation context on its way out — so the auxiliary request carried no `x-opencode-session` and the relay refused it | `hermes-kanban-goal-judge-affinity.patch`, which holds the conversation for the loop (see *Hermes Local State and Recovery* in the vault) |
+| Every judge call fails `400 MissingSessionID` | The judge runs *after* a turn, and a turn resets the ambient conversation context on its way out — so the auxiliary request carried no `x-opencode-session` and the relay refused it | `hermes-kanban-goal-judge-affinity.patch`, which holds the conversation for the loop; `hermes-opencode-affinity-fallback.patch` covers the same gap for any other call made outside a turn |
 | The judge answers, but never `done` | A model that cannot follow the strict JSON contract | `auxiliary.goal_judge.provider` / `.model` in the profile's `config.yaml` |
 
 The check is empirical, so arm this board and watch `I1`:

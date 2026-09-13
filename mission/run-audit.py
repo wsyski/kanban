@@ -89,6 +89,15 @@ WARN_LINE = re.compile(r"(?i)(^\s*warnings?\s*:|:\s*warnings?\s*:)|"
 WARN_TEXT = re.compile(r"(?i)(?<!no )(?<!'s )(?<!\b0 )(?<!\bzero )warnings?\b")
 
 
+# A transport failure the run may have SURVIVED — the worker retried and the card
+# finished. Only the card's own log records it, so this is the one check that can
+# see a provider storm the driver's own record says nothing about. Forms matched
+# are the ones the transport prints (an HTTP status line) and the goal loop's own
+# error sentence; a card body quoting an error's TEXT is not one of these.
+UPSTREAM_ERROR = re.compile(r"(?i)(\bHTTP\s*[45]\d\d\b|\bstatus\s*[45]\d\d\b|"
+                            r"goal judge: API call failed)")
+
+
 def _driver_alive():
     """Is a driver still running? Distinguishes "audited too early" from a run
     that ended without its banner."""
@@ -209,9 +218,22 @@ def card_log_findings(slug, started):
                 text = open(path, errors="replace").read()
             except OSError:
                 continue
+            upstream = []
             for line in text.splitlines():
                 if WARN_LINE.search(line):
                     out.append(("WARNING", "E13", f"{name}: {line.strip()[:90]}"))
+                if UPSTREAM_ERROR.search(line):
+                    upstream.append(line.strip()[:90])
+            if upstream:
+                # A run can SURVIVE a transport storm, and then nothing else here
+                # sees it: the worker retried, the card finished, the driver logged
+                # nothing, and the card's own log is the only record. That is
+                # exactly when the operator wants to know (measured 2026-09-13: the
+                # same 400 storm cost a whole run an hour earlier, and the run that
+                # rode one out audited clean).
+                out.append(("WARNING", "E18",
+                            f"{name}: {len(upstream)} upstream error line(s) — the "
+                            f"run survived a provider storm: {upstream[0]}"))
         break
     return out
 

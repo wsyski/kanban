@@ -168,14 +168,34 @@ how to read them.
   work directory as the lane finds it, then releases the root — so no worker reads a
   mutable or half-written input, and lane 2 sees the tree lane 1 left rather than the
   tree at filing time.
+- **Promotion honours every stop but the parking brake.** The graph decides *when* a
+  card's turn has come; it may only release the board's own brake — a card filed blocked
+  at birth, or the older `parked: awaiting lane activation`. Any other block is somebody
+  saying STOP, and the driver hears it instead of unblocking the card again:
+  the worker's own block is re-promoted **once** (reason commented on the card, log line
+  `re-promoted <code> once`), and the second one escalates and halts naming the worker's
+  words; a block the driver recorded at a runtime ceiling is never promoted away.
+  Measured 2026-09-13 on roman-evaluator-java: C2 blocked itself at 15:52:41 and
+  promotion undid it six seconds later, so a worker's "I cannot complete this" existed
+  only as a comment nobody read. `run.block_origin`/`should_repromote` own the rule.
 - **Halts.** The board halts — log line, comment on the card, `runs/<run-id>/halt.txt`,
   deadman notice, driver exits — on the first of: a card whose attempt failed (gave up,
-  crashed, timed out), rework rounds exhausted, or an assigned card escalated to
+  crashed, timed out), rework rounds exhausted, a worker that blocked its own card twice,
+  a card the driver blocked at its runtime ceiling, or an assigned card escalated to
   Triage by the engine (`block_loop_detected`). Driving on would only file more work
   against a broken step, and polling would read as a stall. A timed-out card is also
   blocked by the driver, because the dispatcher would otherwise put it back at `ready`
   and retry it. A worker log with ≥3 upstream 4xx/5xx marks the halt
   "provider-starved", because the restart decision differs.
+- **Provider starvation is not a content failure.** A card whose attempt died in an
+  upstream 4xx/5xx storm — ≥3 such lines in its worker log, and a clean exit that never
+  called `kanban_complete`/`kanban_block` — is re-queued **once**, in the open
+  (`RE-QUEUED (once)` comment on the card): halting a whole run for a flake the worker
+  never got to work through is the one thing the one-attempt rule is not about. The
+  re-queue is stamped (`_REQUEUED`, keyed by the exhaustion event's own timestamp), so
+  the event that caused it — which stays in the card's history for ever — cannot halt
+  the next tick. From the second failure of any kind the ordinary rules apply. Timeouts
+  are never re-queued: a ceiling is the board's own rule, not a flake.
 - **Deadman.** Two or more non-parked cards blocked on `needs_input` log a DEADMAN
   line, write `runs/<run-id>/deadman.txt`, and send Telegram when tokens are set. It
   notifies once per distinct stuck set, so one stall is one message, and a failed board
@@ -207,6 +227,11 @@ promised to survive. Outside those roots the board touches nothing.
 
 ## Records
 
+- **Driver log** — `runs/<run-id>/driver.log` (per run) and the board-level
+  `boards/<slug>/runs/driver.log`, which is append-only across runs. Every driver start
+  writes a `--- driver start: board=… pid=… run=… ---` header, so `tail` on the board log
+  reads as this run's, not as the previous night's last line (measured 2026-09-13: a
+  fresh run's lines sat under the previous day's).
 - **Document chain** — `runs/<run-id>/chain.jsonl`: one `lane_open` record per lane
   (the run's own beginning: inputs are written, the root is released next, so a
   "written before the run" finding is measured from here); one record per card as it
@@ -232,6 +257,14 @@ Each is current behaviour, with what to do about it.
   refuses an unsatisfied-parent card with *"unknown id or already terminal"*, neither
   of which is true, and a worker hunts for `--force` flags that do not exist. Check
   the card's parents first.
+- **A worker that blocks its own card costs a re-promotion, and the board says so.**
+  Blocking is how a worker asks for a human — but it is also the only way a card gets
+  unstuck without a review, so the driver re-promotes it once and comments the reason on
+  the card. The second block escalates and halts the board with that reason in the halt
+  text. A *human* blocking a gate gets the same single re-promotion before the halt finds
+  them: the block event carries no actor, so the driver cannot tell a worker's stop from a
+  person's, and one extra attempt followed by a loud halt is the bounded version of that.
+  To stop a card dead, reset the board (`mission/reset.sh`) — that is the human brake.
 - **Never unlink, archive or re-parent a card while the dispatcher is claiming it.**
   The worker spawns holding the pre-change view and fights a board that has moved.
   Board surgery is safe on a parked lane.

@@ -3,7 +3,7 @@
 Hermes kanban coding-team template: a generic card graph (`mission/lanes.py`) instantiated
 per board under `boards/<slug>/`, driven by `mission/run.py` over `hermes kanban`.
 
-- Usage and operational rules: [README.md](README.md). Design, known traps, timing internals: [DESIGN.md](DESIGN.md).
+- Usage and operational rules: [README.md](README.md). Design, known traps, timing internals: [DESIGN.md](DESIGN.md). The dated record of a session's runs and their numbers: [TIMELINE.md](TIMELINE.md).
 - Profile personas: `mission/roles/`.
 
 ## Commands

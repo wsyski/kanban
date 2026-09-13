@@ -1672,6 +1672,25 @@ def tick():
             continue
         if held_by_verdict(st, kind, lane):
             continue
+        verdict = should_repromote(card)
+        if verdict == "stop":
+            # The driver grants a worker's stop ONE more attempt, and records it;
+            # a second block, or a ceiling the driver itself set, is the end of the
+            # lane's self-service — say whose words stopped it and let the halt
+            # below stop the driver. Looping instead would read as a stall.
+            escalate(card["id"], code, stop_reason(card))
+            return True
+        if verdict == "repromote":
+            _REPROMOTED.add(card["id"])
+            try:
+                kb("comment", card["id"],
+                   f"RE-PROMOTED (once): this card was blocked "
+                   f"({block_reason_text(card)}) — the board grants it one more "
+                   f"attempt; a second block halts the run.")
+            except Exception as e:
+                log(f"WARNING: could not comment on {code} ({e})")
+            log(f"re-promoted {code} once — it blocked itself: "
+                f"{block_reason_text(card)[:90]}")
         kb("unblock", card["id"])
         record_chain_start(card, lane)
         log(f"unblocked {title.split(':')[0]} (parents done)")
@@ -1905,6 +1924,12 @@ def halt_if_exhausted(st):
         p = _exhaustion_event(c["id"])
         if p is None:
             continue
+        # The event that caused a re-queue is history: it stays in the card for
+        # ever, so only a NEWER one is a fresh failure. Without this the driver
+        # would halt on the very next tick for the flake it just forgave. A card
+        # that was never re-queued is not protected — its event halts as always.
+        if c["id"] in _REQUEUED and (p.get("at") or 0) <= _REQUEUED[c["id"]]:
+            continue
         # A TIMED-OUT card is a HARD FAILURE (user rule, 2026-09-12): the board
         # does not try it again. The dispatcher put it back at `ready` with its
         # retry budget intact, so the attempt would otherwise restart by itself —
@@ -1915,6 +1940,14 @@ def halt_if_exhausted(st):
             reason_txt = str(p.get("reason") or "")
             break
         if p.get("kind") == "gave_up" or c.get("status") == "blocked":
+            # Provider starvation is not a content failure — the worker never got
+            # to try (see requeue_provider_starved). One re-queue, in the open; the
+            # ordinary rules apply from the second failure on.
+            hits = provider_hits(c["id"])
+            if (hits >= 3 and "protocol violation" in str(p.get("reason") or "")
+                    and c["id"] not in _REQUEUED):
+                requeue_provider_starved(c, hits)
+                continue
             reason_txt = str(p.get("reason") or "")
             break
     else:
@@ -1931,17 +1964,10 @@ def halt_if_exhausted(st):
     # Distinguish machine-slow from provider-starved: a card whose worker log
     # shows upstream 4xx/5xx storms timed out because of the provider, not the
     # task's size — the restart decision changes.
-    provider_hits = 0
-    try:
-        log_path = os.path.join(os.environ.get("HERMES_KANBAN_LOGS_DIR",
-                os.path.join(hermes_kanban_dir(), "boards", BOARD, "logs")),
-                f"{c['id']}.log")
-        if os.path.exists(log_path):
-            provider_hits = open(log_path, errors="replace").read().count("HTTP 4")                 + open(log_path, errors="replace").read().count("HTTP 5")
-    except OSError:
-        pass
-    if provider_hits >= 3:
-        _HALTED["reason"] += f" — provider-starved ({provider_hits} upstream 4xx/5xx in worker log)"
+    hits = provider_hits(c["id"])
+    if hits >= 3:
+        _HALTED["reason"] += (f" — provider-starved ({hits} upstream 4xx/5xx in "
+                              f"worker log)")
     log(f"BOARD HALTED: {_HALTED['reason']}")
     # The reason must be readable where the human looks first: on the card
     # itself, not only in runs/halt.txt or the driver log.
@@ -1987,13 +2013,69 @@ def stop_a_timeout(card, payload):
 EXHAUSTION_KINDS = ("gave_up", "timed_out")
 
 
+def worker_log_path(card_id):
+    """Path of a card's Hermes worker log, whether or not it exists.
+
+    Same resolution the halt above uses: HERMES_KANBAN_LOGS_DIR when the run was
+    made with one, else the board's own logs directory under the kanban root.
+    """
+    return os.path.join(os.environ.get("HERMES_KANBAN_LOGS_DIR",
+            os.path.join(hermes_kanban_dir(), "boards", BOARD, "logs")),
+            f"{card_id}.log")
+
+
+def provider_hits(card_id):
+    """Upstream 4xx/5xx lines in a card's worker log — the driver's only evidence
+    that a card died of the provider rather than of the task."""
+    try:
+        text = open(worker_log_path(card_id), errors="replace").read()
+    except OSError:
+        return 0
+    return text.count("HTTP 4") + text.count("HTTP 5")
+
+
+# Cards this driver has already re-queued once for provider starvation, mapped to
+# the time of the re-queue. Keyed by time because the exhaustion event that caused
+# it stays in the card's history for ever: without the stamp the next tick would
+# halt the board for the very flake it just forgave.
+_REQUEUED = {}
+
+
+def requeue_provider_starved(card, hits):
+    """Re-queue a card whose attempt died of a transport storm — once.
+
+    The one-attempt rule is about CONTENT failures: a worker that tried and could
+    not is done. A worker that spent its whole attempt in upstream 4xx/5xx never
+    got to try, and halting the board there costs a whole run for a flake. So the
+    driver re-queues it exactly once, says so on the card, and then lets the
+    ordinary rules apply: a second failure of any kind halts as usual.
+    """
+    code = card["title"].split(":")[0]
+    reason = (f"RE-QUEUED (once): this card's attempt died on {hits} upstream "
+              f"4xx/5xx without ever calling kanban_complete or kanban_block — that "
+              f"is the provider, not the task. One retry; a second failure of any "
+              f"kind halts the board.")
+    try:
+        kb("comment", card["id"], reason)
+    except Exception as e:                      # never take the driver down here
+        log(f"WARNING: could not comment on {code} ({e})")
+    try:
+        kb("unblock", card["id"])
+    except Exception as e:
+        log(f"WARNING: could not re-queue {code} ({e})")
+    _REQUEUED[card["id"]] = time.time()
+    log(f"re-queued {code} once: {hits} upstream 4xx/5xx in its worker log and no "
+        f"terminal kanban call")
+
+
 def _exhaustion_event(card_id):
     """Payload of the newest gave_up/timed_out event on a card, or None.
 
     The dispatcher breaker emits these when a card exhausts max_retries or is
     SIGTERMed at max_runtime (timed_out; gave_up follows when retries are also
     spent). Not a block event — the breaker writes its own kind — so the
-    block-event reader cannot see it.
+    block-event reader cannot see it. ``at`` is the event's own timestamp, and it
+    is what tells a fresh failure from the one a re-queue already forgave.
     """
     try:
         ev = json.loads(kb("show", card_id, "--json"))
@@ -2003,6 +2085,7 @@ def _exhaustion_event(card_id):
         if e.get("kind") in EXHAUSTION_KINDS:
             payload = e.get("payload") if isinstance(e.get("payload"), dict) else {}
             return {"kind": e.get("kind"),
+                    "at": e.get("created_at") or 0,
                     "reason": str(payload.get("error")
                                   or payload.get("outcome")
                                   or e.get("kind"))}
@@ -2046,6 +2129,65 @@ def is_parked(card):
     p = _blocked_event_payload(card["id"])
     reason = str((p or {}).get("reason") or "")
     return bool(p) and ("awaiting lane activation" in reason or reason == "initial_status")
+
+def block_reason_text(card):
+    """Reason text of a card's newest block event, '' when it never blocked."""
+    return str((_blocked_event_payload(card["id"]) or {}).get("reason") or "")
+
+
+# Cards the driver has already re-promoted once this run because their own worker
+# blocked them. The parking brake is released as often as the graph asks; a stop
+# that came from the worker is honoured once, and then escalated.
+_REPROMOTED = set()
+
+TIMEOUT_BLOCK_MARK = "TIMEOUT:"
+
+
+def block_origin(card):
+    """Where a card's newest block came from: 'parked' | 'timeout' | 'worker'.
+
+    Promotion may only release the board's own parking brake. Every other block is
+    somebody saying STOP — a worker that could not finish the card, or the driver
+    recording a hard failure — and the driver has to hear it instead of unblocking
+    the card again. Measured 2026-09-13 on roman-evaluator-java C2: the worker
+    blocked its own card at 15:52:41 and promotion undid it six seconds later, so
+    the only sign of the stop was a comment nobody read.
+    """
+    if is_parked(card):
+        return "parked"
+    text = block_reason_text(card)
+    if TIMEOUT_BLOCK_MARK in text:
+        return "timeout"
+    return "worker" if text else "other"
+
+
+def should_repromote(card):
+    """May promotion unblock this card, or is that block a stop to be heard?
+
+    'release'    the board's own parking brake — released as often as the graph
+                 asks, because that is how a lane opens
+    'repromote'  the worker blocked its own card and has not yet used its one
+                 re-promotion this run
+    'stop'       the driver recorded a ceiling, or the worker has blocked the card
+                 twice: the lane cannot advance by itself, and the driver says so
+                 instead of looping
+    """
+    origin = block_origin(card)
+    if origin in ("timeout", "other"):
+        return "stop"
+    if origin == "worker" and card["id"] in _REPROMOTED:
+        return "stop"
+    return "repromote" if origin == "worker" else "release"
+
+
+def stop_reason(card):
+    """Why promotion refuses to release a card, in the words the human needs."""
+    if block_origin(card) in ("timeout", "other"):
+        return (f"blocked by the driver ({block_reason_text(card)}) — a ceiling is "
+                f"not a review; a human resets the board to try again")
+    return (f"its own worker blocked it twice ({block_reason_text(card)}) — the lane "
+            f"cannot advance by itself")
+
 
 def notify_deadman(state):
     stuck = [f"{t.split(':')[0]}" for t, c in state.items()
@@ -2550,6 +2692,12 @@ def main():
     # run's paths in their bodies and a new directory would leave every hand-off
     # pointing at a tree nothing writes to.
     joined = _read_current_run()
+    # A board-level log is append-only across runs, so mark where this driver's
+    # block begins: `tail` on a board driven several times in a day otherwise
+    # shows the previous run's last line as if it were this one's (measured
+    # 2026-09-13: a fresh run's lines sat under the previous night's).
+    log(f"--- driver start: board={BOARD} pid={os.getpid()} "
+        f"run={joined or 'none yet'} ---")
     if joined:
         log(f"rejoined run {joined}: {os.path.relpath(RUN_DIR, REPO)}")
         rejoin_chain()

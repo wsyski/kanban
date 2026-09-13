@@ -292,6 +292,37 @@ def test_a_possessive_warning_in_a_verdict_is_prose():
     assert ra.WARN_TEXT.search("PASS: 2 warnings (deprecation)")
 
 
+def test_a_provider_storm_the_run_survived_is_a_warning(tmp_path, monkeypatch):
+    """A flake the run rode out lives only in the card's own log: the worker
+    retried, the card finished, the driver logged nothing. Measured 2026-09-13 —
+    the same 400 storm cost an earlier run of the same board an hour before, and
+    the run that survived one read clean."""
+    clean_probe(monkeypatch)
+    runs = fixture(tmp_path, chain_recs=worker_chain())
+    home = tmp_path / "home" / "kanban" / "boards" / "b" / "logs"
+    home.mkdir(parents=True)
+    (home / "t_c.log").write_text(
+        "ok\nretrying after upstream error\n"
+        "ERROR HTTP 400: {'message': 'name is not supported by this endpoint'}\n"
+        "HTTP 400 again\n")
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(ra.os.path, "expanduser", lambda p: str(tmp_path / "home"))
+    findings, _rows, _s = ra.audit(runs)
+    assert "E18" in codes(findings, "WARNING"), findings
+    # One finding per card, not per line: a storm is thirty identical lines.
+    assert len([c for c in codes(findings, "WARNING") if c == "E18"]) == 1
+
+
+def test_prose_about_status_codes_is_not_a_provider_storm(tmp_path, monkeypatch):
+    """The forms are the transport's own — an HTTP status line, or the goal loop's
+    error sentence. A card reasoning about 4xx handling is prose."""
+    for line in ("the run had no provider storm", "a 400 in the logs would be odd",
+                 "upstream was slow but answered"):
+        assert not ra.UPSTREAM_ERROR.search(line), line
+    for line in ("HTTP 400: bad request", "status 503", "goal judge: API call failed"):
+        assert ra.UPSTREAM_ERROR.search(line), line
+
+
 def test_a_card_log_from_an_earlier_run_is_ignored(tmp_path, monkeypatch):
     clean_probe(monkeypatch)
     runs = fixture(tmp_path, chain_recs=worker_chain())

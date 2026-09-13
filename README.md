@@ -330,6 +330,9 @@ finished run has no errors and no warnings. It reads the driver log (terminal st
 error vocabulary, held gates), `run-summary.json` (gate wording, restarts, per-card
 budget against the board's ceiling), the document chain, the workers that outlived the
 run and the board's end state, then prints the per-card table and wall/agent/overhead.
+It also reads the cards' own logs, which is the only place a **provider storm the run
+survived** can be seen (E18: one warning per card, with the count and the first line) —
+the driver's record says nothing about a flake whose worker retried and finished.
 A warning alone fails it. The loop is: run, audit, fix, run again — no cycle is done
 while the auditor reports anything.
 
@@ -361,10 +364,19 @@ with the CLI:
   included, gets one attempt, so a timeout, crash or failed spawn blocks the card and
   the driver halts the board there. Work comes back only through a review that REJECTS.
   So `max-retries` is 1 and the schema refuses any other value; the count you choose is
-  `max-reworks`.
-- **An escalation halts the board** — rework rounds exhausted, or a card the engine
-  escalated to Triage. The driver writes `runs/<run-id>/halt.txt` and exits, because
-  the lane cannot advance by itself and polling on would read as a stall.
+  `max-reworks`. Two bounded exceptions, each recorded as a comment on the card:
+  - a **provider-starved** attempt is re-queued **once** in the same run. Evidence is
+    required: ≥3 upstream 4xx/5xx lines in the worker log *and* a crash that never called
+    `kanban_complete`/`kanban_block` — the worker never got to try. A second failure of
+    any kind halts as usual, and below the threshold nothing is re-queued.
+  - a card whose **own worker blocked it** is re-promoted **once**, with the worker's
+    reason commented on the card. The second block halts the board naming that reason.
+    A block the *driver* recorded — a runtime ceiling — is never promoted away: a ceiling
+    is not a review.
+- **An escalation halts the board** — rework rounds exhausted, a card the engine
+  escalated to Triage, a worker that blocked its own card twice, or a card the driver
+  blocked at its runtime ceiling. The driver writes `runs/<run-id>/halt.txt` and exits,
+  because the lane cannot advance by itself and polling on would read as a stall.
 - **Turn budgets are global, not per-profile.** `agent.max_turns` (80) in
   `~/.hermes/config.yaml` governs every kanban worker. A profile-level shadow value
   kills runs — never set `agent.max_turns` on a worker profile.
