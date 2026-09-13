@@ -238,6 +238,11 @@ def file_board(board, repo, workdir, lane_count, key_prefix, max_runtime=None,
     for lane in range(1, lane_count + 1):
         cards = lanes.lane_cards(lane, integration_tests=True,
                                  assignees=assignees)
+        # THIS lane's options, resolved from the manifest: a scalar applies to every
+        # lane, an array is indexed by lane. The idea's own header is NOT read here —
+        # ideas are entered after filing, so a header override lands at lane open
+        # (run.apply_lane_effort) — but the board's value is filed with the card.
+        lane_opts = lanes.resolve_lane_options(board_cfg, {}, lane)
         for card in cards:
             body = render_body(card["body"], repo=repo, board=board, workdir=workdir,
                                lane=lane, targets=targets or (), run_id=run_id)
@@ -246,12 +251,15 @@ def file_board(board, repo, workdir, lane_count, key_prefix, max_runtime=None,
                     "--assignee", card["assignee"], "--workspace", f"dir:{workdir}",
                     "--max-runtime", runtime, "--max-retries", str(retries),
                     "--idempotency-key", f"{key_prefix}-{card['id']}",
-                    "--created-by", "manager", "--json"]
+                    "--created-by", "coder", "--json"]
             if card["skill"]:
                 args += ["--skill", card["skill"]]
-            # The judge's model, when the manifest pins one. Which cards that is
-            # is decided in lanes.model_args (the reviews), not here.
-            args += lanes.model_args(card["role"], board_cfg)
+            # The judge's model and depth, when the manifest pins them. Which cards
+            # that is is decided in lanes.model_args / lanes.effort_args (the
+            # reviews), not here — and `lane_opts` rather than the manifest, so the
+            # value filed is THIS lane's.
+            args += lanes.model_args(card["code"], board_cfg)
+            args += lanes.reasoning_effort_args(card["code"], lane_opts)
             args += lanes.goal_args(card["code"], enabled=goal_mode,
                                     max_turns=goal_max_turns)
             cid = json.loads(kb(board, *args))["id"]
@@ -293,6 +301,15 @@ def _options_line(repo, board, lane, text, workdir=None):
         opts = lanes.resolve_lane_options(defaults, headers, lane)
     except Exception as exc:      # never let a display line stop a board filing
         return f"Lane options: unavailable ({exc})"
+    def _as_kind(key, raw):
+        """One option value normalized for COMPARISON: a bool option reads as a bool,
+        everything else as its lowercased text — so `effort: High` and `effort: high`
+        are the same value, and the conflict line below cannot invent one out of
+        casing."""
+        if board_schema.OPTIONS[key][0] == "bool":
+            return str(raw).strip().lower() == "true"
+        return str(raw).strip().lower()
+
     def src(key):
         per_lane = isinstance(defaults.get(key), list)
         if key not in headers:
@@ -305,8 +322,7 @@ def _options_line(repo, board, lane, text, workdir=None):
             board_value = lanes._board_default(defaults, key, lane, None)
         except Exception:
             board_value = None
-        header_value = str(headers[key]).strip().lower() == "true"
-        if board_value is not None and board_value != header_value:
+        if board_value is not None and _as_kind(key, board_value) != _as_kind(key, headers[key]):
             return (f"idea header — CONFLICTS with the board file, which says "
                     f"{str(board_value).lower()} for lane {lane}; the header wins")
         return "idea header"

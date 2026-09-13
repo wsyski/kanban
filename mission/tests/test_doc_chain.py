@@ -178,10 +178,10 @@ def test_the_cli_exits_zero_on_a_good_chain(tmp_path, capsys):
 def verdict_chain(tmp_path, rework=True):
     recs = [
         {"ts": at(0), "event": "start", "lane": 1, "code": "RVa1", "card_id": "t_rva",
-         "title": "RVa1: reviewer verdict - lane 1", "status": "ready",
+         "title": "RVa1: code review - lane 1", "status": "ready",
          "inputs": {}, "unresolved": []},
         {"ts": at(60), "event": "done", "lane": 1, "code": "RVa1", "card_id": "t_rva",
-         "title": "RVa1: reviewer verdict - lane 1", "status": "done",
+         "title": "RVa1: code review - lane 1", "status": "done",
          "attached": ["t_rva.review"], "staged": [], "verdict": "REJECT",
          "result": "REJECT: 1. (c) fails"},
     ]

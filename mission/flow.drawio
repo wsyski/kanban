@@ -13,22 +13,22 @@
         <mxCell id="Gi1" value="Gi1 GATE — human accepts idea&#10;human" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeWidth=2;" vertex="1" parent="1">
           <mxGeometry x="215" y="54" width="150" height="60" as="geometry" />
         </mxCell>
-        <mxCell id="P1" value="P1 plan&#10;manager" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;" vertex="1" parent="1">
+        <mxCell id="P1" value="P1 plan&#10;coder" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;" vertex="1" parent="1">
           <mxGeometry x="390" y="54" width="150" height="60" as="geometry" />
         </mxCell>
-        <mxCell id="RVp1" value="RVp1 review&#10;reviewer" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;" vertex="1" parent="1">
+        <mxCell id="RVp1" value="RVp1 review&#10;coder" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;" vertex="1" parent="1">
           <mxGeometry x="565" y="54" width="150" height="60" as="geometry" />
         </mxCell>
         <mxCell id="Gp1" value="Gp1 GATE — human commits plan&#10;human" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeWidth=2;" vertex="1" parent="1">
           <mxGeometry x="740" y="54" width="150" height="60" as="geometry" />
         </mxCell>
-        <mxCell id="TW1" value="TW1 unit tests&#10;tester" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;" vertex="1" parent="1">
+        <mxCell id="TW1" value="TW1 unit tests&#10;coder" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;" vertex="1" parent="1">
           <mxGeometry x="40" y="160" width="150" height="60" as="geometry" />
         </mxCell>
         <mxCell id="C1" value="C1 implement&#10;coder" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;" vertex="1" parent="1">
           <mxGeometry x="215" y="160" width="150" height="60" as="geometry" />
         </mxCell>
-        <mxCell id="RVa1" value="RVa1 review&#10;reviewer" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;" vertex="1" parent="1">
+        <mxCell id="RVa1" value="RVa1 review&#10;coder" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;" vertex="1" parent="1">
           <mxGeometry x="390" y="160" width="150" height="60" as="geometry" />
         </mxCell>
         <mxCell id="Gc1" value="Gc1 GATE — human commits code&#10;human" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeWidth=2;" vertex="1" parent="1">
@@ -43,28 +43,28 @@
         <mxCell id="Gi2" value="Gi2 GATE — human accepts idea&#10;human" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeWidth=2;" vertex="1" parent="1">
           <mxGeometry x="215" y="320" width="150" height="60" as="geometry" />
         </mxCell>
-        <mxCell id="P2" value="P2 plan&#10;manager" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;" vertex="1" parent="1">
+        <mxCell id="P2" value="P2 plan&#10;coder" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;" vertex="1" parent="1">
           <mxGeometry x="390" y="320" width="150" height="60" as="geometry" />
         </mxCell>
-        <mxCell id="RVp2" value="RVp2 review&#10;reviewer" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;" vertex="1" parent="1">
+        <mxCell id="RVp2" value="RVp2 review&#10;coder" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;" vertex="1" parent="1">
           <mxGeometry x="565" y="320" width="150" height="60" as="geometry" />
         </mxCell>
         <mxCell id="Gp2" value="Gp2 GATE — human commits plan&#10;human" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeWidth=2;" vertex="1" parent="1">
           <mxGeometry x="740" y="320" width="150" height="60" as="geometry" />
         </mxCell>
-        <mxCell id="TW2" value="TW2 unit tests&#10;tester" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;" vertex="1" parent="1">
+        <mxCell id="TW2" value="TW2 unit tests&#10;coder" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;" vertex="1" parent="1">
           <mxGeometry x="40" y="426" width="150" height="60" as="geometry" />
         </mxCell>
         <mxCell id="C2" value="C2 implement&#10;coder" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;" vertex="1" parent="1">
           <mxGeometry x="215" y="426" width="150" height="60" as="geometry" />
         </mxCell>
-        <mxCell id="RVa2" value="RVa2 review&#10;reviewer" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;" vertex="1" parent="1">
+        <mxCell id="RVa2" value="RVa2 review&#10;coder" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;" vertex="1" parent="1">
           <mxGeometry x="390" y="426" width="150" height="60" as="geometry" />
         </mxCell>
         <mxCell id="TI2" value="TI2 integration tests&#10;coder" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;" vertex="1" parent="1">
           <mxGeometry x="565" y="426" width="150" height="60" as="geometry" />
         </mxCell>
-        <mxCell id="RVc2" value="RVc2 final review&#10;reviewer" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;" vertex="1" parent="1">
+        <mxCell id="RVc2" value="RVc2 final review&#10;coder" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;" vertex="1" parent="1">
           <mxGeometry x="740" y="426" width="150" height="60" as="geometry" />
         </mxCell>
         <mxCell id="Gc2" value="Gc2 GATE — human commits code&#10;human" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeWidth=2;" vertex="1" parent="1">

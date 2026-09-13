@@ -88,6 +88,14 @@ OPTIONS = {
     # `lanes.model_args` sends them, on the judge cards only.
     "model_override":    ("text",     None,  False, None),
     "provider_override": ("text",     None,  False, None),
+    # The reasoning EFFORT the board buys for its REVIEW cards, named exactly as
+    # Hermes names it — the task property `reasoning_effort` and the flag it becomes,
+    # `hermes kanban create --reasoning <level>`. Per-lane like the test levels: one
+    # value for the board, an array with one entry per lane, or a lane's own
+    # `<!-- reasoning_effort: high -->` header. `lanes.reasoning_effort_args` sends
+    # it, on the judge cards only: the coder works those cards as a REVIEWER, on
+    # another model and at another depth.
+    "reasoning_effort":  ("reasoning_effort", None, True, None),
 }
 
 BOARD_KEYS = frozenset(OPTIONS)
@@ -104,8 +112,7 @@ DRIVER_OPTIONS = frozenset({"timeout-min"})
 # than imported from lanes.py, which imports this module — and a role that vanished
 # from the graph should fail this module's own test, not silently accept a key
 # nothing reads.
-ROLES = frozenset({"researcher", "manager", "coder", "tester", "reviewer",
-                   "human-gate"})
+ROLES = frozenset({"researcher", "coder", "human-gate"})
 
 # Options whose VALUE the board's contract fixes, whatever their type allows. A
 # failed card is FINAL (user rule, 2026-09-12): the dispatcher's breaker blocks it
@@ -117,6 +124,14 @@ ONE_ATTEMPT = {
     "max-retries": ("a failed card is final — only a REVIEW sends work back, by "
                     "filing a revision card"),
 }
+
+# The engine's levels, under the engine's own name — `hermes_constants.VALID_
+# REASONING_EFFORTS` plus `none` (thinking OFF), which `kanban_db.normalize_
+# reasoning_effort` accepts. Declared here so a typo is refused where the board is
+# declared: the engine refuses the same values at spawn time, and a spawn failure is
+# FINAL (one attempt).
+VALID_REASONING_EFFORTS = ("minimal", "low", "medium", "high", "xhigh", "max",
+                           "ultra", "none")
 
 # `<n><unit>` one or more times, as run-audit.py's ceiling parser reads it, so a
 # manifest cannot state a ceiling the auditor scores as zero minutes.
@@ -167,6 +182,14 @@ def _kind_error(kind, value):
                      if not isinstance(v, str) or not v.strip())
         if bad:
             return f"role(s) {bad} must name a profile as a non-empty string"
+    elif kind == "reasoning_effort":
+        # Case-insensitive like the engine's own normalize_reasoning_effort, so a
+        # board may say `"reasoning_effort": "High"`; the level list is what makes a
+        # typo loud here instead of at the first dispatch.
+        if not isinstance(value, str) \
+                or value.strip().lower() not in VALID_REASONING_EFFORTS:
+            return (f"expected one of {', '.join(VALID_REASONING_EFFORTS)}, "
+                    f"got {value!r}")
     elif kind == "unchecked":
         return None
     else:                                       # pragma: no cover - typo guard
@@ -513,6 +536,7 @@ _KIND_SCHEMA = {
     "roles":    {"type": "object",
                  "propertyNames": {"enum": sorted(ROLES)},
                  "additionalProperties": {"type": "string", "minLength": 1}},
+    "reasoning_effort": {"type": "string", "enum": list(VALID_REASONING_EFFORTS)},
 }
 
 

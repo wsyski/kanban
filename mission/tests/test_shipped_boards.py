@@ -43,7 +43,7 @@ def test_a_board_can_be_built_without_unit_tests():
     """THE BOARD-LEVEL PARAMETER, on the board that uses it. `unit-tests` is a board
     option exactly like `integration-tests` (same table, same door — board_schema.OPTIONS
     marks both as per-lane), and blade-workspace sets it false in its manifest AND repeats
-    it in its idea header. Either door leaves the lane without a tester cell and the
+    it in its idea header. Either door leaves the lane without a unit-test card and the
     review waiting on the coder alone — and the cards are still FILED, which is what lets
     a header turn the level back on for a single lane."""
     cfg = json.load(open(os.path.join(BOARDS, "blade-workspace", "board.json")))

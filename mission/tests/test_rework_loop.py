@@ -108,7 +108,7 @@ def test_a_board_can_turn_the_goal_judge_off(monkeypatch):
     assert lanes.goal_args("RVp", enabled=False) == []
     monkeypatch.setattr(run, "board_defaults", lambda: {"goal": False})
     assert run._goal_args("coder", "C") == []
-    assert run._goal_args("tester", "TW") == []
+    assert run._goal_args("coder", "TW") == []
     monkeypatch.setattr(run, "board_defaults", lambda: {})
     assert run._goal_args("coder", "C") == ["--goal", "--goal-max-turns", "40"]
 
@@ -231,7 +231,7 @@ def test_revision_rounds_are_rendered_like_filed_cards(monkeypatch, board_env):
     rev_plan = next(c for c in created if c[1].startswith("P1-rev-1"))
     assert _arg(rev_plan, "--skill") == "writing-plans"
     rev_tw = next(c for c in created if c[1].startswith("TW1-rev-1"))
-    assert _arg(rev_tw, "--assignee") == lanes.assignee_for("tester", None)
+    assert _arg(rev_tw, "--assignee") == "coder"
     rev_ti = next(c for c in created if c[1].startswith("TI1-rev-1"))
     # the integration level is CODER work (lanes.LANE_CARDS), so its revision goes
     # to the coder role — not to the tester role it would have shared before
@@ -362,9 +362,9 @@ def test_an_implementation_reject_files_a_coder_round(monkeypatch):
     assert filed[0][4]["verdict_card_id"] == f"id-{rva}"
 
 
-def test_an_rva_reject_naming_the_tests_goes_to_the_tester(monkeypatch):
-    """The fork's own gap: the review judges the coder's patch AND the tester's tests
-    in one pass, and the coder may not edit the tester's files — a rejected test sent
+def test_an_rva_reject_naming_the_tests_goes_to_the_test_card(monkeypatch):
+    """The fork's own gap: the review judges the C patch AND the TW card's tests in one
+    pass, and the C card may not edit the TW card's files — a rejected test sent
     to the coder could only burn its rounds to a human escalation."""
     filed = _recording(monkeypatch)
     st = full_lane_state()
@@ -396,7 +396,7 @@ def test_code_rework_rounds_counts_whichever_card_owned_the_fix():
     assert run.code_rework_rounds(st, 2) == 1
 
 
-def test_a_live_tester_revision_holds_the_code_loop():
+def test_a_live_test_card_revision_holds_the_code_loop():
     title = "TW1-rev-1: unit-test revision round 1 - lane 1"
     st = {title: {"id": "a", "status": "ready"}}
     assert run.code_rework_hold(st, 1)
@@ -404,7 +404,7 @@ def test_a_live_tester_revision_holds_the_code_loop():
     assert not run.code_rework_hold(st, 1)
 
 
-def test_the_gate_waits_for_a_tester_revision_round():
+def test_the_gate_waits_for_a_test_card_revision_round():
     st = full_lane_state()
     st["TW1-rev-1: unit-test revision round 1 - lane 1"] = card("TW1-rev-1", status="ready")
     gc = [p for t, p, k, l in run.lane_graph(st) if t.startswith("Gc1:")][0]
@@ -466,16 +466,16 @@ def test_it_lane_re_review_repeats_the_final_review(monkeypatch, board_env):
     assert "show t_rv" in _arg(rev, "--body")
 
 
-def test_a_reject_that_names_the_tests_files_the_testers_revision(monkeypatch, board_env):
-    """The card the round is filed FOR is the reviewer's choice, not the driver's:
-    a unit-test finding lands on the tester (whose body forbids implementation work),
+def test_a_reject_that_names_the_tests_files_the_test_cards_revision(monkeypatch, board_env):
+    """The card the round is filed FOR is the review card's choice, not the driver's:
+    a unit-test finding lands on the TW card (whose body forbids implementation work),
     and the round still ends in the same RVa re-review."""
     calls = _capture_kb(monkeypatch)
     run.file_code_revision(_revision_state(), 1, 2, "1. the assertion is a tautology",
                            owner="TW", verdict_card_id="t_rv")
     rev = next(c for c in calls if c[0] == "create" and c[1].startswith("TW1-rev-2"))
     body = _arg(rev, "--body")
-    assert _arg(rev, "--assignee") == lanes.assignee_for("tester", None)
+    assert _arg(rev, "--assignee") == "coder"
     assert "1. the assertion is a tautology" in body
     assert "Tests only — no implementation" in body, body          # tw-body's hard rule 5
     assert "never edit them to make them pass" not in body, body   # NOT the coder's body
@@ -485,13 +485,13 @@ def test_a_reject_that_names_the_tests_files_the_testers_revision(monkeypatch, b
     assert "RE-REVIEW ROUND 3" in _arg(rr, "--body")
 
 
-def test_an_integration_test_finding_files_the_integration_testers_revision(monkeypatch, board_env):
+def test_an_integration_test_finding_files_the_integration_cards_revision(monkeypatch, board_env):
     calls = _capture_kb(monkeypatch)
     run.file_code_revision(_revision_state(), 1, 1, "1. it mocks the parser",
                            owner="TI")
     rev = next(c for c in calls if c[0] == "create" and c[1].startswith("TI1-rev-1"))
     body = _arg(rev, "--body")
-    assert _arg(rev, "--assignee") == lanes.assignee_for("tester", None)
+    assert _arg(rev, "--assignee") == "coder"
     assert "integration tests" in body.lower(), body
     assert "1. it mocks the parser" in body
 

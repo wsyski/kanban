@@ -525,15 +525,15 @@ def file_revision(state, lane, round_no, findings, base="P", reviewer_prefix="RV
     kind = "plan" if base == "P" else "idea"
     if kind == "plan":
         rev_title = f"P{lane}-rev-{round_no}: plan revision round {round_no} - lane {lane}"
-        rev_body_file, rev_assignee = "p-body.txt", "manager"
+        rev_body_file, rev_assignee = "p-body.txt", "coder"
         rr_title = f"RVp{lane}-r{round_no + 1}: plan review round {round_no + 1} - lane {lane}"
-        rr_body_file, rr_assignee = "rvp-body.txt", "reviewer"
+        rr_body_file, rr_assignee, rr_code = "rvp-body.txt", "coder", "RVp"
         sender = "The plan review"
     else:
         rev_title = f"I{lane}-rev-{round_no}: idea refinement round {round_no} - lane {lane}"
         rev_body_file, rev_assignee = "i-body.txt", "researcher"
         rr_title = f"Gi{lane}-r{round_no + 1}: idea re-gate round {round_no + 1} - lane {lane}"
-        rr_body_file, rr_assignee = "gi-body.txt", "human-gate"
+        rr_body_file, rr_assignee, rr_code = "gi-body.txt", "human-gate", "Gi"
         sender = "The idea gate"
     if title_of_prefix(state, rev_title)[0]:
         return  # already filed
@@ -550,7 +550,7 @@ def file_revision(state, lane, round_no, findings, base="P", reviewer_prefix="RV
             "--assignee", lanes.assignee_for(rev_assignee, remap),
             "--workspace", f"dir:{WORKDIR}", "--max-runtime", runtime, "--max-retries", rework_retries(),
             "--idempotency-key", f"{BOARD}-rev-{base}{lane}-{round_no}",
-            "--created-by", "manager", "--json"] + _skill_args(base) + _goal_args(rev_assignee, base)
+            "--created-by", "coder", "--json"] + _skill_args(base) + _goal_args(rev_assignee, base)
     rev_id = json.loads(kb(*args))["id"]
 
     rrbody = render(rr_body_file)
@@ -570,10 +570,12 @@ def file_revision(state, lane, round_no, findings, base="P", reviewer_prefix="RV
                "--assignee", lanes.assignee_for(rr_assignee, remap),
                "--parent", rev_id, "--workspace", f"dir:{WORKDIR}", "--max-runtime", runtime,
                "--max-retries", rework_retries(), "--idempotency-key",
-               f"{BOARD}-rr-{base}{lane}-r{round_no + 1}", "--created-by", "manager", "--json"]
+               f"{BOARD}-rr-{base}{lane}-r{round_no + 1}", "--created-by", "coder", "--json"]
     # A re-review IS a review: without this a rework round would silently drop
-    # back to the worker's default model, which is the one thing the pin avoids.
-    rr_args += lanes.model_args(rr_assignee, manifest())
+    # back to the worker's default model AND depth, which is the one thing the
+    # pins avoid.
+    rr_args += lanes.model_args(rr_code, manifest())
+    rr_args += lanes.reasoning_effort_args(rr_code, manifest())
     rr_id = json.loads(kb(*rr_args))["id"]
     kb("link", rr_id, gate_id)
     # This gate now also guards the DOWNSTREAM card against starting while
@@ -1014,6 +1016,33 @@ def card_log(card):
 _OPENED = set()
 
 
+def apply_lane_reasoning_effort(state, lane, opts):
+    """Push this lane's resolved `reasoning_effort` onto the cards that judge.
+
+    The option is PER-LANE, and the lane's value is only known here: filing wrote the
+    board's own value with the card, but a lane's idea may override it with
+    `<!-- reasoning_effort: high -->` — and ideas are entered long after filing. So
+    the resolved value is what the review cards end up carrying.
+
+    `lanes.JUDGE_CODES` is the one place that says which cards judge, and a card this
+    lane dropped (RVc on a lane with no integration tests) is skipped: it is archived
+    by the time this runs, and the engine refuses to set an effort on an archived
+    card.
+    """
+    level = opts.get("reasoning_effort")
+    if not level:
+        return
+    for code in sorted(lanes.JUDGE_CODES):
+        card = live_card(state, code, lane)
+        if not card or card.get("status") in ("archived", "done"):
+            continue
+        try:
+            kb("set-reasoning-effort", card["id"], str(level))
+            log(f"LANE {lane}: {code}{lane} reasoning_effort={level}")
+        except RuntimeError as e:
+            log(f"LANE {lane}: set-reasoning-effort {code}{lane} skipped ({e})")
+
+
 def open_lane(state, lane):
     """Resolve lane <lane> the moment its turn comes. Once per lane per run.
 
@@ -1076,6 +1105,10 @@ def open_lane(state, lane):
                 kb("unlink", tw["id"], rva["id"])
             except RuntimeError as e:
                 log(f"LANE {lane}: unlink TW{lane}->RVa{lane} skipped ({e})")
+    # The lane's resolved effort, pushed onto the cards that judge. HERE, not at
+    # filing: the board's own value was filed with the card, but the lane's idea may
+    # override it, and the idea is entered long after filing.
+    apply_lane_reasoning_effort(state, lane, opts)
     # Snapshot BEFORE unblocking: the card bodies already point at this path,
     # and workers must never read the mutable source (spec D8).
     os.makedirs(SNAP_DIR, exist_ok=True)
@@ -1720,7 +1753,7 @@ def tick():
 
 CODE_REWORK_ROLES = {
     "C": ("c-body.txt", "coder", "implementation"),
-    "TW": ("tw-body.txt", "tester", "unit-test"),
+    "TW": ("tw-body.txt", "coder", "unit-test"),
     "TI": ("ti-body.txt", "coder", "integration"),
 }
 
@@ -1753,7 +1786,7 @@ def file_code_revision(state, lane, round_no, findings, owner="C", max_rounds=2,
             "--assignee", lanes.assignee_for(role, manifest().get("assignees")),
             "--workspace", f"dir:{WORKDIR}", "--max-runtime", runtime, "--max-retries", rework_retries(),
             "--idempotency-key", f"{BOARD}-rev-{owner}{lane}-{round_no}",
-            "--created-by", "manager", "--json"] + _skill_args(owner) + _goal_args(role, owner)
+            "--created-by", "coder", "--json"] + _skill_args(owner) + _goal_args(role, owner)
     rev_id = json.loads(kb(*args))["id"]
     rrbody = render("rva-body.txt")
     rrbody += (f"\nRE-REVIEW ROUND {round_no + 1} of {max_rounds + 1}. The previous review's "
@@ -1770,13 +1803,14 @@ def file_code_revision(state, lane, round_no, findings, owner="C", max_rounds=2,
                    "real behaviour, not mocks of the thing under test — a mocked collaborator "
                    "is the defect this round is most likely to have repeated.\n")
     rr_args = ["create", rr_title, "--body", rrbody,
-               "--assignee", lanes.assignee_for("reviewer",
+               "--assignee", lanes.assignee_for("coder",
                                                 manifest().get("assignees")),
                "--parent", rev_id, "--workspace", f"dir:{WORKDIR}", "--max-runtime", runtime,
                "--max-retries", rework_retries(), "--idempotency-key",
-               f"{BOARD}-rr-C{lane}-r{round_no + 1}", "--created-by", "manager", "--json"]
-    # The re-review judges the revision: same pin as the review it repeats.
-    rr_args += lanes.model_args("reviewer", manifest())
+               f"{BOARD}-rr-C{lane}-r{round_no + 1}", "--created-by", "coder", "--json"]
+    # The re-review judges the revision: same pins as the review it repeats.
+    rr_args += lanes.model_args("RVa", manifest())
+    rr_args += lanes.reasoning_effort_args("RVa", manifest())
     rr_id = json.loads(kb(*rr_args))["id"]
     kb("link", rr_id, gate_id)
     log(f"filed code rework round {round_no}: {rev_title} + {rr_title}")
@@ -2020,7 +2054,7 @@ def notify_deadman(state):
     log(msg)
     with open(os.path.join(RUN_DIR, "deadman.txt"), "w") as f:
         f.write(msg + "\n")
-    # Telegram if the manager gateway is configured; else the file suffices
+    # Telegram if the coder gateway is configured; else the file suffices
     try:
         import urllib.request, urllib.parse
         tok = os.environ.get("TELEGRAM_BOT_TOKEN", "")

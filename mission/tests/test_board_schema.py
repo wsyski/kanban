@@ -76,7 +76,8 @@ def test_the_header_set_is_the_per_lane_set():
     assert board_schema.HEADER_KEYS is board_schema.PER_LANE
     assert board_schema.PER_LANE < board_schema.BOARD_KEYS
     assert board_schema.PER_LANE == {"refinement", "max-reworks", "unit-tests",
-                                     "integration-tests", "auto-gates"}
+                                     "integration-tests", "auto-gates",
+                                     "reasoning_effort"}
 
 
 def test_a_per_lane_list_of_strings_is_rejected():
@@ -410,14 +411,14 @@ def test_the_roles_a_board_may_remap_are_the_roles_the_graph_fills():
 
 def test_assignees_remaps_a_role_everywhere_it_appears():
     import lanes
-    cards = lanes.lane_cards(1, assignees={"reviewer": "senior", "tester": "qa"})
+    cards = lanes.lane_cards(1, assignees={"coder": "senior", "researcher": "qa"})
     for c in cards:
-        if c["role"] == "reviewer":
+        if c["role"] == "coder":
             assert c["assignee"] == "senior", c["id"]
-        elif c["role"] == "tester":
+        elif c["role"] == "researcher":
             assert c["assignee"] == "qa", c["id"]
         else:
-            assert c["assignee"] == c["role"], c["id"]
+            assert c["assignee"] == lanes.assignee_for(c["role"]), c["id"]
 
 
 def test_every_filed_card_carries_one_attempt():
@@ -427,7 +428,7 @@ def test_every_filed_card_carries_one_attempt():
     reviewer was exactly that, and it is gone)."""
     import file_lanes
     import lanes
-    for remap in (None, {"reviewer": "senior"}):
+    for remap in (None, {"coder": "senior"}):
         cards = lanes.lane_cards(1, assignees=remap)
         assert not hasattr(file_lanes, "REVIEWER_FEED_MAX_RETRIES")
         assert not hasattr(file_lanes, "_retries_for")
@@ -437,5 +438,5 @@ def test_every_filed_card_carries_one_attempt():
 
 def test_an_unknown_role_or_empty_profile_is_refused():
     assert "unknown role" in problems(slug="b", assignees={"nope": "x"})[0]
-    assert "non-empty string" in problems(slug="b", assignees={"tester": ""})[0]
+    assert "non-empty string" in problems(slug="b", assignees={"coder": ""})[0]
     assert "mapping" in problems(slug="b", assignees="notadict")[0]

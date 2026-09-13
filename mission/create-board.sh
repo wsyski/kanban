@@ -84,10 +84,10 @@ not the board's lane count, an `abspath` that is not on this host, a
 `provider_override` with no model).
 
 `assignees` remaps a role to a different hermes profile for this board; a role it
-does not name keeps the card graph's own. The roles are researcher, manager, coder,
-tester, reviewer and human-gate. The tester and reviewer roles have no profile of
-their own — their cards are worked on the coder profile — so a board that wants them
-worked elsewhere names it here.
+does not name keeps the card graph's own. The roles are researcher, coder and
+human-gate: every work card — the plan, the unit and integration tests, the
+implementation and the three reviews — is the coder's, and a gate is completed by a
+person. Name a role here to have its cards worked elsewhere.
 
 `model_override` — with `provider_override` beside it — is the model the board's
 REVIEW cards run on. The name is Hermes's own task property (`hermes kanban create
@@ -155,7 +155,7 @@ nobody reads.
 
 Each lane starts at the RESEARCHER, who turns the raw idea into
 runs/artifacts/lane-<k>/refined.md, and at the idea gate a human accepts that
-refinement before the manager plans against it.
+refinement before the plan card is written against it.
 
 The driver NEVER commits. Work is staged; humans commit at gates.
 USAGE
@@ -285,7 +285,7 @@ DISPATCH_LOCK="${HERMES_HOME:-$HOME/.hermes}/kanban/.dispatcher.lock"
 if command -v lsof >/dev/null 2>&1; then
   if ! lsof "$DISPATCH_LOCK" >/dev/null 2>&1; then
     echo "no gateway holds $DISPATCH_LOCK — nothing would dispatch this board." >&2
-    echo "Start one (e.g. hermes --profile manager gateway start), then re-run." >&2
+    echo "Start one (e.g. hermes --profile coder gateway start), then re-run." >&2
     echo "The lock FILE existing proves nothing; it must be held." >&2
     exit 5
   fi

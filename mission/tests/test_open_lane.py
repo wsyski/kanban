@@ -82,7 +82,7 @@ def test_tick_opens_a_lane_whose_root_is_already_unblocked(monkeypatch, tmp_path
     run._OPENED.clear()
 
 
-def test_a_pruned_tester_narrows_the_review_in_the_drivers_graph(monkeypatch, tmp_path):
+def test_a_pruned_unit_test_card_narrows_the_review_in_the_drivers_graph(monkeypatch, tmp_path):
     """The driver's own view of the fork. With TW archived (`unit-tests: false`) the
     review must wait on C alone: `parents_done()` reads a missing parent as not-done,
     so a stale TW entry in the graph would stall the review forever."""
@@ -100,7 +100,7 @@ def test_a_pruned_tester_narrows_the_review_in_the_drivers_graph(monkeypatch, tm
     run._OPENED.clear()
 
 
-def test_a_lane_without_unit_tests_unlinks_the_review_from_the_archived_tester(monkeypatch, tmp_path):
+def test_a_lane_without_unit_tests_unlinks_the_review_from_the_archived_card(monkeypatch, tmp_path):
     """`unit-tests: false` archives TW, and its filed edge into RVa has to go with it:
     parents_done() reads a missing parent as not-done, so the review would wait forever
     on an archived card. C needs no surgery at all — its parent is the plan gate."""
@@ -162,7 +162,7 @@ def test_a_lane_that_keeps_its_cells_archives_none(monkeypatch, tmp_path):
     run._OPENED.clear()
 
 
-def test_the_tester_and_the_coder_are_released_together(monkeypatch, tmp_path):
+def test_the_unit_test_card_and_the_coder_are_released_together(monkeypatch, tmp_path):
     """The fork: TW and C are both children of the plan gate, so ONE tick releases both
     and they work in parallel. RVa is the review that waits for the pair — releasing it
     here would have it judge a tree half of whose evidence does not exist yet."""
@@ -402,8 +402,8 @@ def test_the_reading_is_written_before_the_root_is_released(monkeypatch, tmp_pat
 
 
 def test_the_reading_says_when_it_was_taken_and_that_it_is_a_snapshot(monkeypatch, tmp_path):
-    """Within a lane the tree changes — the coder builds, the tester adds files — so
-    the reviewer reads the same file the researcher did. It is correct for planning
+    """Within a lane the tree changes — the C card builds, the TW card adds files — so
+    the review card reads the same file the researcher did. It is correct for planning
     and wrong as a description of the tree now, and it has to say so itself: the
     filename carries `-at-open` and the file carries its timestamp."""
     calls = []

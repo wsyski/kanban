@@ -18,7 +18,7 @@ def test_ids_and_parents_are_lane_scoped():
     assert by_code["P"]["parents"] == ["Gi2"]
     assert by_code["RVp"]["parents"] == ["P2"]
     assert by_code["Gc"]["parents"] == ["RVc2"]
-    # the fork: the coder is the plan gate's child, not the tester's
+    # the fork: the implementation card is the plan gate's child, not the unit-test card's
     assert by_code["C"]["parents"] == ["Gp2"]
     assert by_code["RVa"]["parents"] == ["TW2", "C2"]
 
@@ -38,7 +38,16 @@ def test_titles_are_stable_and_prefixed_by_id():
 
 def test_assignees_and_skills():
     by_code = {c["code"]: c for c in lanes.lane_cards(1)}
-    assert by_code["P"]["assignee"] == "manager"
+    # EVERY work card is the coder's — the plan, the tests, the implementation and
+    # the reviews — and the only other roles left are the researcher's and the two
+    # gates, which are a person's.
+    assert {c["role"] for c in by_code.values()} == {"researcher", "coder", "human-gate"}
+    assert by_code["P"]["role"] == "coder" and by_code["P"]["assignee"] == "coder"
+    assert by_code["TW"]["assignee"] == "coder"
+    assert by_code["TI"]["assignee"] == "coder"
+    assert by_code["RVp"]["assignee"] == "coder"
+    assert by_code["RVa"]["assignee"] == "coder"
+    assert by_code["RVc"]["assignee"] == "coder"
     assert by_code["Gp"]["assignee"] == "human-gate"
     assert by_code["Gc"]["assignee"] == "human-gate"
     assert by_code["I"]["assignee"] == "researcher"
@@ -109,7 +118,7 @@ def test_a_dropped_card_never_breaks_the_chain_to_the_code_gate():
                     assert parent in ids, (c["id"], parent, ut, it)
 
 
-def test_dropping_the_tester_narrows_the_review_to_the_coder():
+def test_dropping_the_unit_tests_narrows_the_review_to_the_coder():
     """`unit-tests: false` must not leave RVa waiting on an archived TW: parents_done()
     reads a missing parent as not-done, so the review would never be promoted."""
     by_code = {c["code"]: c for c in lanes.lane_cards(1, unit_tests=False)}

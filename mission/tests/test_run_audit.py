@@ -287,7 +287,7 @@ def test_the_word_is_a_warning_only_in_a_tool_form():
 
 def test_a_possessive_warning_in_a_verdict_is_prose():
     """The same guard on the result field: 'item 4\'s warning does not apply' is a
-    reviewer citing a checklist item, not a run reporting a warning."""
+    review card citing a checklist item, not a run reporting a warning."""
     assert not ra.WARN_TEXT.search("PASS: item 4\'s warning does not apply")
     assert ra.WARN_TEXT.search("PASS: 2 warnings (deprecation)")
 

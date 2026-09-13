@@ -2,25 +2,28 @@
 
 `mission/card-bodies/` holds what a **card** tells a worker. This directory holds what the
 **profile** tells it — one `SOUL.md` per role, versioned with the card graph that routes to them
-(`mission/lanes.py`). Six files, six roles; `human-gate` has none because it is not a profile
+(`mission/lanes.py`). Three files, three roles; `human-gate` has none because it is not a profile
 (a person completes it, or the driver does when `auto-gates` is on).
 
 Why they live here at all. The card graph is the topology of record, but the behaviour that decides
 whether a worker strays lives in its profile — and the profiles were not versioned with it. The
 `tester` and `reviewer` profiles were retired on 2026-09-12 and their SOULs survived only in a
-profiles-repo history and a backup zip; the `trader` SOUL has been running without the card
+`profiles-repo history and a backup zip; the `manager` profile followed on 2026-09-13 and took its
+ROLE with it — the plan card is the coder's now, like every other work card; the `trader` SOUL has been
+running without the card
 contract paragraph (see *Drift found* below) for nobody knows how long. A role's standing
 instructions are a repo artifact like the card bodies are, and this is where they stop being one
 bad `rm` or one silent omission from mattering.
 
-| role | installs to | Cards it governs |
+| profile | installs to | Cards it governs |
 |---|---|---|
 | `researcher` | `~/.hermes/profiles/researcher/SOUL.md` | I — refines the raw idea into a reviewable one |
-| `manager` | `~/.hermes/profiles/manager/SOUL.md` | P — the plan, then decomposition and handoffs |
-| `coder` | `~/.hermes/profiles/coder/SOUL.md` | C — implementation; owns its unit tests |
-| `tester` | `~/.hermes/profiles/tester/SOUL.md` | TW (failing acceptance tests) and TI (integration) |
-| `reviewer` | `~/.hermes/profiles/reviewer/SOUL.md` | RVp, RVa, RVc and every rework round of theirs |
+| `coder` | `~/.hermes/profiles/coder/SOUL.md` | every other work card: P (the plan), TW (unit tests), C (implementation), TI (integration tests) and the RVp/RVa/RVc reviews |
 | `trader` | `~/.hermes/profiles/trader/SOUL.md` | no card of its own — domain authority and expected values |
+
+The `manager`, `tester` and `reviewer` roles were retired (2026-09-13, 2026-09-12, 2026-09-12) and
+their cards are the coder's: there is no `ROLE_FALLBACK` entry left, because there is no separate
+role to fall back FROM — the card graph names `coder` directly.
 
 ## What is inside them, and who owns which part
 
@@ -38,23 +41,20 @@ Each file is the whole SOUL document, in four layers:
    since changed the live copy).
 
 So the per-role delta is line 1 + the role paragraph (+ the role-specific sections, where they
-exist). Everything else is shared text and should stay byte-identical across the six — that is what
-makes this directory checkable rather than six drifting documents.
+exist). Everything else is shared text and should stay byte-identical across the three — that is what
+makes this directory checkable rather than three drifting documents.
 
 ## Drift found on 2026-09-13, and what was done
 
-Checked by diffing the six files' halves against each other:
+Checked by diffing the three files' halves against each other:
 
 | file | vs the shared text | action |
 |---|---|---|
-| `reviewer` | clean | — |
-| `tester` | clean | — |
-| `coder` | clean | — |
-| `manager` | clean | — |
 | `researcher` | clean | — |
-| `trader` | **missing the whole `## Kanban Cards` paragraph** | restored, spliced byte-for-byte from `reviewer/SOUL.md` |
+| `coder` | clean | — |
+| `trader` | **missing the whole `## Kanban Cards` paragraph** | restored, spliced byte-for-byte from `reviewer/SOUL.md` (then live) |
 
-Every managed block was already identical across the six (all equal to the hub's), so no
+Every managed block was already identical across the three (all equal to the hub's), so no
 `/skill-sync` repair is implied by any of these files.
 
 The `trader` gap is the one that mattered and the one that was invisible: its live profile ran with
@@ -68,7 +68,7 @@ Reproduce the check:
 cd mission/roles
 PAT='/skill-sync:response-style:start/,/skill-sync:response-style:end/p'   # hub-owned block
 CON='/^## Kanban Cards/,/^## Shared Floor/p'                              # the card contract
-for r in researcher manager coder tester reviewer trader; do
+for r in researcher coder trader; do
   diff <(sed -n "$PAT" $r/SOUL.md) <(sed -n "$PAT" reviewer/SOUL.md) >/dev/null \
     && echo "$r: hub block ok"     || echo "$r: HUB BLOCK DRIFTED"
   diff <(sed -n "$CON" $r/SOUL.md) <(sed -n "$CON" reviewer/SOUL.md) >/dev/null \
@@ -76,7 +76,7 @@ for r in researcher manager coder tester reviewer trader; do
 done
 ```
 
-All six print `ok` on both lines; a role's own prose is invisible to both ranges, which is the
+All three print `ok` on both lines; a role's own prose is invisible to both ranges, which is the
 point — the check is about the shared layers only. **Scope the second range to `## Shared Floor`**:
 run it to the managed block instead and `trader`'s deliberate wording variant masquerades as a
 card-contract drift, which is exactly how this check read on its first run.
@@ -87,17 +87,20 @@ domain instructions — so it is left alone rather than homogenised.
 
 ## Provenance
 
-`tester` and `reviewer` came out of git history; the other four are copies of the live profiles as
+`tester` and `reviewer` came out of git history; the files that remain are copies of the live profiles as
 they stood on 2026-09-13, hashes below being the pre-edit baseline of each source file.
 
 | file | source | hash |
 |---|---|---|
 | `researcher/SOUL.md` | live profile, verbatim | `d27734771789d9fc…` |
-| `manager/SOUL.md` | live profile, verbatim | `42077414f049a222…` |
 | `coder/SOUL.md` | live profile + one sentence | `6ef624f3fe1e2541…` (pre-edit) |
-| `tester/SOUL.md` | `~/.hermes/profiles` @ `5a88285^` + one sentence | blob `ff6cf7108bc226ca4422c12fc03bff9f7ffb9381` |
-| `reviewer/SOUL.md` | `~/.hermes/profiles` @ `5a88285^`, verbatim | blob `9ce9fba3ab7f04f2cb4ad58785497fbbb5f1a659` |
 | `trader/SOUL.md` | live profile + the restored card contract | `ca8aa8e0c29f92a7…` (pre-edit) |
+
+The three retired roles' files (`manager`, `tester`, `reviewer`) were removed from this directory on
+2026-09-13, when those roles were retired and their cards became the coder's. Their SOULs are still
+recoverable: `tester`/`reviewer` from this directory's own git history and the backup zip named
+below, `manager` from `~/.hermes/profiles` history (the autocommit that deleted the profile keeps the
+file).
 
 `5a88285` is the autocommit that deleted the two profiles (2026-09-12 19:11). Verbatim copies of
 both, with their `profile.yaml` descriptions, are parked at
@@ -147,7 +150,7 @@ design — restoring one re-imports a dead key.
 ## Installing
 
 ```bash
-for r in researcher manager coder tester reviewer trader; do
+for r in researcher coder trader; do   # every work card is the coder's; the gates have no profile
   install -D -m 644 mission/roles/$r/SOUL.md ~/.hermes/profiles/$r/SOUL.md
 done
 ```
@@ -166,7 +169,7 @@ Then verify the topology from the CLI, because the dispatcher spawns workers as
 
 ```bash
 hermes profile list
-for r in researcher manager coder tester reviewer trader; do
+for r in researcher coder trader; do
   printf '%-11s %s\n' "$r" "$(hermes -p $r status | grep -E '  Model:' )"
 done
 ```

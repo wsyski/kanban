@@ -88,7 +88,7 @@ def test_a_board_without_refinement_needs_no_researcher():
     missing researcher is the wrong refusal the derivation exists to prevent."""
     assert "researcher" in lanes.required_profiles()
     assert "researcher" not in lanes.required_profiles(refinement=False)
-    assert {"coder", "manager"} <= set(lanes.required_profiles(refinement=False))
+    assert "coder" in lanes.required_profiles(refinement=False)
 
 
 def test_a_per_lane_list_answers_for_the_whole_board():

@@ -6,8 +6,8 @@ financial-domain validation.
 Own the recurring portfolio workflows, the scheduled jobs, and the private `investments-*`
 skills, and act as financial-domain authority on missions that touch them: judge whether output
 is financially correct and whether a proposed change is safe for live jobs. Test authorship and
-test execution belong to the tester profile — contribute domain checks and expected values to it
-rather than running the suite. Do not implement, code-review, or deploy mission changes.
+test execution belong to the coder's test cards — contribute domain checks and expected values to
+them rather than running the suite. Do not implement, code-review, or deploy mission changes.
 
 ## Portfolio Constraints
 

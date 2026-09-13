@@ -7,9 +7,9 @@ module only shapes the card graph and reads the options an idea may override.
 A LANE is one full instance of the card graph executing one human-entered
 idea. Lanes run sequentially: lane k's root is parented to lane k-1's Gc.
 
-The lane opens on a RAW idea and reaches the manager only through a human.
+The lane opens on a RAW idea and reaches the plan card only through a human.
 `I` refines what the human wrote into something a plan can be built on, and
-`Gi` is where a person accepts that refinement — so the manager plans against
+`Gi` is where a person accepts that refinement — so the plan is written against
 a reviewed idea, never against whatever was typed into lane-<k>.md at 2am.
 The refined text is a FILE (`<REFINED>`), like every other hand-off here: a
 card comment would be a second, mutable copy of the contract.
@@ -19,12 +19,12 @@ card comment would be a second, mutable copy of the contract.
 LANE_CARDS = [
     ("I",   "i-body.txt",   "researcher", None,  None),
     ("Gi",  "gi-body.txt",  "human-gate", "I",   None),
-    ("P",   "p-body.txt",   "manager",    "Gi",  "writing-plans"),
-    ("RVp", "rvp-body.txt", "reviewer",   "P",   None),
+    ("P",   "p-body.txt",   "coder",      "Gi",  "writing-plans"),
+    ("RVp", "rvp-body.txt", "coder",      "P",   None),
     ("Gp",  "gp-body.txt",  "human-gate", "RVp", None),
-    ("TW",  "tw-body.txt",  "tester",     "Gp",  "test-driven-development"),
+    ("TW",  "tw-body.txt",  "coder",      "Gp",  "test-driven-development"),
     ("C",   "c-body.txt",   "coder",      "Gp",  None),
-    ("RVa", "rva-body.txt", "reviewer",   "C",   None),
+    ("RVa", "rva-body.txt", "coder",      "C",   None),
     # The integration level is CODER work, not tester work: an end-to-end run is in
     # effect a review OF the whole deliverable, so the errors it uncovers are
     # main-code errors — and they may sit anywhere, including code the earlier review
@@ -34,7 +34,7 @@ LANE_CARDS = [
     # independent: RVc reviews the tree the gate receives (its check (e)), so the card
     # that authored the tests and the fixes never certifies them.
     ("TI",  "ti-body.txt",   "coder",     "RVa", None),
-    ("RVc", "rvc-body.txt", "reviewer",   "TI",  None),
+    ("RVc", "rvc-body.txt", "coder",      "TI",  None),
     ("Gc",  "gc-body.txt",  "human-gate", "RVc", None),
 ]
 
@@ -45,10 +45,10 @@ LANE_CARDS = [
 #       └─ C    (implementation)
 #          └─┴─ RVa   (the review that waits for BOTH)
 #
-# The tester no longer blocks the coder. The plan already carries the real code (the
-# plan checklist forbids a TBD), so the coder has nothing to learn from a test file
-# that does not exist yet — and the LANE's done criterion was never "the tests are
-# green": it is RVa's verdict, which re-derives the suite itself. What the sequence
+# The unit-test card no longer blocks the implementation card. The plan already carries
+# the real code (the plan checklist forbids a TBD), so the implementation has nothing to
+# learn from a test file that does not exist yet — and the LANE's done criterion was
+# never "the tests are green": it is RVa's verdict, which re-derives the suite itself. What the sequence
 # bought was the RED observation (a FAIL witnessed before the implementation existed),
 # and that is what moving TW beside C gives up; a lane that needs it back can prove it
 # from the two patches at review time.
@@ -69,7 +69,7 @@ LABELS = {
     "Gp":  "plan gate",
     "TW":  "unit tests",
     "C":   "implement",
-    "RVa": "reviewer verdict",
+    "RVa": "code review",
     "TI":  "integration tests",
     "RVc": "final review",
     "Gc":  "code gate",
@@ -84,12 +84,12 @@ REFINED_SECTIONS = ("Problem", "Scope", "Open questions", "Assumptions", "Findin
 # tester AND the final review, because RVc reviews nothing else.
 IT_CODES = ("TI", "RVc")
 
-# The profile that works a role whose own profile was RETIRED. The card's job is
-# unchanged — it is still the unit tests, or the review — but the worker behind it
-# is the coder's: one profile, one skill set, and the protection is carried by the
-# CARD (a separate session, the plan alone, its own patch, RVa's checks (e) and (f)),
-# not by a second profile to maintain. A board's own `assignees` still wins.
-ROLE_FALLBACK = {"tester": "coder", "reviewer": "coder"}
+# The profile that works a role whose own profile was RETIRED. EMPTY by construction:
+# `manager`, `tester` and `reviewer` are gone and their cards name the coder directly,
+# so every role the graph fills has a profile of its own. Kept as the ONE place that
+# would say otherwise — the next retirement is a line here, not a hunt through filing,
+# the rework paths and the schema. A board's own `assignees` still wins.
+ROLE_FALLBACK = {}
 
 # Roles that never spawn a worker: a gate is completed by a person, or by the
 # driver when `auto-gates` is on, so no profile has to exist for it. The dispatcher
@@ -97,10 +97,11 @@ ROLE_FALLBACK = {"tester": "coder", "reviewer": "coder"}
 # gate, and the reason `required_profiles` must not demand one.
 NO_PROFILE_ROLES = frozenset({"human-gate"})
 
-# The role whose cards JUDGE the work. `model_override` is applied to these cards
-# and nothing else: declared as a role, not as the review codes, because that is
-# what the option names — the reviewer — and a board may remap it to any profile.
-JUDGE_ROLES = frozenset({"reviewer"})
+# The cards that JUDGE the work. `model_override` is applied to these cards and to
+# nothing else. Keyed on the CARD CODE, not on a role: every work card is the coder's
+# now, so a role cannot tell a verdict card from an implementation one — keyed on
+# `coder` the judge's model would land on the implementation too.
+JUDGE_CODES = frozenset({"RVp", "RVa", "RVc"})
 
 # codes dropped when a lane runs no REFINEMENT: the researcher who turns the raw
 # idea into a refined one, and the human gate that accepts that refinement. The lane
@@ -171,8 +172,8 @@ def assignee_for(role, assignees=None):
     """The hermes profile that works a role — the board's `assignees` remapping if
     it names this role, else the role's fallback profile, else the role's own name.
 
-    One lookup, so a board that renames its tester renames it everywhere: filing,
-    revision cards and the reviewer-feed retry rule all come through here.
+    One lookup, so a board that remaps a role remaps it everywhere: filing, revision
+    cards and the rework-owner rule all come through here.
     """
     return (assignees or {}).get(role, ROLE_FALLBACK.get(role, role))
 
@@ -226,8 +227,8 @@ def max_reworks(cfg=None):
                                                         # option table holds it
 
 
-def model_args(role, cfg):
-    """`--model`/`--provider` for a card of this role — the manifest's
+def model_args(code, cfg):
+    """`--model`/`--provider` for a card of this CODE — the manifest's
     `model_override`, and ONLY on the cards that judge.
 
     A verdict is where a stronger model pays (it is the card the lane's done
@@ -237,7 +238,7 @@ def model_args(role, cfg):
     the engine's own rule — and it is what lets a judge run on a provider other
     than the profile's own (the local llama-swap endpoint, say).
     """
-    if role not in JUDGE_ROLES:
+    if code not in JUDGE_CODES:
         return []
     model = (cfg or {}).get("model_override")
     if not model:
@@ -247,6 +248,28 @@ def model_args(role, cfg):
     if provider:
         args += ["--provider", provider]
     return args
+
+
+def reasoning_effort_args(code, cfg):
+    """`--reasoning` for a card of this CODE — the lane's `reasoning_effort`, and
+    ONLY on the cards that judge, by the same rule and the same key as `model_args`:
+    the coder works those cards as a REVIEWER, so they run on another model and at
+    another depth.
+
+    `--reasoning` is the engine's own flag for the property
+    (`kanban_db.create_task(reasoning_effort=...)`, which the dispatcher passes on to
+    the worker); `cfg` is the LANE's resolved options, so a lane's idea header wins
+    over the board's default.
+
+    A second lookup rather than a second line in `model_args` because the two are
+    independent on the engine's side — `create_task` takes `reasoning_effort` beside
+    `model_override` and neither requires the other — so a lane may buy depth without
+    buying a model, or the reverse.
+    """
+    if code not in JUDGE_CODES:
+        return []
+    level = (cfg or {}).get("reasoning_effort")
+    return ["--reasoning", str(level)] if level else []
 
 
 def lane_cards(lane, integration_tests=True, unit_tests=True, assignees=None,
@@ -344,6 +367,26 @@ def _as_bool(value, fallback):
     return _BOOL[v]
 
 
+def _as_value(kind, raw, fallback):
+    """One idea-header value, coerced by the option's KIND.
+
+    It used to be `_as_bool` for every key. That was right while every per-lane
+    option was a boolean and became a ValueError the moment one was not —
+    `max-reworks` is a count and `reasoning_effort` a level word, so a legal header
+    for either one failed the LANE rather than being read. The value itself is
+    judged at the doors (`board_schema.validate_headers`); this only has to turn the
+    text into the option's own type.
+    """
+    text = str(raw).strip()
+    if kind == "bool":
+        return _as_bool(text, fallback)
+    if kind == "count":
+        if not text.isdigit() or int(text) < 1:
+            raise ValueError(f"expected a positive integer, got {raw!r}")
+        return int(text)
+    return text
+
+
 def _board_default(board_defaults, key, lane, fallback):
     """One board default for THIS lane.
 
@@ -383,7 +426,7 @@ def resolve_lane_options(board_defaults, headers, lane=1):
         default = board_schema.OPTIONS[key][1]
         value = _board_default(board_defaults, key, lane, default)
         if key in headers:
-            value = _as_bool(headers[key], value)
+            value = _as_value(board_schema.OPTIONS[key][0], headers[key], value)
         opts[key] = value
     return opts
 

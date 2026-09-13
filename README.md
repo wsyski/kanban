@@ -1,14 +1,14 @@
 # kanban-smoke-test
 
-**coding-team kanban**: multi-profile agents (researcher refines the idea,
-manager plans, coder implements and writes the unit tests, reviewer judges the
-verdict, human gate commits) building real work on a kanban board, from a generic
-lane template instantiated per board. Those are ROLES: the tester and reviewer roles
-are worked on the coder profile, so one profile is what you maintain, and the
-judgement is kept apart by the CARDS — a review runs in its own session, from the
-plan alone, with its own patch — rather than by a second profile to keep in sync.
+**coding-team kanban**: multi-profile agents (the researcher refines the idea, the
+coder plans, tests, implements and judges the verdict, the human gate commits) building
+real work on a kanban board, from a generic lane template instantiated per board. Those
+are ROLES, and every work card — plan, unit and integration tests, implementation, the
+three reviews — is the coder profile's: one profile is what you maintain, and each job
+is kept apart by the CARD that names it (a review runs in its own session, from the plan
+alone, with its own patch) rather than by a second profile to keep in sync.
 
-A lane opens on a RAW idea and reaches the manager only through a gate: `I`
+A lane opens on a RAW idea and reaches the plan card only through a gate: `I`
 refines what you typed into a stated problem, scope, open questions and success
 criteria; `Gi` is where that refinement is accepted. Planning against a reviewed
 idea is the point — fixing an idea costs one card, fixing a plan built on a bad
@@ -76,14 +76,14 @@ Board instances live in
 | Nobody commits before the gate — not even the driver | gate cards + `auto-gates` (board.json) complete gates with "NOTHING COMMITTED" |
 | `git add`/`git diff` always allowed (provenance patches) | card bodies |
 | Lane N+1's root parented to lane N's gate card | `mission/lanes.py` — the board itself is the sequencer |
-| The manager never sees a raw idea | `mission/lanes.py` — `I` is the lane root, `Gi` stands between it and `P` |
+| The plan card never sees a raw idea | `mission/lanes.py` — `I` is the lane root, `Gi` stands between it and `P` |
 | Every hand-off is a file, never a card comment | refined idea `boards/<slug>/runs/artifacts/lane-<k>/refined.md`, plan `…/lane-<k>/plan.md`, patches — all under `runs/`, attached to their card and never staged, never committed; the only thing any card stages is the lane's own work, in `work/` |
 | Every card's evidence | `git diff --cached` patch attached to the card |
-| Verdicts in the result field | reviewer card bodies mandate it |
+| Verdicts in the result field | the review card bodies mandate it |
 | The plan is judged on what it was told | `mission/card-bodies/_plan-checklist.txt` — the plan card's self-check and the plan review's only REJECT grounds |
 
-Lane shape without integration tests — the plan gate releases the tester and the
-coder TOGETHER, and the review waits for both:
+Lane shape without integration tests — the plan gate releases the unit-test card and
+the implementation card TOGETHER, and the review waits for both:
 `I → Gi → P → RVp → Gp → (TW ∥ C) → RVa → Gc`.
 With integration tests, `TI` (integration tests) and a final `RVc` follow the code
 review, before `Gc`. The optional levels take their cards with them: no unit tests
@@ -109,8 +109,8 @@ card itself — and still commits nothing (§6).
 ## 2. Prerequisites
 
 ```
-hermes profile list                            # researcher/manager/coder exist; the
-                                               # tester and reviewer roles run on coder
+hermes profile list                            # researcher and coder exist; every
+                                               # work card is the coder's
 lsof ~/.hermes/kanban/.dispatcher.lock         # SOMETHING owns dispatch
 ```
 
@@ -127,10 +127,12 @@ then sits forever, which looks exactly like a slow one. `create-board.sh`
 checks this and refuses.
 
 Every role the card graph fills is worked by a **profile** — the graph addresses profiles, not roles
-(`mission/lanes.py` → `assignee_for`) — so a role is only as distinct as the profile behind it. Two
-of the six (`tester`, `reviewer`) have no profile of their own today and are worked on `coder`
-(`ROLE_FALLBACK`). The SOUL of each of the six roles, with its provenance, a drift check and the
-install commands, is in **`mission/roles/`**.
+(`mission/lanes.py` → `assignee_for`) — so a role is only as distinct as the profile behind it. Two work
+roles have a profile of their own: `researcher` for `I`, `coder` for everything else (plan, tests,
+implementation, reviews). The gates have none — a person completes them. `lanes.ROLE_FALLBACK` is now
+EMPTY: it is the one place that would carry a retirement, and `manager`, `tester` and `reviewer` are
+gone. The SOUL of each profile, with its provenance, a drift check and the install commands, is in
+**`mission/roles/`**.
 
 That is all the template needs. **Toolchains belong to boards, not here** —
 the card graph never mentions a language or a build tool, and a board is as
@@ -158,7 +160,7 @@ nothing about it lives under `mission/`:
         runs/driver.lock      serve-mode driver answers many ideas
         runs/<run-id>/        one armed idea's run, minted then never touched:
             artifacts/lane-<k>/refined.md   by the researcher, edited at Gi
-            artifacts/lane-<k>/plan.md      by the manager
+            artifacts/lane-<k>/plan.md      by the coder
             snapshots/lane-<k>.md           the idea as the lane opened on it
             snapshots/lane-<k>-workdir-at-open.md   what the tree held then
             driver.log, chain.jsonl, verdicts.jsonl, timing.jsonl, cards/,
@@ -445,12 +447,12 @@ flowchart LR
     direction LR
     I1["I1<br/>refine idea<br/><i>researcher</i>"]
     Gi1{{"Gi1<br/>GATE — human accepts idea<br/><i>human</i>"}}
-    P1["P1<br/>plan<br/><i>manager</i>"]
-    RVp1["RVp1<br/>review<br/><i>reviewer</i>"]
+    P1["P1<br/>plan<br/><i>coder</i>"]
+    RVp1["RVp1<br/>review<br/><i>coder</i>"]
     Gp1{{"Gp1<br/>GATE — human commits plan<br/><i>human</i>"}}
-    TW1["TW1<br/>unit tests<br/><i>tester</i>"]
+    TW1["TW1<br/>unit tests<br/><i>coder</i>"]
     C1["C1<br/>implement<br/><i>coder</i>"]
-    RVa1["RVa1<br/>review<br/><i>reviewer</i>"]
+    RVa1["RVa1<br/>review<br/><i>coder</i>"]
     Gc1{{"Gc1<br/>GATE — human commits code<br/><i>human</i>"}}
     I1 --> Gi1
     Gi1 --> P1
@@ -466,14 +468,14 @@ flowchart LR
     direction LR
     I2["I2<br/>refine idea<br/><i>researcher</i>"]
     Gi2{{"Gi2<br/>GATE — human accepts idea<br/><i>human</i>"}}
-    P2["P2<br/>plan<br/><i>manager</i>"]
-    RVp2["RVp2<br/>review<br/><i>reviewer</i>"]
+    P2["P2<br/>plan<br/><i>coder</i>"]
+    RVp2["RVp2<br/>review<br/><i>coder</i>"]
     Gp2{{"Gp2<br/>GATE — human commits plan<br/><i>human</i>"}}
-    TW2["TW2<br/>unit tests<br/><i>tester</i>"]
+    TW2["TW2<br/>unit tests<br/><i>coder</i>"]
     C2["C2<br/>implement<br/><i>coder</i>"]
-    RVa2["RVa2<br/>review<br/><i>reviewer</i>"]
+    RVa2["RVa2<br/>review<br/><i>coder</i>"]
     TI2["TI2<br/>integration tests<br/><i>coder</i>"]
-    RVc2["RVc2<br/>final review<br/><i>reviewer</i>"]
+    RVc2["RVc2<br/>final review<br/><i>coder</i>"]
     Gc2{{"Gc2<br/>GATE — human commits code<br/><i>human</i>"}}
     I2 --> Gi2
     Gi2 --> P2
@@ -536,8 +538,8 @@ A revision card is rendered exactly like the card it revises — same paths,
 workdir, ceiling and skill — plus the numbered findings and a pointer to the
 full verdict. The code loop's revision goes to the card the VERDICT names,
 `OWNER: C` / `OWNER: TW` / `OWNER: TI`: the implementation review judges the
-coder's patch and the tester's tests in one pass, and the coder may not edit the
-tester's files, so a rejected test filed against the coder could never be fixed.
+C patch and the TW card's tests in one pass, and the C card may not edit the TW
+card's files, so a rejected test filed against the C card could never be fixed.
 No usable owner line means the coder — what every lane did before the fork. On a
 lane with integration tests the code re-review also repeats the final review, and
 `TI` waits until the newest implementation verdict is PASS.
@@ -667,9 +669,9 @@ audit, fix, run again — no cycle is done while the auditor reports anything.
   manifest, because the schema refuses any other value: naming it states the rule, it
   does not choose a number. A revision card is a card like any other, so it takes the
   same 1; the count you CAN choose is `max-reworks`.
-- **Roles are not profiles:** the graph fills six roles — researcher, manager,
-  coder, tester, reviewer, human-gate — and three of them are worked on the coder
-  profile: `tester` and `reviewer` have no profile of their own. `lanes.ROLE_FALLBACK`
+- **Roles are not profiles:** the graph fills three roles — researcher, coder,
+  human-gate — and ONE profile works every work card: `researcher` refines the idea,
+  the coder plans, tests, implements and reviews. `lanes.ROLE_FALLBACK`
   is the one place that says so, a manifest's `assignees` overrides it per board, and
   `create-board.sh`'s pre-flight DERIVES the profiles a board needs from its manifest
   (`lanes.required_profiles`) instead of carrying a list. A card whose assignee is not

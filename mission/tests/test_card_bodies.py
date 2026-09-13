@@ -42,14 +42,14 @@ def test_the_integration_card_may_change_the_implementation_under_rules():
     """An end-to-end test that cannot REACH the deliverable is a gap only the
     integration level sees, so that card may change code — under rules that keep the
     change reviewable: minimal, named, staged, attached separately, and never a
-    rewrite to make a test pass, never the tester's files, never the plan."""
+    rewrite to make a test pass, never the TW card's files, never the plan."""
     ti = read("ti-body.txt")
     assert "MAY also change the IMPLEMENTATION" in ti
     assert "MINIMAL" in ti
     assert "patch-code.diff" in ti
     assert "WHY the end-to-end run needed it" in ti
     assert "may not rewrite the implementation to make a test pass" in ti
-    assert "may not edit the tester's unit tests" in ti
+    assert "may not edit the TW card's unit tests" in ti
     assert "may not change the plan" in ti
     assert "no implementation change needed" in ti
     assert "do not edit the test and do not force it through" in ti
@@ -187,7 +187,8 @@ def test_the_board_stages_only_the_lanes_own_work():
 
     The three product cards stage their own paths inside <WORKDIR>; the hand-off
     cards (i, p) stage NOTHING — they write their document under runs/ and attach
-    it — and reviewers, gates and the driver stage nothing at all. So no body may
+    it — and the review cards, the gates and the driver stage nothing at all. So no
+    body may
     carry an unscoped form (`git add .`, `-A`, `-u`, `-f`) and none may stage a
     hand-off path. A body that says "staged" about a runs/ document sends a worker
     off-contract into the one thing the operator sees in `git status`."""

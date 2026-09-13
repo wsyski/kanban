@@ -76,7 +76,7 @@ def test_resolve_prefers_header_over_board_default():
         defaults, {"integration-tests": "false", "auto-gates": "true"})
     assert opts == {"refinement": True, "max-reworks": 3,
                     "integration-tests": False, "unit-tests": True,
-                    "auto-gates": True}
+                    "auto-gates": True, "reasoning_effort": None}
 
 
 def test_resolve_falls_back_to_board_default():

@@ -106,7 +106,10 @@ def test_the_goal_judge_is_the_default_for_a_worker_card(monkeypatch, tmp_path):
         "a worker card should still be filed under the goal judge"
     for a in fake.created():
         if "--goal" in a:
-            assert "reviewer" not in a and "gate" not in a, a
+            # a goal-loop judge can complete a card whose success case is blocking
+            # and silently open the gate it guards — so never a gate, never a review
+            assert a[a.index("--assignee") + 1] != "human-gate", a
+            assert not a[1].startswith(("RV", "Gi", "Gp", "Gc")), a
 
 
 def test_every_card_is_blocked(monkeypatch, tmp_path):
