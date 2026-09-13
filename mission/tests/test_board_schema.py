@@ -76,7 +76,8 @@ def test_the_header_set_is_the_per_lane_set():
     assert board_schema.HEADER_KEYS is board_schema.PER_LANE
     assert board_schema.PER_LANE < board_schema.BOARD_KEYS
     assert board_schema.PER_LANE == {"refinement", "max-reworks", "unit-tests",
-                                     "integration-tests", "auto-gates"}
+                                     "integration-tests", "auto-gates",
+                                     "model", "provider"}
 
 
 def test_a_per_lane_list_of_strings_is_rejected():

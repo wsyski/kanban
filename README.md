@@ -21,7 +21,7 @@ how its runs went is not kept here — the runs describe themselves (§4).
 
 | board | idea | lanes | gates, per-card ceiling |
 |---|---|---|---|
-| `minimal-development` | one Python function (`is_even`) and its tests — the cheap smoke board, no build tool, no dependencies | 1 | auto, 4 min |
+| `is-even` | one Python function (`is_even`) and its tests — the cheap smoke board, no build tool, no dependencies. Was `minimal-development` until 2026-09-13, and is **the worked example of the work model**: it ships with `"model": "ornith-35b"` / `"provider": "llama-swap"`, so its work cards run on the local rig while its reviews and its goal judge stay on the cloud pin. Its README records the 2026-09-13 probe, where that local model could not finish the refinement card | 1 | auto, 20 min |
 | `roman-evaluator-js` | a browser page: `roman-evaluator.html`, a DOM-free parsing module with unit tests, `run.sh`, two launch modes | 1 | auto, 10 min |
 | `roman-evaluator-java` | the same problem twice: a roman CLI (`roman-cli/`) then a spec-first Spring Boot service (`roman-service/`) consuming lane 1's rule; needs JDK 17, Maven, a warm `~/.m2` | 2 | auto, 20 min |
 | `portfolio-engineering` | a GPW small-cap research pipeline built into the Hermes `trader` profile (external `default-workdir`) | 1 | human, 60 min (default) |
@@ -30,8 +30,10 @@ how its runs went is not kept here — the runs describe themselves (§4).
 Every shipped board pins its review cards (`RVp`, `RVa`, `RVc` and their rework rounds)
 to a different model from the one that did the work — `"model_override":
 "glm-5.3-flash"`, `"provider_override": "opencode-go"` — so the review model is
-independent of the author. Every other card runs its profile's default. The schema has no default for
-the pin, so a new board must set it.
+independent of the author. Every other card runs its profile's own model: `"model"` /
+`"provider"` are the board's WORK model, filed on every card and overridable per lane
+from an idea header, and the pin wins over them on the reviews. Neither key has a default,
+so a board that wants either says so.
 
 What the template consists of:
 
@@ -396,6 +398,11 @@ with the CLI:
   review cards and their rounds. The goal judge is not affected: it runs on the worker's
   profile model unless the profile sets `auxiliary.goal_judge`. `board_schema` refuses a
   provider without a model.
+- **`model`/`provider` are the other half.** The board's work model, filed on every card
+  it files and overridable per lane from an idea header, with the review pin above it.
+  Naming a work model without a pin puts the reviews back on the author's model — a
+  legitimate board (one model for everything) and a bad one to reach by accident, so
+  `board_schema` prints a note at the manifest door and the driver logs one per lane.
 - **Refinement is optional.** `refinement: false` drops `I` and `Gi` from a lane: the
   plan card becomes its root and plans from the raw idea, whose `### Done means` section
   the code gate judges against. The human's first veto moves to the plan gate.

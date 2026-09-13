@@ -56,6 +56,8 @@ same set:
       "goal-max-turns": 40,
       "timeout-min": 240,                        # the driver's own cap
       "assignees": {"reviewer": "senior"},       # optional: role -> hermes profile
+      "model": "ornith-35b",                     # optional: the WORK model, every card
+      "provider": "llama-swap",                  # optional: its provider (needs the model)
       "model_override": "glm-5.3",               # optional: the model the REVIEWS run on
       "provider_override": "opencode-go",        # optional: its provider (needs the model)
       "targets": ["~/.hermes/profiles/trader"],  # optional: write roots outside it
@@ -80,8 +82,8 @@ file is GENERATED from this module's option table (`board_schema.py --write-sche
 declaration of the option set is a copy that drifts. An editor that reads it validates
 and completes a manifest as it is written. It is a convenience, not the authority: this
 module still refuses what JSON Schema cannot state (a per-lane array whose length is
-not the board's lane count, an `abspath` that is not on this host, a
-`provider_override` with no model).
+not the board's lane count, an `abspath` that is not on this host, a `provider` or
+`provider_override` with no model beside it).
 
 `assignees` remaps a role to a different hermes profile for this board; a role it
 does not name keeps the card graph's own. The roles are researcher, coder and
@@ -89,14 +91,26 @@ human-gate: every work card — the plan, the unit and integration tests, the
 implementation and the three reviews — is the coder's, and a gate is completed by a
 person. Name a role here to have its cards worked elsewhere.
 
+`model` — with `provider` beside it — is what the board RUNS ON: every card it files,
+the plan, the tests, the implementation, the reviews and every rework round. Omitted,
+no model flag is filed at all and each card runs its assignee profile's own model, which
+is what every board did before 2026-09-13. A lane may name its own pair in the idea
+header (`<!-- model: ornith-35b -->`, `<!-- provider: llama-swap -->`); its cards are
+re-pointed to it when the lane opens, because a board files its cards before any idea
+exists. Naming a model without its provider asks the profile's provider for it, so name
+the pair.
+
 `model_override` — with `provider_override` beside it — is the model the board's
-REVIEW cards run on. The name is Hermes's own task property (`hermes kanban create
---model`), and it lands on the judge cards only: the plan review, the implementation
-review and the final review, including their rework rounds. Set it when the judge
-should think with a stronger model than the worker. A board that omits it files no
-model flag at all and every card runs its profile's default. It is a BOARD option,
-never a per-lane one: no idea header can carry it, so a lane cannot quietly buy
-itself a different judge.
+REVIEW cards run on, and it WINS over the work model wherever it is set. The name is
+Hermes's own task property (`hermes kanban create --model`), and it lands on the judge
+cards only: the plan review, the implementation review and the final review, including
+their rework rounds. Set it when the judge should think with a stronger model than the
+worker — or when the work runs locally and its verdict should not. A board that names a
+`model` and no `model_override` runs its reviews on the author's model: the manifest door
+prints a note for it and the driver logs one per lane, because one model for everything
+is a legitimate board and a bad one to reach by accident. It is a BOARD option, never a
+per-lane one: no idea header can carry it, so a lane cannot quietly buy itself a
+different judge.
 
 `max-runtime` and `max-retries` are the per-card worker runtime ceiling
 ("45m", "90m", "1h30m", …) and retry budget, applied to every card the board

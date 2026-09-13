@@ -1,14 +1,16 @@
 {
   "$schema": "../../mission/board.schema.json",
-  "slug": "minimal-development",
-  "name": "Minimal Development",
+  "slug": "is-even",
+  "name": "Is Even",
   "lanes": 1,
   "unit-tests": true,
   "integration-tests": false,
   "auto-gates": true,
   "goal": true,
-  "max-runtime": "4m",
+  "max-runtime": "20m",
   "max-reworks": 2,
+  "model": "ornith-35b",
+  "provider": "llama-swap",
   "model_override": "glm-5.3-flash",
   "provider_override": "opencode-go"
 }

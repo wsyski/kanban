@@ -236,6 +236,24 @@ def lane_options(lane):
     opts["idea"] = body
     return opts
 
+
+def lane_model_opts(lane):
+    """The model scope a lane's idea file NAMES — its header pair, or {}.
+
+    Deliberately NOT the resolved options: `resolve_lane_options` fills a missing
+    provider from the board, so a lane naming a local model on a board whose
+    provider is a cloud one would ask that cloud backend for a model it does not
+    serve. What `lanes.model_args` needs is the header's own words, with the board
+    as the fallback it already knows about — and the rework path needs them too: a
+    revision card that fell back to the worker's default model would silently change
+    what the round tests on.
+    """
+    parsed = lanes.read_idea(os.path.join(IDEAS_DIR, f"lane-{lane}.md"))
+    if parsed is None:
+        return {}
+    headers = board_schema.headers_to_cfg(parsed[0])
+    return {k: headers[k] for k in ("model", "provider") if k in headers}
+
 # Every CLI call is bounded: a hung `hermes` or `git` would stall the driver silently
 # while its lock stays live, and start-board.sh would keep seeing a healthy driver.
 CLI_TIMEOUT_S = 60
@@ -592,7 +610,8 @@ def file_revision(state, lane, round_no, findings, base="P", reviewer_prefix="RV
             "--assignee", lanes.assignee_for(rev_assignee, remap),
             "--workspace", f"dir:{WORKDIR}", "--max-runtime", runtime, "--max-retries", rework_retries(),
             "--idempotency-key", f"{BOARD}-rev-{base}{lane}-{round_no}",
-            "--created-by", "coder", "--json"] + _skill_args(base) + _goal_args(rev_assignee, base)
+            "--created-by", "coder", "--json"] + _skill_args(base) + _goal_args(rev_assignee, base) \
+            + lanes.model_args(base, manifest(), lane_model_opts(lane))
     rev_id = json.loads(kb(*args))["id"]
 
     rrbody = render(rr_body_file)
@@ -615,7 +634,7 @@ def file_revision(state, lane, round_no, findings, base="P", reviewer_prefix="RV
                f"{BOARD}-rr-{base}{lane}-r{round_no + 1}", "--created-by", "coder", "--json"]
     # A re-review IS a review: without this a rework round would silently drop
     # back to the worker's default model, which is the one thing the pin avoids.
-    rr_args += lanes.model_args(rr_code, manifest())
+    rr_args += lanes.model_args(rr_code, manifest(), lane_model_opts(lane))
     rr_id = json.loads(kb(*rr_args))["id"]
     kb("link", rr_id, gate_id)
     # This gate now also guards the DOWNSTREAM card against starting while
@@ -1127,6 +1146,32 @@ def open_lane(state, lane):
                 kb("unlink", tw["id"], rva["id"])
             except RuntimeError as e:
                 log(f"LANE {lane}: unlink TW{lane}->RVa{lane} skipped ({e})")
+    # Point this lane's parked cards at the model the lane resolves to. The cards
+    # were filed before their idea existed (IT-complete, pruned at open), so a
+    # `<!-- model: … -->` header is only known NOW — and it has to land before the
+    # root is unblocked, because a card claimed with the wrong model spends its
+    # single attempt on it. `set-model` is the one call that re-points a parked card.
+    board_cfg = manifest()
+    for c in lanes.lane_cards(lane):
+        if c["assignee"] == "human-gate":
+            continue            # a gate is completed by a person or the driver,
+                                # never spawned: a model flag on it buys nothing
+        card = live_card(state, c["code"], lane)
+        if not card or card["status"] in ("done", "archived"):
+            continue
+        want = lanes.model_args(c["code"], board_cfg, opts)
+        if want == lanes.model_args(c["code"], board_cfg):
+            continue
+        model = want[want.index("--model") + 1] if "--model" in want else "none"
+        extra = (["--provider", want[want.index("--provider") + 1]]
+                 if "--provider" in want else [])
+        kb("set-model", card["id"], model, *extra)
+        log(f"LANE {lane}: {c['code']}{lane} -> model {model}"
+            + (f" via {extra[1]}" if extra else ""))
+    if opts.get("model") and not board_cfg.get("model_override"):
+        log(f"LANE {lane}: model {opts['model']!r} applies to the whole lane and no "
+            f"model_override is pinned — its reviews run the author's model")
+
     # Snapshot BEFORE unblocking: the card bodies already point at this path,
     # and workers must never read the mutable source (spec D8).
     os.makedirs(SNAP_DIR, exist_ok=True)
@@ -1954,7 +1999,8 @@ def file_code_revision(state, lane, round_no, findings, owner="C", max_rounds=2,
             "--assignee", lanes.assignee_for(role, manifest().get("assignees")),
             "--workspace", f"dir:{WORKDIR}", "--max-runtime", runtime, "--max-retries", rework_retries(),
             "--idempotency-key", f"{BOARD}-rev-{owner}{lane}-{round_no}",
-            "--created-by", "coder", "--json"] + _skill_args(owner) + _goal_args(role, owner)
+            "--created-by", "coder", "--json"] + _skill_args(owner) + _goal_args(role, owner) \
+            + lanes.model_args(owner, manifest(), lane_model_opts(lane))
     rev_id = json.loads(kb(*args))["id"]
     rrbody = render("rva-body.txt")
     rrbody += (f"\nRE-REVIEW ROUND {round_no + 1} of {max_rounds + 1}. The previous review's "
@@ -1977,7 +2023,7 @@ def file_code_revision(state, lane, round_no, findings, owner="C", max_rounds=2,
                "--max-retries", rework_retries(), "--idempotency-key",
                f"{BOARD}-rr-C{lane}-r{round_no + 1}", "--created-by", "coder", "--json"]
     # The re-review judges the revision: same pins as the review it repeats.
-    rr_args += lanes.model_args("RVa", manifest())
+    rr_args += lanes.model_args("RVa", manifest(), lane_model_opts(lane))
     rr_id = json.loads(kb(*rr_args))["id"]
     kb("link", rr_id, gate_id)
     log(f"filed code rework round {round_no}: {rev_title} + {rr_title}")

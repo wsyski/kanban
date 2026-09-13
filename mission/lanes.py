@@ -91,6 +91,7 @@ IT_CODES = ("TI", "RVc")
 NO_PROFILE_ROLES = frozenset({"human-gate"})
 
 # The review cards. `model_override` (the review model) is applied to these cards and
+# above the board's or the lane's `model` — see lanes.model_args for the precedence.
 # to nothing else. Keyed on the CARD CODE, not on a role: every work card is the coder's
 # now, so a role cannot tell a verdict card from an implementation one — keyed on
 # `coder` the review model would land on the implementation too. Not the goal judge,
@@ -221,27 +222,44 @@ def max_reworks(cfg=None):
                                                         # option table holds it
 
 
-def model_args(code, cfg):
-    """`--model`/`--provider` for a card of this CODE — the manifest's
-    `model_override` (the review model), and ONLY on the review cards.
+def _model_pair(model, provider):
+    """`--model`/`--provider` for one model choice, or [] when none is named.
 
-    A verdict is where a stronger model pays (it is the card the lane's done
-    criterion hangs on), so the option lands on the review cards and on nothing
-    else; a board that names no model files none of these flags and every card
-    runs its profile's default. The provider is sent only alongside a model —
-    the engine's own rule — and it is what lets the review model run on a provider other
-    than the profile's own (the local llama-swap endpoint, say).
+    The provider travels only beside a model: the engine refuses a provider alone,
+    and a bare `-m` is resolved against the profile's own provider — so a local
+    model has to name llama-swap or it is asked of the wrong backend.
     """
-    if code not in JUDGE_CODES:
-        return []
-    model = (cfg or {}).get("model_override")
     if not model:
         return []
-    args = ["--model", model]
-    provider = (cfg or {}).get("provider_override")
-    if provider:
-        args += ["--provider", provider]
-    return args
+    return ["--model", model] + (["--provider", provider] if provider else [])
+
+
+def model_args(code, cfg, lane_cfg=None):
+    """`--model`/`--provider` for a card of this CODE. One precedence, four outcomes.
+
+    The review pin wins where it exists: `model_override` — board-level, review
+    cards only — is the model a VERDICT runs on, and it is what keeps a review off
+    the author's model (the shipped boards pin it for exactly that). It is
+    indifferent to the work model: a board whose work runs locally can still buy a
+    stronger verdict.
+
+    Below it, the work model: `model`/`provider`, per lane, resolved by
+    `resolve_lane_options` into `lane_cfg` (idea header over board default). `cfg`
+    alone is the FILING-time answer, because a board files its cards before any idea
+    exists — so filing passes the manifest, and `run.open_lane` re-points a lane's
+    parked cards with `hermes kanban set-model` when the header says otherwise.
+
+    Nothing named anywhere → no flag at all, and the card runs its assignee
+    profile's own model (the behaviour before 2026-09-13).
+    """
+    cfg = cfg or {}
+    if code in JUDGE_CODES:
+        pinned = _model_pair(cfg.get("model_override"), cfg.get("provider_override"))
+        if pinned:
+            return pinned
+    lane_cfg = lane_cfg or {}
+    lane_pair = _model_pair(lane_cfg.get("model"), lane_cfg.get("provider"))
+    return lane_pair or _model_pair(cfg.get("model"), cfg.get("provider"))
 
 
 def lane_cards(lane, integration_tests=True, unit_tests=True, assignees=None,

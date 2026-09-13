@@ -142,3 +142,28 @@ on this day it was not.
 A run is done only when the last command exits 0 (no errors **and** no warnings) and the
 driver log ends with `ALL GATES COMPLETE`. Board contents are disposable; the run
 directories are the record.
+
+## 6. The local-model probe — `is-even` on `llama-swap`
+
+Same day, later: the cheap board renamed `minimal-development` → `is-even` and pointed at
+the local rig to exercise the new board option (`model`/`provider` — the WORK model, on
+every card the board files; see [DESIGN.md](DESIGN.md#two-models-one-precedence)). Stopped
+by hand at 23:50, not timed out; its run directory is
+`boards/is-even/runs/is-even-20260913-233501/`.
+
+| what | result |
+|---|---|
+| board.json | `"model": "ornith-35b"`, `"provider": "llama-swap"`, `"max-runtime": "20m"`, pin kept (`glm-5.3-flash`/`opencode-go`), `"goal": true` |
+| filing | correct: every work card + gate `ornith-35b`/`llama-swap`, all three reviews `glm-5.3-flash`/`opencode-go` |
+| dispatch | correct: `hermes -p researcher --cli --accept-hooks -m ornith-35b --provider llama-swap …` |
+| `I1` | wrote a correct `artifacts/lane-1/refined.md` (3036 B) at 23:37; never completed the card |
+| the model | hallucinated the attachment (411 B of mangled text: `## Proa␦em`, `returns \`nrue\``), four malformed tool calls, one illegal nested CLI call, one blocked `execute_code`, the same `read_file` eight times in one millisecond, then a single ~6-minute generation |
+| outcome | worker at 4 % CPU, `llama-server` at 89.6 %, no further API call; the 20-minute ceiling was the next thing due |
+
+**Verdict: the knobs are fine, the model is not.** A 35B-A3B reasoning model on 24 GB
+cannot hold a lane worker's tool contract on the refinement card — the heaviest card in
+the graph. Filings, dispatch, per-card model pins and the goal judge were all verified
+working in the same run. **The board keeps the local pair on purpose** — it is the worked
+example of `model`/`provider`, with `"max-runtime": "20m"`, and its README says how to drop
+back to a cloud-only run. Re-run it when the 44 GB card lands, or on a lighter card than
+`I1`.

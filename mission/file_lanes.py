@@ -263,8 +263,10 @@ def file_board(board, repo, workdir, lane_count, key_prefix, max_runtime=None,
                     "--created-by", "coder", "--json"]
             if card["skill"]:
                 args += ["--skill", card["skill"]]
-            # The judge's model, when the manifest pins it. Which cards that is is
-            # decided in lanes.model_args (the reviews), not here.
+            # The model this card runs on: the board's `model`/`provider` (a lane's
+            # own header is not known yet — the idea is entered after filing and
+            # open_lane() re-points the lane's cards), and the review pin on the
+            # review cards over it. Which cards get which is lanes.model_args.
             args += lanes.model_args(card["code"], board_cfg)
             args += lanes.goal_args(card["code"], enabled=goal_mode,
                                     max_turns=goal_max_turns)

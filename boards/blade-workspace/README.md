@@ -4,7 +4,7 @@
 directory the board owns. This one points `default-workdir` at a repository that
 already exists, that this repo does not contain, and that has its own history. It is
 the cheap smoke test for running a lane against a real project, the way
-`minimal-development` is the cheap smoke test for running one at all.
+`is-even` is the cheap smoke test for running one at all.
 
 ## The work directory
 
@@ -63,6 +63,6 @@ whether that repository keeps the board's changes is decided with its own git.
 
 ## Timing
 
-`max-runtime` is 10 minutes per card, not `minimal-development`'s 4: the deliverable is
+`max-runtime` is 10 minutes per card, not `is-even`'s 20: the deliverable is
 small, but the coder must read a real tree first, and a survey that runs out of budget
 produces a plan about an empty directory.

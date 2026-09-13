@@ -100,8 +100,9 @@ Gi(n)      ──REWORK───────→ I(n)-rev-N          → Gi(n)-r(
   and `TI` waits until the newest implementation verdict is PASS. `P` stays parked while
   the newest idea verdict is REWORK.
 - **Pins:** a re-review is a review, so it carries the same `model_override` as the
-  review it repeats; otherwise a rework round would silently drop back to the worker's
-  model.
+  review it repeats, and a revision card carries the model the card it repeats ran on
+  (`lanes.model_args` with the lane's own header pair); otherwise a rework round would
+  silently drop back to the worker's profile model.
 - **Plan revisions** carry turn-diet guidance: targeted patches to the existing file,
   re-verify only the fixed lines. Framed as "re-verify everything", a plan fix dies at
   the turn ceiling.
@@ -128,12 +129,26 @@ profiles a board needs from its manifest (`lanes.required_profiles`), and a mani
 spawned and nothing reports it, so a role that loses its profile must be remapped in
 the same change.
 
-**Independent review model.** The review cards (`lanes.JUDGE_CODES` = RVp, RVa, RVc,
-and their rework rounds) carry `model_override`/`provider_override` — the engine's own
-task-property names — while author cards run the coder's default. Every shipped board
-pins `glm-5.3-flash` on `opencode-go`, so the model that reviews is not the model that
-wrote the work. It is board-level only, so no idea header can buy a lane a different
-review model; `board_schema` refuses a provider without a model, as the engine does.
+**Two models, one precedence.** `model`/`provider` is the board's WORK model: filed on
+every card it files, board-level with a per-lane header override, and re-pointed onto a
+lane's parked cards by `run.open_lane` when the idea names its own pair (a board files
+IT-complete, before any idea exists). `model_override`/`provider_override` — the engine's
+own task-property names — is the REVIEW pin, board-level only, and it wins wherever it is
+set: the review cards (`lanes.JUDGE_CODES` = RVp, RVa, RVc, and their rework rounds)
+carry it, author cards run the work model, and the shipped boards pin `glm-5.3-flash` on
+`opencode-go` so the model that reviews is not the model that wrote the work. Neither is
+required: omit both and no flag is filed, every card running its profile's own model.
+
+Measured 2026-09-13 (`boards/is-even` README has the full record): a board on a local
+`ornith-35b`/`llama-swap` filed and dispatched correctly and the worker process really
+carried `-m ornith-35b --provider llama-swap`, but the model could not hold the worker
+contract on the refinement card — hallucinated the attachment, malformed tool calls,
+duplicated calls in one turn, one generation stalled at the ceiling. The knobs work; the
+24 GB rig is not yet a worker. `board_schema` refuses a provider without a model beside it in the same scope, as the
+engine does, and reports (never refuses) a board that names a work model and no pin —
+its reviews have quietly become the author's model. `lanes.model_args` is the single
+lookup for the whole precedence, so filing, the rework rounds and the lane-open re-point
+cannot disagree about it.
 The review model is not the *goal judge* (see [the goal judge](#the-goal-judge)).
 Reasoning depth is not pinned: stock `hermes kanban create` has no flag for it, and
 carrying a Hermes patch for it costs more to maintain than the depth is worth, so every
@@ -244,9 +259,10 @@ polling would hide the stall.
 
 - **Two different models.** The *goal judge* is the auxiliary task `auxiliary.goal_judge`.
   With no `auxiliary:` override in the profile's `config.yaml` it runs on the worker's
-  profile model. The *review model* is `model_override`/`provider_override`, set on the
-  review cards only (`lanes.JUDGE_CODES`, `lanes.model_args`). Pinning the review model
-  does not move the goal judge.
+  profile model — and so, transitively, on the board's `model` when the worker runs one.
+  The *review model* is `model_override`/`provider_override`, set on the review cards
+  only (`lanes.JUDGE_CODES`, `lanes.model_args`). Pinning the review model does not move
+  the goal judge.
 - **It sees text only**: the card's title and body (cut at 2000 characters), plus the
   worker's claim. It neither runs nor reads the work, so its verdict depends on how the
   claim is worded. A claim that names failing tests without saying the body counts that
@@ -274,7 +290,8 @@ polling would hide the stall.
   conversation it judges (`hermes-kanban-goal-judge-affinity.patch`). This is why goal
   mode is opt-in.
 - **Probing it.** There is no probe board, because goal mode is a manifest key. Before
-  arming a real board with `"goal": true`, set it on `boards/minimal-development`,
+  arming a real board with `"goal": true`, set it on `boards/is-even` (it ships with it
+  on; turn it off to run that board without the judge),
   re-create and run that board, then set it back. A working probe proves that the judge
   answers and can say `done`. It does not prove the judge checks the work.
   - *Working:* `I1` completes in one turn. The worker's profile log

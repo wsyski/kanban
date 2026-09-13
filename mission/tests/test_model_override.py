@@ -84,6 +84,40 @@ def test_a_provider_without_a_model_is_not_sent():
     assert lanes.model_args("RVa", {"provider_override": "opencode-go"}) == []
 
 
+# --- the work model: every card, unless a lane says otherwise ----------------
+
+WORK = {"model": "ornith-35b", "provider": "llama-swap"}
+LANE = {"model": "qwen38-27b", "provider": "llama-swap"}
+
+
+def test_the_work_model_rides_every_card():
+    """The board's `model` is what the board runs on: the plan, the tests and the
+    implementation alike — not only the cards a verdict hangs on. Omitted, no flag
+    is filed at all and every card keeps its profile's own model."""
+    for code in ("I", "P", "TW", "C", "TI", "RVp", "RVa", "RVc"):
+        assert lanes.model_args(code, dict(WORK)) == \
+            ["--model", "ornith-35b", "--provider", "llama-swap"], code
+
+
+def test_a_lane_header_model_beats_the_board():
+    """`resolve_lane_options` has already folded the idea header over the board, so
+    the lane's dict is the only thing to read below the pin."""
+    assert lanes.model_args("C", dict(WORK), dict(LANE)) == \
+        ["--model", "qwen38-27b", "--provider", "llama-swap"]
+
+
+def test_the_review_pin_beats_the_lane_and_the_board_model():
+    """The verdict is the one card that must not run the author's model, however
+    strong the board's own model is."""
+    both = {**WORK, **PINNED}
+    assert lanes.model_args("RVa", both, dict(LANE)) == [
+        "--model", "glm-5.3-flash", "--provider", "opencode-go"]
+    # ...and with no pin, the work model reaches the reviews too — which is the
+    # case board_schema.review_model_notices reports at the door.
+    assert lanes.model_args("RVa", dict(WORK), dict(LANE)) == \
+        ["--model", "qwen38-27b", "--provider", "llama-swap"]
+
+
 # --- the schema declares these keys ------------------------------------------
 
 def test_the_model_pin_is_board_level():
@@ -92,6 +126,35 @@ def test_the_model_pin_is_board_level():
     for key in ("model_override", "provider_override"):
         assert key in board_schema.BOARD_KEYS, key
         assert key not in board_schema.HEADER_KEYS, key
+
+
+def test_the_work_model_is_per_lane_and_the_pin_is_not():
+    """A board that tests models wants a lane per model; a lane buying itself a
+    different VERDICT is the thing the pin's board-level rule exists to prevent."""
+    for key in ("model", "provider"):
+        assert key in board_schema.HEADER_KEYS, key
+    for key in ("model_override", "provider_override"):
+        assert key not in board_schema.HEADER_KEYS, key
+
+
+def test_a_provider_without_a_model_is_refused_in_either_scope():
+    for scope, kwargs in (("board.json", {"provider": "llama-swap"}),
+                          ("lane-1.md", {"provider": "llama-swap"})):
+        problems = board_schema.validate(
+            {"lanes": 1, **kwargs}, where=scope,
+            only=board_schema.PER_LANE if scope.endswith(".md") else None)
+        assert any("requires 'model'" in p for p in problems), problems
+
+
+def test_a_board_model_with_no_pin_is_reported_and_not_refused():
+    """A legitimate board (one local model for everything) is a note, not an error:
+    the audit's clean gate must survive it, and the operator must still be told the
+    verdict no longer comes from a different model."""
+    assert board_schema.review_model_notices({"model": "ornith-35b"}, where="b")
+    assert board_schema.review_model_notices(
+        {"model": "ornith-35b", "model_override": "glm-5.3-flash"}, where="b") == []
+    assert board_schema.review_model_notices({}, where="b") == []
+    assert board_schema.validate({"lanes": 1, "model": "ornith-35b"}, where="b") == []
 
 
 def test_a_manifest_may_pin_a_model():
@@ -161,6 +224,22 @@ def test_filing_puts_the_pin_on_the_review_cards_only(monkeypatch, tmp_path):
             assert "--model" not in a and "--provider" not in a, a[1]
 
 
+def test_filing_puts_the_work_model_on_every_card_and_the_pin_on_the_reviews(monkeypatch, tmp_path):
+    """Filing happens before any idea exists, so the manifest's `model` is the only
+    model a card can be filed with; a lane's header re-points its own cards when the
+    lane opens (run.open_lane). Both are filed as the flag pair --model/--provider."""
+    fake = FakeKb()
+    monkeypatch.setattr(file_lanes, "kb", fake)
+    monkeypatch.setattr(file_lanes, "_board_cfg", lambda d: {**WORK, **PINNED})
+    file_lanes.file_board("b", _repo(), str(tmp_path), 1, "k")
+    for a in fake.created():
+        if a[1].startswith("RV"):
+            assert _arg(a, "--model") == "glm-5.3-flash", a[1]
+        else:
+            assert _arg(a, "--model") == "ornith-35b", a[1]
+            assert _arg(a, "--provider") == "llama-swap", a[1]
+
+
 def test_filing_without_a_pinned_model_sends_no_flag(monkeypatch, tmp_path):
     fake = FakeKb()
     monkeypatch.setattr(file_lanes, "kb", fake)
@@ -215,6 +294,39 @@ def test_a_re_review_of_a_board_without_a_pin_sends_no_model(monkeypatch, tmp_pa
              for c in ("Gi", "Gp", "Gc")}
     run.file_code_revision(state, 1, 1, "1. fix", owner="C")
     assert not [c for c in calls if "--model" in c]
+
+
+def test_a_revision_card_inherits_the_lanes_model(monkeypatch, tmp_path):
+    """A round's revision card REPEATS the card it revises, so it has to run where
+    that card ran: pinned to the profile's model it would quietly change what the
+    round tests on. The re-review keeps the pin, and the revision takes the lane's
+    model — header first, board second."""
+    calls = _capture_rework(monkeypatch, tmp_path, {**WORK, **PINNED})
+    monkeypatch.setattr(run, "IDEAS_DIR", str(tmp_path))
+    (tmp_path / "lane-1.md").write_text(
+        "<!-- model: qwen38-27b -->\n<!-- provider: llama-swap -->\n## One\nbody\n")
+    state = {lanes.card_title(c, 1): {"id": f"id-{c}", "status": "blocked"}
+             for c in ("Gi", "Gp", "Gc")}
+    run.file_revision(state, 1, 1, "1. fix the plan", base="P",
+                      reviewer_prefix="RVp", gate_code="Gp")
+    run.file_code_revision(state, 1, 1, "1. fix the code", owner="C")
+    created = [c for c in calls if c[0] == "create"]
+    for prefix in ("P1-rev-1", "C1-rev-1"):
+        rev = next(c for c in created if c[1].startswith(prefix))
+        assert _arg(rev, "--model") == "qwen38-27b", rev[1]
+    for prefix in ("RVp1-r2", "RVa1-r2"):
+        rr = next(c for c in created if c[1].startswith(prefix))
+        assert _arg(rr, "--model") == "glm-5.3-flash", rr[1]
+
+
+def test_a_revision_card_filed_with_no_lane_on_disk_takes_the_board_model(monkeypatch, tmp_path):
+    calls = _capture_rework(monkeypatch, tmp_path, dict(WORK))
+    monkeypatch.setattr(run, "IDEAS_DIR", str(tmp_path))   # no lane file on disk
+    state = {lanes.card_title(c, 1): {"id": f"id-{c}", "status": "blocked"}
+             for c in ("Gi", "Gp", "Gc")}
+    run.file_code_revision(state, 1, 1, "1. fix", owner="C")
+    rev = next(c for c in calls if c[0] == "create" and c[1].startswith("C1-rev-1"))
+    assert _arg(rev, "--model") == "ornith-35b"
 
 
 # --- create-board.sh's pre-flight asks the graph, not a list ----------------

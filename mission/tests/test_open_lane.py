@@ -116,6 +116,56 @@ def test_tick_opens_a_lane_whose_root_is_already_unblocked(monkeypatch, tmp_path
     run._OPENED.clear()
 
 
+def test_opening_a_lane_re_points_its_cards_at_the_lanes_model(monkeypatch, tmp_path):
+    """The cards are filed before their idea exists, so a `<!-- model: … -->` header
+    can only land when the lane opens -- and it must land before the root is
+    released, because a card claimed with the wrong model spends its single attempt
+    on it. The review keeps the board's pin, and a gate is left alone: nothing
+    spawns it, so a model flag on it buys nothing."""
+    calls = []
+    _board_env(monkeypatch, tmp_path, calls, it=False)
+    monkeypatch.setattr(run, "manifest", lambda: {
+        "model": "ornith-35b", "provider": "llama-swap",
+        "model_override": "glm-5.3-flash", "provider_override": "opencode-go"})
+    monkeypatch.setattr(run, "lane_options", lambda lane: {
+        "integration-tests": False, "unit-tests": True, "auto-gates": False,
+        "model": "qwen38-27b", "provider": "llama-swap", "idea": "## Idea 1: is_even\n"})
+    run.tick()
+    sets = {c[1]: c[2:] for c in calls if c[0] == "set-model"}
+    for cid in ("id-I", "id-P", "id-TW", "id-C"):
+        assert sets[cid] == ("qwen38-27b", "--provider", "llama-swap"), cid
+    # the review was filed with the pin already, so it is not re-pointed at all...
+    assert "id-RVa" not in sets, sets
+    # ...and a gate is never re-pointed: nothing spawns it
+    for gate in ("id-Gi", "id-Gp", "id-Gc"):
+        assert gate not in sets, (gate, sets)
+    run._OPENED.clear()
+
+
+def test_a_lane_without_a_pin_re_points_its_review_too(monkeypatch, tmp_path):
+    """With no `model_override` the review is just another card: the lane's model
+    reaches it, and the driver says so out loud (the door prints the board-level
+    form of the same note)."""
+    calls = []
+    _board_env(monkeypatch, tmp_path, calls, it=False)
+    monkeypatch.setattr(run, "manifest", lambda: {"model": "ornith-35b",
+                                                  "provider": "llama-swap"})
+    monkeypatch.setattr(run, "lane_options", lambda lane: {
+        "integration-tests": False, "unit-tests": True, "auto-gates": False,
+        "model": "qwen38-27b", "provider": "llama-swap", "idea": "## Idea 1: is_even\n"})
+    run.tick()
+    sets = {c[1]: c[2:] for c in calls if c[0] == "set-model"}
+    assert sets["id-RVa"] == ("qwen38-27b", "--provider", "llama-swap"), sets
+    run._OPENED.clear()
+
+
+def test_a_lane_that_names_no_model_re_points_nothing(monkeypatch, tmp_path):
+    calls = []
+    _board_env(monkeypatch, tmp_path, calls, it=False)
+    run.tick()
+    assert not [c for c in calls if c[0] == "set-model"], calls
+
+
 def test_a_pruned_unit_test_card_narrows_the_review_in_the_drivers_graph(monkeypatch, tmp_path):
     """The driver's own view of the fork. With TW archived (`unit-tests: false`) the
     review must wait on C alone: `parents_done()` reads a missing parent as not-done,

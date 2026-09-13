@@ -81,6 +81,15 @@ OPTIONS = {
     "max-reworks":       ("count",   3,     True,  None),
     "timeout-min":       ("count",    240,   False, None),
     "assignees":         ("roles",    {},    False, None),
+    # The WORK model: every card the board files runs on it, and a lane may name
+    # its own in the idea header (`<!-- model: ornith-35b -->`). Named as the flag
+    # it becomes at filing (`hermes kanban create --model`, `--provider`), because
+    # that is what a reader greps for. Omitted everywhere, no flag is filed and
+    # every card runs its assignee profile's own model — the behaviour before
+    # 2026-09-13. `provider` needs a `model` beside it in the same scope, for the
+    # engine's own reason: a provider names a backend, not a model.
+    "model":             ("text",     None,  True,  None),
+    "provider":          ("text",     None,  True,  None),
     # The model a REVIEW runs on, named exactly as the engine names the task
     # property it becomes (`model_override`, with its provider beside it). Board
     # level, NOT per-lane: the header door is for options a lane's own idea may
@@ -247,10 +256,14 @@ def validate(cfg, *, where="board.json", only=None, lists=True):
     # board is declared rather than at spawn: a provider names a backend, not a
     # model, so `provider_override` alone would ask the worker for a model nobody
     # named — and a spawn failure is final.
-    if "provider_override" in allowed and cfg.get("provider_override") \
-            and not cfg.get("model_override"):
-        problems.append(f"{where}: 'provider_override' requires 'model_override' "
-                        f"— a provider alone does not say which model to run")
+    # ...and the same rule for the work pair, in whichever scope it is declared:
+    # a lane that names only a provider would pair it with the board's model, and a
+    # model belongs to one provider — the flag pair is filed together or not at all.
+    for provider_key, model_key in (("provider_override", "model_override"),
+                                    ("provider", "model")):
+        if provider_key in allowed and cfg.get(provider_key) and not cfg.get(model_key):
+            problems.append(f"{where}: {provider_key!r} requires {model_key!r} "
+                            f"— a provider alone does not say which model to run")
     return problems
 
 
@@ -418,6 +431,26 @@ def workdir_notices(cfg, *, where="board.json"):
             f"--cached` lists the whole index, so scope every check with a pathspec"]
 
 
+def review_model_notices(cfg, *, where="board.json"):
+    """The reviews are no longer an independent model — REPORTED, never a refusal.
+
+    Every shipped board pins `model_override` for one reason: the verdict must come
+    from a model other than the author's. Naming a board `model` without that pin
+    puts the reviews back on the author's model, which is a legitimate thing to want
+    (one local model for everything, an experiment that does not care) and a
+    catastrophic thing to do by omission. So it is a note at the door and a line in
+    the driver's log, not an error.
+
+    The driver reports the per-lane form when a lane opens, because only it knows
+    the lane's resolved options then.
+    """
+    if cfg.get("model_override") or not cfg.get("model"):
+        return []
+    return [f"{where}: 'model' {cfg['model']!r} applies to every card and no "
+            f"'model_override' is pinned — the review cards run the author's model, "
+            f"so a verdict no longer comes from a different one"]
+
+
 def workdir_problems(cfg, *, where="board.json"):
     """Faults in an explicit `default-workdir` that only the filesystem can answer.
 
@@ -466,7 +499,7 @@ def validate_or_die(path):
         sys.exit(f"{path}: not valid JSON — {e.msg} at line {e.lineno}")
     problems = validate(cfg, where=path) + workdir_problems(cfg, where=path)
     # Notices never fail a door: the work directory's CONTENTS are not a fault.
-    for notice in workdir_notices(cfg, where=path):
+    for notice in workdir_notices(cfg, where=path) + review_model_notices(cfg, where=path):
         print(f"note: {notice}")
     if problems:
         sys.exit("\n".join(["board manifest rejected:"]

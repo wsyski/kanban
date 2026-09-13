@@ -102,6 +102,23 @@
       "pattern": "^(?:\\d+(?:\\.\\d+)?[hms])+$",
       "type": "string"
     },
+    "model": {
+      "oneOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "description": "one entry per lane, in lane order",
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      ]
+    },
     "model_override": {
       "minLength": 1,
       "type": "string"
@@ -109,6 +126,23 @@
     "name": {
       "minLength": 1,
       "type": "string"
+    },
+    "provider": {
+      "oneOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "description": "one entry per lane, in lane order",
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      ]
     },
     "provider_override": {
       "minLength": 1,
