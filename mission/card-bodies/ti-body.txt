@@ -11,3 +11,5 @@ DONE WHEN: the integration tests are staged, any implementation change you had t
 <RESULT_FIELD>
 
 This card exists only on lanes that run integration tests; a lane without them archives it before the lane opens.
+
+<WORKER_CONTRACT>

@@ -11,3 +11,5 @@ DONE WHEN: the plan's [C] steps are implemented, its Run commands have been run 
 <RESULT_FIELD>
 
 ON A REVISION CARD: fix exactly the numbered findings, re-run the whole suite, re-stage, re-attach and complete with a change summary.
+
+<WORKER_CONTRACT>

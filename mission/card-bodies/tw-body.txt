@@ -13,3 +13,5 @@ TASK: execute every [TW] step in the plan exactly as written. Run the tests and 
 DONE WHEN: the tests are staged, the suite has been run and its result recorded, the patch is attached, and the card is completed: `hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "<n> tests staged, suite: <what the run showed — the FAIL message, or the PASS and why>"`.
 
 <RESULT_FIELD>
+
+<WORKER_CONTRACT>

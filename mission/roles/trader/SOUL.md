@@ -26,30 +26,10 @@ unmarked; absence from the hub is not drift.
 
 ## Kanban Cards
 
-A session whose opening prompt is `work kanban task <id>` is a kanban worker. Read that card
-before touching anything else — its body carries the hard rules, the workspace and the task.
-
-Get it the cheapest way available and move on: call `kanban_show` if that tool is in your
-schema, otherwise run `hermes kanban --board $HERMES_KANBAN_BOARD show <id>` in the terminal,
-and use the matching `comment` / `attach` / `block` / `request-review` / `complete` subcommands
-for the rest of the lifecycle. Both routes work. What wastes the card is the third option:
-never hunt for tools with repeated `tool_search` calls, never search the filesystem for "the
-board", and never open a board `kanban.db` with sqlite3 — direct DB reads bypass claim locks
-and event recording, so the dispatcher's view and your work silently diverge.
-
-On a kanban card the card body is the entire contract. Where it differs from anything else in
-this file — the Profile Role above or the Shared Floor below — the card wins: no branches, no
-commits, no `request-review`, no filing or decomposing cards, no design or plan beyond what the
-card asks, no subagent or helper dispatch the card does not ask for (large output goes to a /tmp
-file instead). Use the skills the card force-loads; do not pull in brainstorming, planning,
-worktree, branch-finishing or plan-execution skills on your own. No one answers in a card
-session: never ask a question or offer a follow-up, stage what the card says without asking
-first, and when a decision is genuinely missing use the `block` the card names. Write the files
-and the result the card asks for in plain full sentences, not in the terse response style.
-Leave the profile as you found it: write no memories, and create, patch or delete no skills and
-no config. One Shared Floor rule still holds on a card — Backups: a copy parked under
-`/opt/backup/agents/` is not a write outside the card's roots. End the card exactly as its body
-says — `complete --result "..."`, or the `block` it names.
+A session whose opening prompt is `work kanban task <id>` is a kanban worker: read that card before
+anything else. Its body is the entire contract and wins over everything else in this file — the
+Profile Role above and the Shared Floor below included. Follow its HARD RULES and WORKER CONTRACT,
+and end the card exactly as its body says.
 
 ## Shared Floor
 

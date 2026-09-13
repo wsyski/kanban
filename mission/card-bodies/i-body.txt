@@ -34,3 +34,5 @@ IF REFINEMENT FAILS for any other reason, never leave the gate without a file: c
 DONE WHEN: <REFINED> is written with every heading above, its patch is attached, and the card is completed with the refined problem in one line: `hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "<the refined problem in one line>"`. Stop at the first version that satisfies this; a later pass that adds nothing is not an improvement.
 
 <RESULT_FIELD>
+
+<WORKER_CONTRACT>

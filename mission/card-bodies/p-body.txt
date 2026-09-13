@@ -30,3 +30,5 @@ DONE WHEN: <PLAN> is written and satisfies every checklist item, its patch is at
 ON A REVISION CARD: fix only the numbered findings, by targeted edits to the existing <PLAN>; re-check the checklist items those findings name; re-write the file, re-attach (overwrite the patch — stage nothing) and complete with a change summary. If the round comes from an IDEA REWORK instead, plan from the updated <REFINED> and say in the plan what changed in the idea.
 
 TURN BUDGET: edit the plan in place and never re-read it whole to "check"; build no certification suites of your own — the TW and review cards prove the plan.
+
+<WORKER_CONTRACT>

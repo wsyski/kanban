@@ -22,4 +22,6 @@ per board under `boards/<slug>/`, driven by `mission/run.py` over `hermes kanban
 - `boards/<slug>/runs/` is gitignored per-run scratch. Never delete run directories.
 - One driver per board. Don't re-file a board mid-run; use `mission/reset.sh`.
 - Card bodies (`mission/card-bodies/`) forbid workers from creating, patching or deleting skills. Keep that clause.
+- Rules every worker card shares live once, in `mission/card-bodies/_worker-contract.txt` (`<WORKER_CONTRACT>`). A profile SOUL's `## Kanban Cards` stays a short precedence paragraph ("the card wins"): don't grow it back.
+- `mission/roles/*/SOUL.md` are copies of `~/.hermes/profiles/<p>/SOUL.md`. Edit the live profile first, then copy it back; the drift check is in `mission/roles/README.md`.
 - Board options have one declaration, `mission/board_schema.py`. Regenerate `mission/board.schema.json` with `--write-schema`; don't hand-edit it.

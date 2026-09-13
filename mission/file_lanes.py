@@ -41,11 +41,12 @@ DEFAULT_MAX_RUNTIME = "60m"
 DEFAULT_MAX_RETRIES = 1
 
 # Shared text a body includes by name, so a rule two cards must agree on (the
-# plan checklist, the toolchain boundary) is written once. A fragment may use the
-# lane placeholders; it may not include another fragment.
+# plan checklist, the toolchain boundary, the worker contract) is written once. A
+# fragment may use the lane placeholders; it may not include another fragment.
 FRAGMENTS = {"<PLAN_CHECKLIST>": "_plan-checklist.txt",
              "<TOOLCHAIN_BOUNDARY>": "_toolchain-boundary.txt",
-             "<RESULT_FIELD>": "_result-field.txt"}
+             "<RESULT_FIELD>": "_result-field.txt",
+             "<WORKER_CONTRACT>": "_worker-contract.txt"}
 
 # Every key a board.json may carry, from the one declaration: board_schema knows
 # each option's type and default too, and validates them. A second copy here is

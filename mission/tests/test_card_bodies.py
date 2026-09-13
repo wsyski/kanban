@@ -283,3 +283,16 @@ def test_no_body_carries_retired_mechanics():
         assert "LOOP_COMPLETE" not in text, name
         assert "transient" not in text.lower(), name
         assert "plans/" not in text, name
+
+
+def test_every_worker_and_verdict_body_carries_the_worker_contract():
+    """The card contract used to sit in every profile's SOUL.md, paid by every session of
+    the profile — desktop, cron, telegram — and kept in three copies. The SOUL now only says
+    the card wins; the rules themselves travel with the cards, written once."""
+    for body in ("i-body.txt", "p-body.txt", "tw-body.txt", "c-body.txt", "ti-body.txt",
+                 "rvp-body.txt", "rva-body.txt", "rvc-body.txt"):
+        assert "<WORKER_CONTRACT>" in read(body), body
+    text = read("_worker-contract.txt")
+    for rule in ("kanban.db", "tool_search", "request-review", "block", "memories", "skills",
+                 "/opt/backup/agents/", "full sentences"):
+        assert rule in text, rule
