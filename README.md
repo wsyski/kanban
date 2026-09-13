@@ -126,6 +126,12 @@ What does have to be true is that **one** gateway holds
 then sits forever, which looks exactly like a slow one. `create-board.sh`
 checks this and refuses.
 
+Every role the card graph fills is worked by a **profile** — the graph addresses profiles, not roles
+(`mission/lanes.py` → `assignee_for`) — so a role is only as distinct as the profile behind it. Two
+of the six (`tester`, `reviewer`) have no profile of their own today and are worked on `coder`
+(`ROLE_FALLBACK`). The SOUL of each of the six roles, with its provenance, a drift check and the
+install commands, is in **`mission/roles/`**.
+
 That is all the template needs. **Toolchains belong to boards, not here** —
 the card graph never mentions a language or a build tool, and a board is as
 likely to be Python or Rust as Java. Each board's own `README.md` states what

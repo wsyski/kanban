@@ -42,20 +42,20 @@ class RomanMainTest {
         assertEquals("14", xiv.out.trim(), "covers SC1");
         assertEquals("", xiv.err.trim(), "covers SC1");
 
-        Outcome long_ = run("MMMCMXCIX\n");
-        assertEquals(0, long_.status, "covers SC2");
-        assertEquals("3999", long_.out.trim(), "covers SC2");
-        assertEquals("", long_.err.trim(), "covers SC2");
+        Outcome longest = run("MMMCMXCIX\n");
+        assertEquals(0, longest.status, "covers SC2");
+        assertEquals("3999", longest.out.trim(), "covers SC2");
+        assertEquals("", longest.err.trim(), "covers SC2");
     }
 
     @Test
-    void rejectsInvalidInputWithAnEmptyStdoutAndANonEmptyStderr() {
-        String[] stdin = {"IIII\n", "VX\n", "IXX\n", "xiv\n", "ABC\n", "", "\n", "MMMM\n"};
+    void rejectsEveryInvalidInputWithAnEmptyStdoutAndANonEmptyStderr() {
+        String[] stdin = {"IIII\n", "VX\n", "IXX\n", "xiv\n", "ABC\n", "MMMM\n", "", "\n"};
         for (String input : stdin) {
             Outcome rejected = run(input);
-            assertEquals(1, rejected.status, "covers SC3/SC7 for input <" + input + ">");
-            assertEquals("", rejected.out.trim(), "covers SC3/SC7: stdout stays empty for <" + input + ">");
-            assertFalse(rejected.err.trim().isEmpty(), "covers SC3/SC7: a message on stderr for <" + input + ">");
+            assertEquals(1, rejected.status, "covers SC3 for input <" + input + ">");
+            assertEquals("", rejected.out.trim(), "covers SC3: stdout stays empty for <" + input + ">");
+            assertFalse(rejected.err.trim().isEmpty(), "covers SC3: a message on stderr for <" + input + ">");
         }
     }
 

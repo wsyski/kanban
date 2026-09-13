@@ -2,12 +2,12 @@
   "$schema": "../../mission/board.schema.json",
   "slug": "roman-evaluator-java",
   "name": "Roman Evaluator Java",
-  "lanes": 3,
+  "lanes": 2,
   "integration-tests": [
     false,
     true
   ],
   "auto-gates": true,
-  "max-runtime": "10m",
+  "max-runtime": "20m",
   "max-reworks": 3
 }

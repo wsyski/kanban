@@ -7,7 +7,6 @@ import java.lang.reflect.Modifier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -26,13 +25,13 @@ class RomanNumeralTest {
     }
 
     @Test
-    void rejectsNonCanonicalSpellings() {
-        String[] invalid = {"IIII", "VX", "IXX", "IIX", "VIV", "IC", "IL", "XM", "XXXXXXXXXX"};
+    void rejectsEveryNonCanonicalAndOutOfRangeSpelling() {
+        String[] invalid = {"IIII", "VX", "IXX", "IIX", "VIV", "IC", "IL", "XM", "XMM", "MMMM", "XXXXXXXXXX"};
         for (String numeral : invalid) {
             IllegalArgumentException thrown = assertThrows(IllegalArgumentException.class,
-                    () -> RomanNumeral.parse(numeral), "covers SC3/SC7 for " + numeral);
-            assertNotNull(thrown.getMessage(), "covers SC3 for " + numeral);
-            assertFalse(thrown.getMessage().isEmpty(), "covers SC3 for " + numeral);
+                    () -> RomanNumeral.parse(numeral), "covers SC3 for " + numeral);
+            assertFalse(thrown.getMessage() == null || thrown.getMessage().isEmpty(),
+                    "covers SC3: a message for " + numeral);
         }
     }
 
