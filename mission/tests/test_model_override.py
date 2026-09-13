@@ -1,10 +1,9 @@
-"""The roles the graph fills, and the model and depth a board may pin its reviews to.
+"""The roles the graph fills, and the model a board may pin its reviews to.
 
-Three rules, one lookup each — `lanes.assignee_for` (which profile works a role),
-`lanes.model_args` (which cards carry the model pin) and `lanes.effort_args` (which
-carry the reasoning-effort pin) — so the tests here are about the rules and about the
-three places that consume them: the filing path, the rework path, and the schema that
-declares the options.
+Two rules, one lookup each — `lanes.assignee_for` (which profile works a role) and
+`lanes.model_args` (which cards carry the model pin) — so the tests here are about the
+rules and about the three places that consume them: the filing path, the rework path,
+and the schema that declares the options.
 """
 
 import json
@@ -19,8 +18,7 @@ import file_lanes
 import lanes
 import run
 
-PINNED = {"model_override": "glm-5.3-flash", "provider_override": "opencode-go",
-          "reasoning_effort": "high"}
+PINNED = {"model_override": "glm-5.3-flash", "provider_override": "opencode-go"}
 REVIEW_CODES = ("RVp", "RVa", "RVc")
 
 
@@ -57,7 +55,7 @@ def test_required_profiles_follows_a_remap():
     assert "gatekeeper" in req      # a REMAPPED gate does name a profile
 
 
-# --- the model pin, and the depth the reviews run at -------------------------
+# --- the model pin the reviews run on ----------------------------------------
 
 def test_the_review_cards_take_the_model_the_manifest_pins():
     for code in REVIEW_CODES:
@@ -86,77 +84,14 @@ def test_a_provider_without_a_model_is_not_sent():
     assert lanes.model_args("RVa", {"provider_override": "opencode-go"}) == []
 
 
-# --- the reasoning effort the reviews run at ---------------------------------
-
-def test_the_review_cards_take_the_reasoning_effort_the_lane_resolves():
-    """The coder works a review card AS A REVIEWER, and a board that buys that card
-    another model usually wants it to think at another depth: `reasoning_effort` is
-    the engine's own name for that depth, and it stays independent of the model."""
-    for code in REVIEW_CODES:
-        assert lanes.reasoning_effort_args(code, {"reasoning_effort": "high"}) == [
-            "--reasoning", "high"], code
-
-
-def test_only_the_judging_cards_carry_the_reasoning_effort():
-    for code in sorted({c["code"] for c in lanes.lane_cards(1)} - set(lanes.JUDGE_CODES)):
-        assert lanes.reasoning_effort_args(code, {"reasoning_effort": "high"}) == [], code
-
-
-def test_a_lane_without_a_reasoning_effort_files_no_flag():
-    assert lanes.reasoning_effort_args("RVp", {}) == []
-    assert lanes.reasoning_effort_args("RVp", None) == []
-
-
-def test_a_reasoning_effort_without_a_model_is_allowed():
-    """`kanban_db.create_task` takes `reasoning_effort` beside `model_override` and
-    neither requires the other, so depth may be bought without a model."""
-    assert lanes.reasoning_effort_args("RVa", {"reasoning_effort": "low"}) == [
-        "--reasoning", "low"]
-
-
-def test_a_typo_in_the_reasoning_effort_is_refused_where_the_board_is_declared():
-    """A typo must not reach the first dispatch: the engine refuses the same values
-    at spawn, and a spawn failure is FINAL (one attempt)."""
-    problems = board_schema.validate({"lanes": 1, "reasoning_effort": "bananas"}, where="b")
-    assert any("expected one of" in p for p in problems), problems
-
-
-def test_a_manifest_may_pin_a_reasoning_effort():
-    assert board_schema.validate({"lanes": 1, "reasoning_effort": "xhigh"}, where="b") == []
-    assert board_schema.validate({"lanes": 1, "reasoning_effort": "High"}, where="b") == []
-
-
-def test_the_reasoning_effort_is_per_lane_and_the_idea_may_override_it():
-    """It is a PER-LANE option: one value for the board, an array with one entry per
-    lane, or a lane's own `<!-- reasoning_effort: high -->` header — and the header
-    wins over the board's value."""
-    assert board_schema.validate({"lanes": 2, "reasoning_effort": ["high", "low"]},
-                                 where="b") == []
-    problems = board_schema.validate({"lanes": 2, "reasoning_effort": ["high"]}, where="b")
-    assert any("1 entries for 2 lane(s)" in p for p in problems), problems
-    # ... and the header door is open to it, unlike the model pin
-    assert board_schema.validate({"reasoning_effort": "high"}, where="lane-1.md",
-                                 only=board_schema.PER_LANE) == []
-    assert "reasoning_effort" in board_schema.HEADER_KEYS
-    # resolved for one lane: the board's entry, then the header on top of it
-    board = {"lanes": 2, "reasoning_effort": ["high", "low"]}
-    assert lanes.resolve_lane_options(board, {}, 2)["reasoning_effort"] == "low"
-    assert lanes.resolve_lane_options({"lanes": 1, "reasoning_effort": "low"},
-                                      {"reasoning_effort": "high"},
-                                      1)["reasoning_effort"] == "high"
-
-
 # --- the schema declares these keys ------------------------------------------
 
-def test_the_model_pin_is_board_level_and_the_depth_is_per_lane():
+def test_the_model_pin_is_board_level():
     """Which model the judge runs is the BOARD's property, so it has no header door
-    — a lane must not be able to quietly buy itself a stronger judge. How deep it
-    thinks is per-lane instead, because a lane may legitimately need more of it."""
+    — a lane must not be able to quietly buy itself a stronger judge."""
     for key in ("model_override", "provider_override"):
         assert key in board_schema.BOARD_KEYS, key
         assert key not in board_schema.HEADER_KEYS, key
-    assert "reasoning_effort" in board_schema.BOARD_KEYS
-    assert "reasoning_effort" in board_schema.HEADER_KEYS
 
 
 def test_a_manifest_may_pin_a_model():
@@ -221,28 +156,9 @@ def test_filing_puts_the_pin_on_the_review_cards_only(monkeypatch, tmp_path):
     for a in reviews:
         assert _arg(a, "--model") == "glm-5.3-flash", a[1]
         assert _arg(a, "--provider") == "opencode-go", a[1]
-        assert _arg(a, "--reasoning") == "high", a[1]
     for a in fake.created():
         if not a[1].startswith("RV"):
             assert "--model" not in a and "--provider" not in a, a[1]
-            assert "--reasoning" not in a, a[1]
-
-
-def test_filing_gives_each_lane_its_own_reasoning_effort(monkeypatch, tmp_path):
-    """`reasoning_effort` is PER-LANE, so the filed review cards carry their own
-    lane's value: a board may want its second lane reviewed at another depth."""
-    fake = FakeKb()
-    monkeypatch.setattr(file_lanes, "kb", fake)
-    monkeypatch.setattr(file_lanes, "_board_cfg",
-                        lambda d: {"lanes": 2, "reasoning_effort": ["high", "low"]})
-    file_lanes.file_board("b", _repo(), str(tmp_path), 2, "k")
-    for lane, level in ((1, "high"), (2, "low")):
-        for code in REVIEW_CODES:
-            a = next(c for c in fake.created() if c[1].startswith(f"{code}{lane}:"))
-            assert _arg(a, "--reasoning") == level, a[1]
-    for a in fake.created():                       # and nowhere else
-        if not a[1].startswith("RV"):
-            assert "--reasoning" not in a, a[1]
 
 
 def test_filing_without_a_pinned_model_sends_no_flag(monkeypatch, tmp_path):
@@ -275,8 +191,8 @@ def _capture_rework(monkeypatch, tmp_path, cfg):
 
 def test_a_re_review_keeps_the_judges_pins(monkeypatch, tmp_path):
     """A rework round is reviewed by a review card, so it must carry the same pins:
-    without them a second round would silently fall back to the worker's own model
-    and depth, which is the one thing the pins exist to avoid."""
+    without them a second round would silently fall back to the worker's own model,
+    which is the one thing the pin exists to avoid."""
     calls = _capture_rework(monkeypatch, tmp_path, PINNED)
     state = {lanes.card_title(c, 1): {"id": f"id-{c}", "status": "blocked"}
              for c in ("Gi", "Gp", "Gc")}
@@ -288,10 +204,9 @@ def test_a_re_review_keeps_the_judges_pins(monkeypatch, tmp_path):
         rr = next(c for c in created if c[1].startswith(prefix))
         assert _arg(rr, "--model") == "glm-5.3-flash", rr[1]
         assert _arg(rr, "--provider") == "opencode-go", rr[1]
-        assert _arg(rr, "--reasoning") == "high", rr[1]
     for prefix in ("P1-rev-1", "C1-rev-1"):
         rev = next(c for c in created if c[1].startswith(prefix))
-        assert "--model" not in rev and "--reasoning" not in rev, rev[1]
+        assert "--model" not in rev, rev[1]
 
 
 def test_a_re_review_of_a_board_without_a_pin_sends_no_model(monkeypatch, tmp_path):
@@ -300,45 +215,6 @@ def test_a_re_review_of_a_board_without_a_pin_sends_no_model(monkeypatch, tmp_pa
              for c in ("Gi", "Gp", "Gc")}
     run.file_code_revision(state, 1, 1, "1. fix", owner="C")
     assert not [c for c in calls if "--model" in c]
-
-
-# --- the lane's effort reaches the cards that judge --------------------------
-
-def _capture_effort(monkeypatch):
-    calls = []
-    monkeypatch.setattr(run, "kb", lambda *a: calls.append(a) or "")
-    monkeypatch.setattr(run, "log", lambda *a, **k: None)
-    return calls
-
-
-def test_the_lanes_reasoning_effort_reaches_its_review_cards(monkeypatch):
-    """The header override is only known at lane open, so the resolved value is pushed
-    onto the cards that judge — and onto nothing else."""
-    calls = _capture_effort(monkeypatch)
-    state = {lanes.card_title(code, 1): {"id": f"t_{code}", "status": "blocked"}
-             for code in ("RVp", "RVa", "RVc", "C", "P", "I")}
-    run.apply_lane_reasoning_effort(state, 1, {"reasoning_effort": "high"})
-    assert [c[0] for c in calls] == ["set-reasoning-effort"] * 3, calls
-    assert {c[1] for c in calls} == {"t_RVp", "t_RVa", "t_RVc"}, calls
-    assert {c[2] for c in calls} == {"high"}, calls
-
-
-def test_an_archived_review_card_is_skipped(monkeypatch):
-    """A lane without integration tests archives RVc at open, and the engine refuses
-    to set an effort on an archived card — so the push skips it rather than failing
-    the lane."""
-    calls = _capture_effort(monkeypatch)
-    state = {lanes.card_title("RVa", 1): {"id": "t_rva", "status": "blocked"},
-             lanes.card_title("RVc", 1): {"id": "t_rvc", "status": "archived"}}
-    run.apply_lane_reasoning_effort(state, 1, {"reasoning_effort": "low"})
-    assert [c[1] for c in calls] == ["t_rva"], calls
-
-
-def test_a_lane_without_a_reasoning_effort_sets_nothing(monkeypatch):
-    calls = _capture_effort(monkeypatch)
-    run.apply_lane_reasoning_effort({}, 1, {})
-    run.apply_lane_reasoning_effort({}, 1, {"reasoning_effort": None})
-    assert calls == []
 
 
 # --- create-board.sh's pre-flight asks the graph, not a list ----------------
@@ -402,20 +278,3 @@ def test_the_pre_flight_refuses_a_remap_to_a_profile_that_is_not_there(tmp_path)
                             ["coder", "researcher"])
     assert code == 1, (code, out)
     assert "profile senior not available" in out, out
-
-
-def test_a_re_review_takes_the_depth_the_lanes_idea_sets(monkeypatch, tmp_path):
-    """The base review cards get the LANE's resolved effort (an idea header wins over
-    the manifest); a rework round of the same review must not fall back to the board's."""
-    calls = _capture_rework(monkeypatch, tmp_path, PINNED)
-    monkeypatch.setattr(run, "lane_options", lambda lane: {"reasoning_effort": "low"})
-    state = {lanes.card_title(c, 1): {"id": f"id-{c}", "status": "blocked"}
-             for c in ("Gi", "Gp", "Gc")}
-    run.file_revision(state, 1, 1, "1. fix the plan", base="P",
-                      reviewer_prefix="RVp", gate_code="Gp")
-    run.file_code_revision(state, 1, 1, "1. fix the code", owner="C")
-    created = [c for c in calls if c[0] == "create"]
-    for prefix in ("RVp1-r2", "RVa1-r2"):
-        rr = next(c for c in created if c[1].startswith(prefix))
-        assert _arg(rr, "--reasoning") == "low", rr[1]
-        assert _arg(rr, "--model") == "glm-5.3-flash", rr[1]

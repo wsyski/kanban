@@ -576,10 +576,8 @@ def file_revision(state, lane, round_no, findings, base="P", reviewer_prefix="RV
                "--max-retries", rework_retries(), "--idempotency-key",
                f"{BOARD}-rr-{base}{lane}-r{round_no + 1}", "--created-by", "coder", "--json"]
     # A re-review IS a review: without this a rework round would silently drop
-    # back to the worker's default model AND depth, which is the one thing the
-    # pins avoid.
+    # back to the worker's default model, which is the one thing the pin avoids.
     rr_args += lanes.model_args(rr_code, manifest())
-    rr_args += lanes.reasoning_effort_args(rr_code, lane_options(lane) or manifest())
     rr_id = json.loads(kb(*rr_args))["id"]
     kb("link", rr_id, gate_id)
     # This gate now also guards the DOWNSTREAM card against starting while
@@ -1004,33 +1002,6 @@ def card_log(card):
 _OPENED = set()
 
 
-def apply_lane_reasoning_effort(state, lane, opts):
-    """Push this lane's resolved `reasoning_effort` onto the cards that judge.
-
-    The option is PER-LANE, and the lane's value is only known here: filing wrote the
-    board's own value with the card, but a lane's idea may override it with
-    `<!-- reasoning_effort: high -->` — and ideas are entered long after filing. So
-    the resolved value is what the review cards end up carrying.
-
-    `lanes.JUDGE_CODES` is the one place that says which cards judge, and a card this
-    lane dropped (RVc on a lane with no integration tests) is skipped: it is archived
-    by the time this runs, and the engine refuses to set an effort on an archived
-    card.
-    """
-    level = opts.get("reasoning_effort")
-    if not level:
-        return
-    for code in sorted(lanes.JUDGE_CODES):
-        card = live_card(state, code, lane)
-        if not card or card.get("status") in ("archived", "done"):
-            continue
-        try:
-            kb("set-reasoning-effort", card["id"], str(level))
-            log(f"LANE {lane}: {code}{lane} reasoning_effort={level}")
-        except RuntimeError as e:
-            log(f"LANE {lane}: set-reasoning-effort {code}{lane} skipped ({e})")
-
-
 def open_lane(state, lane):
     """Resolve lane <lane> the moment its turn comes. Once per lane per run.
 
@@ -1111,10 +1082,6 @@ def open_lane(state, lane):
                 kb("unlink", tw["id"], rva["id"])
             except RuntimeError as e:
                 log(f"LANE {lane}: unlink TW{lane}->RVa{lane} skipped ({e})")
-    # The lane's resolved effort, pushed onto the cards that judge. HERE, not at
-    # filing: the board's own value was filed with the card, but the lane's idea may
-    # override it, and the idea is entered long after filing.
-    apply_lane_reasoning_effort(state, lane, opts)
     # Snapshot BEFORE unblocking: the card bodies already point at this path,
     # and workers must never read the mutable source (spec D8).
     os.makedirs(SNAP_DIR, exist_ok=True)
@@ -1824,7 +1791,6 @@ def file_code_revision(state, lane, round_no, findings, owner="C", max_rounds=2,
                f"{BOARD}-rr-C{lane}-r{round_no + 1}", "--created-by", "coder", "--json"]
     # The re-review judges the revision: same pins as the review it repeats.
     rr_args += lanes.model_args("RVa", manifest())
-    rr_args += lanes.reasoning_effort_args("RVa", lane_options(lane) or manifest())
     rr_id = json.loads(kb(*rr_args))["id"]
     kb("link", rr_id, gate_id)
     log(f"filed code rework round {round_no}: {rev_title} + {rr_title}")

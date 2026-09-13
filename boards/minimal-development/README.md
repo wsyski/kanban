@@ -23,10 +23,9 @@ researcher's to find — a worker's `python3` may not.
   card bodies. A timed-out card is a hard failure: the driver halts the board, and only
   a review that REJECTS sends work back.
 - `"max-reworks": 2` — rounds should be cheap here.
-- `"model_override": "glm-5.3-flash"`, `"provider_override": "opencode-go"`,
-  `"reasoning_effort": "medium"` — as on every shipped board, the review cards (`RVp`,
-  `RVa` and their rounds) run on a different model from the coder's default, so the
-  judge is independent of the author. This is the cheap place to see the pin working.
+- `"model_override": "glm-5.3-flash"`, `"provider_override": "opencode-go"` — as on
+  every shipped board, the review cards (`RVp`, `RVa` and their rounds) run on a
+  different model from the coder's default, so the judge is independent of the author. This is the cheap place to see the pin working.
   No `"assignees"` map: the graph names its profiles directly.
 - `"goal": false` — no card is filed under the goal judge. The judge needs a reachable,
   working auxiliary model; on this machine it is reachable but fails, and a failing

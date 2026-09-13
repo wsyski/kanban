@@ -374,8 +374,7 @@ with the CLI:
   complete a card whose success case is blocking.
 - **The judge is a different model.** `model_override`/`provider_override` (board-level
   only, so no lane can buy itself a different judge) go on the review cards and their
-  rounds; `reasoning_effort` (per-lane) buys them depth. `board_schema` refuses a
-  provider without a model.
+  rounds. `board_schema` refuses a provider without a model.
 - **Refinement is optional.** `refinement: false` drops `I` and `Gi` from a lane: the
   plan card becomes its root and plans from the raw idea, whose `### Done means` section
   the code gate judges against. The human's first veto moves to the plan gate.
@@ -424,8 +423,8 @@ by every board — nothing scenario-specific to write per idea. To run new work:
 1. Write the idea into `boards/<s>/lane-<k>.md` (or the Triage card) — free text, plus
    optional headers overriding the board's value for that lane only, e.g.
    `<!-- unit-tests: false -->`. The per-lane options, and so the whole header set,
-   are `refinement`, `unit-tests`, `integration-tests`, `auto-gates`, `max-reworks` and
-   `reasoning_effort` (`mission/board_schema.py --schema` prints the table); every other
+   are `refinement`, `unit-tests`, `integration-tests`, `auto-gates` and `max-reworks`
+   (`mission/board_schema.py --schema` prints the table); every other
    option is board-level. A header is a whole line, and
    anything shaped like one is judged as one, so a misspelling is an error rather than
    prose silently ignored. Write paths relative to the board's work directory, so the

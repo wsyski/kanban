@@ -11,7 +11,6 @@
   "max-runtime": "10m",
   "max-reworks": 2,
   "model_override": "glm-5.3-flash",
-  "reasoning_effort": "medium",
   "provider_override": "opencode-go",
   "refinement": false
 }

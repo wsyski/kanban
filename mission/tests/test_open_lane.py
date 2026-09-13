@@ -418,20 +418,15 @@ def test_the_reading_says_when_it_was_taken_and_that_it_is_a_snapshot(monkeypatc
     assert "Taken 20" in text, "and when it was taken"
 
 
-def test_a_card_the_lane_just_archived_gets_no_reasoning_effort(monkeypatch, tmp_path):
-    """open_lane archives RVc on a lane without integration tests, then pushes the
-    lane's effort onto the review cards from the same state. The archive must show in
-    that state: the engine refuses an effort on an archived card, and the run on
-    2026-09-13 logged exactly that refusal, which failed its audit (E2)."""
+def test_a_card_the_lane_archives_reads_as_archived_in_its_state(monkeypatch, tmp_path):
+    """open_lane archives TI and RVc on a lane without integration tests; later steps
+    of the same open read the same state, so the archive must show there too."""
     calls = []
     _board_env(monkeypatch, tmp_path, calls)
-    monkeypatch.setattr(run, "lane_options",
-                        lambda lane: {"integration-tests": False, "unit-tests": True, "auto-gates": False,
-                                      "reasoning_effort": "medium", "idea": "## Idea 1: is_even\n"})
-    run.tick()
-    efforts = [c[1] for c in calls if c[0] == "set-reasoning-effort"]
-    assert "id-RVc" not in efforts, calls
-    assert "id-RVa" in efforts and "id-RVp" in efforts, calls
+    st = _state()
+    run.open_lane(st, 1)
+    assert st[lanes.card_title("RVc", 1)]["status"] == "archived"
+    assert st[lanes.card_title("TI", 1)]["status"] == "archived"
 
 
 def test_a_lane_the_driver_refuses_is_neither_pruned_nor_released(monkeypatch, tmp_path):

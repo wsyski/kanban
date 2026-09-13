@@ -90,10 +90,9 @@ Gi(n)      ──REWORK───────→ I(n)-rev-N          → Gi(n)-r(
 - On a lane with integration tests the code re-review also repeats the final review,
   and `TI` waits until the newest implementation verdict is PASS. `P` stays parked while
   the newest idea verdict is REWORK.
-- **Pins:** a re-review is a review, so it carries the same `model_override` and
-  `reasoning_effort` as the review it repeats; otherwise a rework round would silently
-  drop back to the worker's model and depth. The effort is the lane's resolved value, so
-  an idea header's `reasoning_effort` applies to its rework rounds as well.
+- **Pins:** a re-review is a review, so it carries the same `model_override` as the
+  review it repeats; otherwise a rework round would silently drop back to the worker's
+  model.
 - **Plan revisions** carry turn-diet guidance: targeted patches to the existing file,
   re-verify only the fixed lines. Framed as "re-verify everything", a plan fix dies at
   the turn ceiling.
@@ -126,10 +125,9 @@ task-property names — while author cards run the coder's default. Every shippe
 pins `glm-5.3-flash` on `opencode-go`, so the model that judges is not the model that
 wrote the work. It is board-level only, so no idea header can buy a lane a different
 judge; `board_schema` refuses a provider without a model, as the engine does.
-`reasoning_effort` is the same idea for depth, independent of the model, and per-lane:
-the lane's resolved value is pushed onto its judge cards when the lane opens (the idea
-is entered long after filing). Cards the lane dropped (`TI`/`RVc` without integration
-tests) are archived first and get no effort.
+Reasoning depth is not pinned: stock `hermes kanban create` has no flag for it, and
+carrying a Hermes patch for it costs more to maintain than the depth is worth, so every
+card runs at its profile's configured effort.
 
 **Worker contract.** The rules every worker shares — board access through
 `kanban_show` or the CLI, no branches/commits/follow-up cards, no questions, no caches

@@ -243,28 +243,6 @@ def model_args(code, cfg):
     return args
 
 
-def reasoning_effort_args(code, cfg):
-    """`--reasoning` for a card of this CODE — the lane's `reasoning_effort`, and
-    ONLY on the cards that judge, by the same rule and the same key as `model_args`:
-    the coder works those cards as a REVIEWER, so they run on another model and at
-    another depth.
-
-    `--reasoning` is the engine's own flag for the property
-    (`kanban_db.create_task(reasoning_effort=...)`, which the dispatcher passes on to
-    the worker); `cfg` is the LANE's resolved options, so a lane's idea header wins
-    over the board's default.
-
-    A second lookup rather than a second line in `model_args` because the two are
-    independent on the engine's side — `create_task` takes `reasoning_effort` beside
-    `model_override` and neither requires the other — so a lane may buy depth without
-    buying a model, or the reverse.
-    """
-    if code not in JUDGE_CODES:
-        return []
-    level = (cfg or {}).get("reasoning_effort")
-    return ["--reasoning", str(level)] if level else []
-
-
 def lane_cards(lane, integration_tests=True, unit_tests=True, assignees=None,
                refinement=True):
     """The card graph for one lane, in filing order (parents before children).
@@ -368,10 +346,8 @@ def _as_bool(value, fallback):
 def _as_value(kind, raw, fallback):
     """One idea-header value, coerced by the option's KIND.
 
-    It used to be `_as_bool` for every key. That was right while every per-lane
-    option was a boolean and became a ValueError the moment one was not —
-    `max-reworks` is a count and `reasoning_effort` a level word, so a legal header
-    for either one failed the LANE rather than being read. The value itself is
+    Per-lane options are not all booleans — `max-reworks` is a count — so each value
+    is coerced by its kind rather than failing the LANE. The value itself is
     judged at the doors (`board_schema.validate_headers`); this only has to turn the
     text into the option's own type.
     """
