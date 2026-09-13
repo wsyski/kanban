@@ -413,3 +413,9 @@ def test_a_run_whose_work_directory_held_still_passes(tmp_path):
     findings, _rows, _stats = ra.audit(fixture(
         tmp_path, chain_recs=worker_chain(), summary_extra={"workdir_drift": []}))
     assert not [f for f in findings if f[1] == "E17"], findings
+
+
+def test_a_worker_revision_with_an_empty_result_is_flagged():
+    rows = [{"code": "C1-rev-1", "done": True, "result": ""},
+            {"code": "RVa1-r2", "done": True, "result": ""}]
+    assert [f[2] for f in ra.result_findings(rows)] == ["C1-rev-1 finished with an empty result"]

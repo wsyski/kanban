@@ -432,3 +432,125 @@ def test_a_card_the_lane_just_archived_gets_no_reasoning_effort(monkeypatch, tmp
     efforts = [c[1] for c in calls if c[0] == "set-reasoning-effort"]
     assert "id-RVc" not in efforts, calls
     assert "id-RVa" in efforts and "id-RVp" in efforts, calls
+
+
+def test_a_lane_the_driver_refuses_is_neither_pruned_nor_released(monkeypatch, tmp_path):
+    """A root filed against another run must not start: its worker would write where
+    nothing reads. The refusal comes before any archive, link or snapshot."""
+    calls = []
+    _board_env(monkeypatch, tmp_path, calls)
+    monkeypatch.setattr(run, "board", lambda: _state(root_status="blocked"))
+    monkeypatch.setattr(run, "lane_paths_agree", lambda state, lane: False)
+    run.tick()
+    assert [c for c in calls if c[0] in ("unblock", "archive", "link", "unlink", "comment")] == [], calls
+    assert not os.path.exists(os.path.join(str(tmp_path), "snapshots", "lane-1.md"))
+
+
+def test_a_restarted_driver_rejoins_a_lane_it_already_opened(monkeypatch, tmp_path):
+    """`_OPENED` is per process. A restart must not re-open a lane whose opening is
+    already on this run's record: that would rewrite the snapshots a running card
+    reads and post the lane comment twice."""
+    calls = []
+    _board_env(monkeypatch, tmp_path, calls)
+    monkeypatch.setattr(run, "BOARD", "b")
+    (tmp_path / "runs" / "chain.jsonl").write_text('{"event": "lane_open", "lane": 1}\n')
+    assert run.open_lane(_state(), 1) == "open"
+    assert calls == [], calls
+    assert not os.path.exists(os.path.join(str(tmp_path), "snapshots", "lane-1.md"))
+
+
+def test_an_escalation_stops_the_driver_on_the_next_tick(monkeypatch, tmp_path):
+    """escalate() records the halt but runs inside a tick that goes on; the next tick
+    must report it, or the driver drives on past a lane that cannot advance."""
+    halt_check = run.halt_if_exhausted
+    calls = []
+    _board_env(monkeypatch, tmp_path, calls)
+    monkeypatch.setattr(run, "halt_if_exhausted", halt_check)
+    monkeypatch.setattr(run, "_exhaustion_event", lambda card_id: None)
+    monkeypatch.setattr(run, "_HALTED", {"reason": None})
+    monkeypatch.setattr(run, "_ESCALATED", set())
+    run.escalate("id-Gp", "Gp1", "plan rounds exhausted")
+    assert run.tick() is True
+
+
+def test_a_refile_that_fails_midway_leaves_no_state_from_the_previous_run(monkeypatch, tmp_path):
+    """mint_run switches the run before the cards are filed. If filing then raises,
+    the previous run's opened lanes must already be forgotten, or the next tick treats
+    the new run's lane as open and releases its root without a snapshot."""
+    import file_lanes
+    calls = []
+    _board_env(monkeypatch, tmp_path, calls)
+    monkeypatch.setattr(run, "BOARD", "b")
+    monkeypatch.setattr(run, "armed_ideas", lambda st: [(1, "## Idea 1: x\n", "t_idea")])
+    monkeypatch.setattr(run, "validate_armed", lambda armed: True)
+    monkeypatch.setattr(file_lanes, "read_board", lambda d: {"lanes": 1})
+    monkeypatch.setattr(run, "board", lambda: {})
+    monkeypatch.setattr(run, "mint_run", lambda key, armed: None)
+
+    def fail(*a, **k):
+        raise RuntimeError("hermes kanban create failed")
+
+    monkeypatch.setattr(file_lanes, "file_board", fail)
+    run._OPENED.add(1)
+    run._TIMED.add(1)
+    try:
+        run.adopt_and_refile({})
+    except RuntimeError:
+        pass
+    assert not run._OPENED and not run._TIMED
+
+
+def test_the_deadman_survives_a_failed_list_and_notifies_once_per_stuck_set(monkeypatch):
+    """The deadman ran outside the loop's try: one failed `list` ended a serve driver.
+    And it notified on every 20 s tick for the same two stuck cards."""
+    notified, logged = [], []
+    monkeypatch.setattr(run, "log", logged.append)
+    monkeypatch.setattr(run, "notify_deadman", lambda st: notified.append(sorted(st)))
+    monkeypatch.setattr(run, "_DEADMAN_STUCK", [frozenset()])
+
+    def failing_board():
+        raise RuntimeError("kanban list failed")
+
+    monkeypatch.setattr(run, "board", failing_board)
+    run.deadman_check()                                   # must not raise
+    stuck = {t: {"id": t, "status": "blocked"} for t in ("a", "b")}
+    monkeypatch.setattr(run, "board", lambda: stuck)
+    monkeypatch.setattr(run, "block_reason", lambda c: "needs_input")
+    monkeypatch.setattr(run, "is_parked", lambda c: False)
+    run.deadman_check()
+    run.deadman_check()
+    assert len(notified) == 1, notified
+
+
+def test_a_rejoin_still_refuses_a_lane_filed_against_another_run(monkeypatch, tmp_path):
+    calls = []
+    _board_env(monkeypatch, tmp_path, calls)
+    monkeypatch.setattr(run, "BOARD", "b")
+    (tmp_path / "runs" / "chain.jsonl").write_text('{"event": "lane_open", "lane": 1}\n')
+    monkeypatch.setattr(run, "lane_paths_agree", lambda state, lane: False)
+    assert run.open_lane(_state(), 1) == "mismatch"
+
+
+def test_an_empty_result_on_a_revision_card_is_noted(monkeypatch):
+    logged = []
+    monkeypatch.setattr(run, "log", logged.append)
+    monkeypatch.setattr(run, "_EMPTY_RESULT_NOTED", set())
+    run.note_empty_results({"C1-rev-1: code revision round 1 - lane 1":
+                            {"id": "t_rev", "status": "done", "result": ""}})
+    assert logged and "C1-rev-1" in logged[0], logged
+
+
+def test_a_deadman_that_cannot_write_its_note_does_not_end_the_driver(monkeypatch, tmp_path):
+    monkeypatch.setattr(run, "RUN_DIR", str(tmp_path / "gone"))
+    monkeypatch.setattr(run, "log", lambda m: None)
+    monkeypatch.setattr(run, "block_reason", lambda c: "needs_input")
+    monkeypatch.setattr(run, "is_parked", lambda c: False)
+    run.notify_deadman({"a": {"id": "a", "status": "blocked"}})      # must not raise
+
+
+def test_a_halt_stops_the_loop_before_it_can_refile(monkeypatch):
+    """A halt recorded mid-tick must end the driver before an armed idea is adopted,
+    or the new run is minted and then abandoned by the exit that follows."""
+    import inspect
+    src = inspect.getsource(run.main)
+    assert src.index('if _HALTED["reason"]:') < src.index("adopt_and_refile(")

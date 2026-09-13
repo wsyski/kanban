@@ -179,7 +179,7 @@ def result_findings(rows):
     """Every worker card must report a result; the chain knows which are which."""
     out = []
     for row in rows:
-        code = row["code"].rstrip("0123456789")
+        code = CHAIN.base_code(row["code"])
         if not row.get("done"):
             continue        # still in flight: it has no result YET (reading "-"
                             # as a finished card that produced nothing is #32)

@@ -292,3 +292,34 @@ def test_a_summary_that_fails_still_ends_the_run(monkeypatch, tmp_path):
     run.finish_run()
     assert any(s.startswith("WARNING") for s in lines), lines
     assert any("ALL GATES COMPLETE" in s for s in lines), lines
+
+
+def test_rework_round_titles_belong_to_their_lane():
+    """Round cards are titled `RVa1-r2:` / `P1-rev-1:`; a lane parser that only knew
+    `P1:` dropped every revision and re-review from the chain and the ledger."""
+    for title, lane in (("P1: plan - lane 1", 1), ("RVp1-r2: plan review round 2 - lane 1", 1),
+                        ("P2-rev-1: plan revision round 1 - lane 2", 2),
+                        ("C1-rev-2: x", 1), ("Gi3-r2: x", 3), ("Idea 1: Even Check", None)):
+        assert run.card_id_lane(title) == lane, title
+
+
+def test_a_re_review_verdict_reaches_the_ledger(monkeypatch, tmp_path):
+    path = _ledger_env(monkeypatch, tmp_path)
+    title = "RVa1-r2: implementation re-review round 2 - lane 1"
+    st = {title: {"id": "t_rr", "status": "done", "title": title, "result": "PASS: fixed"}}
+    monkeypatch.setattr(run, "kb", lambda *a, **k: '{"events": []}')
+    run.record_chain_done(st)
+    led = _lines(path)
+    assert led and led[0]["verdict"] == "PASS" and led[0]["code"] == "RVa1-r2", led
+
+
+def test_a_worker_card_records_what_was_staged(monkeypatch, tmp_path):
+    """`code` carries the lane digit (`C1`), so a membership test against the bare
+    worker codes never matched and every worker's staged set was recorded empty."""
+    _ledger_env(monkeypatch, tmp_path)
+    st = {lanes.card_title("C", 1): {"id": "t_c", "status": "done",
+                                     "title": lanes.card_title("C", 1), "result": "CHANGED: a.py"}}
+    monkeypatch.setattr(run, "kb", lambda *a, **k: '{"events": []}')
+    monkeypatch.setattr(run, "staged_files", lambda: {"work/a.py"})
+    run.record_chain_done(st)
+    assert [r for r in _recs(tmp_path) if r["event"] == "done"][0]["staged"] == ["work/a.py"]

@@ -5,8 +5,7 @@
 (`mission/lanes.py`). `human-gate` has no file, because it is not a profile. A person completes a
 gate, or the driver does when `auto-gates` is on.
 
-These files are **copies of the live profiles** (`~/.hermes/profiles/<p>/SOUL.md`), refreshed from
-live data. The live file is the one Hermes reads, so edit the live profile first and copy it back here.
+These files are **copies of the live profiles** (`~/.hermes/profiles/<p>/SOUL.md`). The live file is the one Hermes reads, so edit the live profile first and copy it back here.
 
 | profile | live file | cards it works |
 |---|---|---|
@@ -14,8 +13,9 @@ live data. The live file is the one Hermes reads, so edit the live profile first
 | `coder` | `~/.hermes/profiles/coder/SOUL.md` | every other work card: P, TW, C, TI and the RVp/RVa/RVc reviews |
 | `trader` | `~/.hermes/profiles/trader/SOUL.md` | no card of its own — domain authority and expected values |
 
-The `manager`, `tester` and `reviewer` profiles are retired (2026-09-12/13). The card graph names
-`coder` directly.
+Roles are not separate profiles: one `coder` profile works every non-research card, and each job is
+kept apart by the card that names it, so there is one work profile to keep in sync. Review
+independence comes from the judge's model, not from a profile (see Engine side).
 
 ## What is inside them, and who owns which part
 
@@ -40,9 +40,9 @@ which every worker and verdict body includes as `<WORKER_CONTRACT>`. It covers:
 - no memories, skills or config writes, with backups under `/opt/backup/agents/` allowed;
 - ending the card as its body says.
 
-Until 2026-09-13 those rules were a 2 KB section in every SOUL. That meant three copies to keep in
-sync, and every session of the profile paid for them, desktop, cron and telegram included. Now only
-kanban sessions pay, and there is one copy.
+They sit in the card rather than the SOUL for two reasons: there is one copy instead of one per
+profile, and only kanban sessions pay for them — a SOUL is loaded by every session of the profile,
+desktop, cron and telegram included.
 
 The one intentional variant: `trader`'s `## Shared Floor` says *"curate, copy, enumerate, or
 restate"* and *"role **and domain** instructions"*, because that profile carries domain
@@ -87,18 +87,6 @@ last refresh, installing reverts it, so re-run `/skill-sync` in that profile aft
 re-reads `SOUL.md` per session, so no gateway restart is needed. Hermes scans the file for prompt
 injection and blocks the whole file on a hit, so check a changed SOUL with
 `agent.prompt_builder._scan_context_content` before relying on it.
-
-## History
-
-- **2026-09-13, card contract moved out of the SOUL:** `## Kanban Cards` was cut to the precedence
-  paragraph, and the rules went to `_worker-contract.txt`. The copies were refreshed from live
-  afterwards. Pre-edit live files are in `/opt/backup/agents/20260913-104524-soul-kanban-contract/`.
-- **2026-09-13, trader fix:** `trader` had been running with no card contract at all. The full
-  paragraph was restored from the then-live `reviewer` SOUL.
-- **Retired profiles:** `tester` and `reviewer` SOULs can be recovered from this directory's git
-  history, from `/opt/backup/agents/20260913-000609-reviewer-tester-souls/`, and from
-  `~/.hermes/backups/hermes-backup-2026-09-12-140154.zip`. `manager` can be recovered from
-  `~/.hermes/profiles` git history.
 
 ## Engine side
 

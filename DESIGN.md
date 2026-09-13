@@ -1,208 +1,316 @@
 # kanban — design and internals
 
-Split out of `README.md`, which keeps the boards, prerequisites, how to create and
-run a board, run records, operational rules and gate discipline. Section numbers
-(§N) refer to `README.md`.
+The reasoning behind the board, the driver's behaviour in detail, the known traps and
+the timing instrumentation. The operator's guide — boards, prerequisites, how to
+create and run a board, run records, operational rules, gate discipline — is
+[README.md](README.md); section numbers (§N) refer to it.
 
 ## What the board enforces
 
-**Plan-first, stage-only, both tasks gated.**
+**Plan-first, stage-only, every lane gated.**
 
-| rule | where it lives |
+| rule | where it lives, and why |
 |---|---|
-| Workers STAGE only (`git add -- own paths`), never commit/push | card bodies hard-rules block (first section); reviewed by reviewers |
-| Per-card patch = OWN paths only (`git diff --cached -- <own paths>`) | card bodies; a bare diff bundles every earlier card's staged files |
-| The board's only git writes are stage and unstage | `mission/run.py` — `git add` by workers, one `restore --staged` for its own leftovers. Never commit, branch, checkout, reset or push: a work directory that moves under a live run is REPORTED, not corrected |
-| Nothing is deleted — not `work/`, not a run directory | `mission/reset.sh` archives cards and unstages; deleting either tree is a human's own `rm`. No exception: a lane that runs a suite leaves `__pycache__/`/`.pytest_cache/` behind, the board reports it as a note (E16) and leaves it exactly where it is |
-| A run's directory disappearing stops the board, and says so | `mission/run.py` — nothing here ever removed one, so a missing `runs/<run-id>/` is someone else's `rm` or trash can: the driver halts instead of recording the run into a fresh directory and pointing `current` at evidence that is gone. A `current` pointer to an already-truncated run is a stale pointer, not a stop |
-| One run, one directory — `runs/<run-id>/`, minted when an idea is armed | `mission/run.py` `mint_run`; `runs/current` names the live run, and an earlier one stays auditable |
-| A board's options are validated before anything is filed — manifest and idea headers alike | `mission/board_schema.py`, at all three doors: `create-board.sh`, `start-board.sh`, and the driver when a Triage card is armed (the finding goes back as a comment on that card) |
-| Nobody commits before the gate — not even the driver | gate cards + `auto-gates` (board.json) complete gates with "NOTHING COMMITTED" |
-| `git add`/`git diff` always allowed (provenance patches) | card bodies |
-| Lane N+1's root parented to lane N's gate card | `mission/lanes.py` — the board itself is the sequencer |
-| The plan card never sees a raw idea | `mission/lanes.py` — `I` is the lane root, `Gi` stands between it and `P` |
-| Every hand-off is a file, never a card comment | refined idea `boards/<slug>/runs/artifacts/lane-<k>/refined.md`, plan `…/lane-<k>/plan.md`, patches — all under `runs/`, attached to their card and never staged, never committed; the only thing any card stages is the lane's own work, in `work/` |
-| Every card's evidence | `git diff --cached` patch attached to the card |
-| Verdicts in the result field | the review card bodies mandate it |
+| Workers STAGE only (`git add -- own paths`), never commit or push | card bodies' HARD RULES; checked by the reviews. The commit is the human's authorization record (§6) |
+| Per-card patch = OWN paths only (`git diff --cached -- <own paths>`) | card bodies — a bare diff bundles every earlier card's staged files |
+| The board's only git writes are stage and unstage | `mission/run.py`: `git add` by workers, `restore --staged` for its own leftovers. Never commit, branch, checkout, reset or push: a work directory that moves under a live run is REPORTED, not corrected (see [work directory pinning](#work-directory-pinning)) |
+| Nothing is deleted — not `work/`, not a run directory | `mission/reset.sh` archives cards and unstages; deleting either tree is a human's own `rm`. `work/` may be the input of a follow-up fix, and an old run is the evidence for why something wedged — no tool has an opinion about when either stops being useful |
+| One run, one directory — `runs/<run-id>/`, minted when an idea is armed | `run.py` `mint_run`; `runs/current` names the live run. A fresh directory cannot hold a previous run's hand-off, so stale-document safety is a property of the paths rather than of a deletion someone must remember |
+| A run's directory disappearing stops the board | `run.py` — nothing here removes one, so a missing `runs/<run-id>/` is someone else's `rm`: the driver halts instead of recording into a fresh directory and pointing `current` at evidence that is gone |
+| Options are validated before anything is filed — manifest and idea headers alike | `mission/board_schema.py`, at all three doors: `create-board.sh`, `start-board.sh`, and the driver when a Triage card is armed (findings go back as a comment on that card). One declaration of the option set, because a second one drifts |
+| Nobody commits before the gate — not even the driver | gate cards; `auto-gates` completes gates with "NOTHING COMMITTED" |
+| Lane N+1's root is parented to lane N's code gate | `mission/lanes.py` — the board itself is the sequencer, no orchestrator |
+| The plan card never sees an unreviewed idea | `lanes.py` — `I` is the lane root and `Gi` stands between it and `P`. With `refinement: false` the plan card is the root and plans from the raw idea (see [refinement](#refinement-off)) |
+| Every hand-off is a file, never a card comment | `runs/<run-id>/artifacts/lane-<k>/refined.md`, `…/plan.md`, patches — attached to their card, never staged; the only thing a card stages is the lane's own work |
+| Every card's evidence is its `git diff --cached` patch, attached to the card | card bodies |
+| Verdicts go in the result field | review card bodies (`_result-field.txt`) |
 | The plan is judged on what it was told | `mission/card-bodies/_plan-checklist.txt` — the plan card's self-check and the plan review's only REJECT grounds |
+| Rules every worker shares exist once | `mission/card-bodies/_worker-contract.txt`, included as `<WORKER_CONTRACT>` (see [profiles](#profiles-and-the-worker-contract)) |
 
-Lane shape without integration tests — the plan gate releases the unit-test card and
-the implementation card TOGETHER, and the review waits for both:
+## Lane shape
+
+Without integration tests the plan gate releases the unit-test card and the
+implementation card TOGETHER, and the review waits for both:
 `I → Gi → P → RVp → Gp → (TW ∥ C) → RVa → Gc`.
-With integration tests, `TI` (integration tests) and a final `RVc` follow the code
-review, before `Gc`. The optional levels take their cards with them: no unit tests
-and there is no `TW` (the review waits on `C` alone); no integration tests and
-`RVc` goes with `TI`, because it reviews nothing else.
+With integration tests, `TI` and a final `RVc` follow the code review, before `Gc`.
+Optional levels take their cards with them, archived when the lane opens:
+
+- no unit tests — no `TW`; the `TW → RVa` edge is unlinked and the review waits on `C`
+  alone. `C` needs no surgery: its parent is the plan gate in the graph itself.
+- no integration tests — `TI` and `RVc` are archived (`RVc` reviews nothing else),
+  `RVc → Gc` is unlinked and `RVa → Gc` linked, because archiving a card does not drop
+  its dependency edge and the gate would wait forever on an archived parent.
+- `refinement: false` — `I` and `Gi` are archived and `P` is the root.
 
 `TW ∥ C` is the template's one deliberate fork. The plan already carries the real
-code (the checklist forbids a TBD), so the coder never waits on a test file — and
-"the tests are green" was never the lane's done criterion: the review verdict is,
-and it re-derives the suite itself. What the old sequence did buy was the RED
-observation (a FAIL witnessed while the implementation did not exist); that is now
-a prediction in the plan, re-derived by `RVa` from the two patches
-(`mission/card-bodies/rva-body.txt`, check f).
+code (the checklist forbids a TBD), so the coder never waits on a test file, and
+"the tests are green" is not the lane's done criterion — the review verdict is, and it
+re-derives the suite itself. The RED observation (a test failing while the
+implementation does not exist) is a prediction in the plan, re-derived by `RVa` from
+the two patches (`mission/card-bodies/rva-body.txt`, check f).
 
-Three gates per lane, in the order the cost of being wrong falls:
-`Gi` (is this the right idea?), `Gp` (is this the right plan?), `Gc` (is this
-the right code?). On the two boards that have run they are auto-gates: the
-driver verifies the evidence, records it in the gate's result and completes the
-card itself — and still commits nothing (§6).
+Three gates per lane, in the order the cost of being wrong falls: `Gi` (is this the
+right idea?), `Gp` (the right plan?), `Gc` (the right code?). Fixing an idea costs one
+card; fixing a plan built on a bad idea costs the lane.
+
+### Refinement off
+
+`refinement: false` suits an idea that is already specified. The give-ups are real,
+so the bodies state them: the human's first veto moves from the idea gate to the plan
+gate, and with no researcher the plan card is the only card that can establish a
+fact — on those lanes it may probe, and it cites every fact it relies on. The idea
+file must still say what done means: its `### Done means` section is what the code
+gate judges against.
+
+## Rework loops
+
+Three loops, one shape — newest verdict → revision card + re-check card, linked to the
+gate, bounded, then escalation:
+
+```
+RVp(n)     ──REJECT───────→ P(n)-rev-N          → RVp(n)-r(N+1) ──PASS───→ Gp(n) opens
+RVa/RVc(n) ──REJECT+OWNER─→ (C|TW|TI)(n)-rev-N  → RVa(n)-r(N+1) ──PASS───→ Gc(n) opens
+Gi(n)      ──REWORK───────→ I(n)-rev-N          → Gi(n)-r(N+1)  ──ACCEPT─→ P(n) opens
+```
+
+- **Cap:** all three loops read `lanes.max_reworks` for the lane — `max-reworks` from
+  the idea header or manifest, default 3. It is distinct from `max-retries`, the engine's per-card ATTEMPT budget,
+  which is pinned to 1 because a failed card is final — the board's only retry is a
+  review that sends work back.
+- **Live-guard:** a round is filed only when the previous round's cards are all done
+  (`rework_hold`). A REJECT as the latest verdict alone does not trigger filing, or
+  every round would be filed at once.
+- **Rendering:** a revision card is rendered exactly like the card it revises — same
+  paths, workdir, ceiling and skill — plus the numbered findings and a pointer to the
+  full verdict.
+- **Owner:** the code loop's revision goes to the card the verdict names
+  (`OWNER: C` / `TW` / `TI`). The implementation review judges the C patch and the TW
+  tests in one pass, and C may not edit TW's files, so a rejected test filed against C
+  could never be fixed. No usable owner line means `C`.
+- On a lane with integration tests the code re-review also repeats the final review,
+  and `TI` waits until the newest implementation verdict is PASS. `P` stays parked while
+  the newest idea verdict is REWORK.
+- **Pins:** a re-review is a review, so it carries the same `model_override` and
+  `reasoning_effort` as the review it repeats; otherwise a rework round would silently
+  drop back to the worker's model and depth. The effort is the lane's resolved value, so
+  an idea header's `reasoning_effort` applies to its rework rounds as well.
+- **Plan revisions** carry turn-diet guidance: targeted patches to the existing file,
+  re-verify only the fixed lines. Framed as "re-verify everything", a plan fix dies at
+  the turn ceiling.
+- **Escalation:** when the rounds are exhausted the driver comments `ESCALATION` on
+  the card, records it in `verdicts.jsonl`, and halts the board (below).
+
+## Profiles and the worker contract
+
+The graph addresses profiles, not roles (`lanes.assignee_for`), so a role is only as
+distinct as the profile behind it:
+
+| profile | cards |
+|---|---|
+| `researcher` | `I` and its revision rounds |
+| `coder` | every other work card: `P`, `TW`, `C`, `TI`, `RVp`, `RVa`, `RVc` and their rounds |
+| `trader` | no card — the domain authority `portfolio-engineering` builds into |
+| — | gates: a person completes them, or the driver when `auto-gates` is on |
+
+One work profile is what you maintain; each job is kept apart by the CARD that names
+it — a review runs in its own session, from the plan alone, with its own patch —
+rather than by a second profile to keep in sync. `create-board.sh` derives the
+profiles a board needs from its manifest (`lanes.required_profiles`), and a manifest's
+`assignees` remaps a role per board. A card whose assignee is not a profile is never
+spawned and nothing reports it, so a role that loses its profile must be remapped in
+the same change.
+
+**Independent judge.** The review cards (`lanes.JUDGE_CODES` = RVp, RVa, RVc, and
+their rework rounds) carry `model_override`/`provider_override` — the engine's own
+task-property names — while author cards run the coder's default. Every shipped board
+pins `glm-5.3-flash` on `opencode-go`, so the model that judges is not the model that
+wrote the work. It is board-level only, so no idea header can buy a lane a different
+judge; `board_schema` refuses a provider without a model, as the engine does.
+`reasoning_effort` is the same idea for depth, independent of the model, and per-lane:
+the lane's resolved value is pushed onto its judge cards when the lane opens (the idea
+is entered long after filing). Cards the lane dropped (`TI`/`RVc` without integration
+tests) are archived first and get no effort.
+
+**Worker contract.** The rules every worker shares — board access through
+`kanban_show` or the CLI, no branches/commits/follow-up cards, no questions, no caches
+in `work/`, full sentences, no memory/skill/config writes, end the card as the body
+says — live once in `mission/card-bodies/_worker-contract.txt`, included by every
+worker and verdict body as `<WORKER_CONTRACT>`. The profile SOUL's `## Kanban Cards`
+is only a short precedence paragraph: the card wins. Reasons: only kanban sessions pay
+the tokens for the rules; there is one copy to maintain; and precedence has to sit in
+the system prompt, because the card body arrives as a tool result. SOUL maintenance is
+in [mission/roles/README.md](mission/roles/README.md).
+
+**Worker sessions** are tagged `source=kanban` and hidden by Hermes Desktop; §4 shows
+how to read them.
+
+## Driver behaviour
+
+- **Serve mode.** The driver releases nothing until a Triage card is promoted. Arming
+  validates headers and manifest, adopts the text into `lane-<k>.md`, mints
+  `runs/<run-id>/`, archives the previous run's cards and files a fresh lane set. The
+  `specify` button is not a go signal because it rewrites the idea with an auxiliary
+  LLM before the researcher reads it.
+- **Refile clears per-run state first** (opened lanes, timers, drift findings,
+  announced gates), before filing — filing can fail, and the next tick must not treat
+  the new run's lanes as already open, carry the last run's drift into this run's
+  summary, or skip announcing a gate whose title repeats across runs.
+- **Lane/run agreement.** Cards are filed with their run's paths in their bodies. A lane
+  whose root card names a different run is refused before anything is archived, linked
+  or written, and is never released: every hand-off would be written where nothing
+  reads it.
+- **Restart rejoins.** A lane already opened on this run (a `lane_open` record in
+  `chain.jsonl`) is rejoined, not re-opened, so a running card's snapshots are not
+  rewritten and the lane is not commented on twice. The lane/run agreement check runs
+  first, so a rejoin never releases a mismatched lane. A single restart recovers a
+  stalled run.
+- **A recorded halt stops the loop before any refile**, so an armed idea is not adopted
+  into a fresh run that the same exit would abandon.
+- **Snapshots before release.** At open the driver writes the idea snapshot and the
+  work directory as the lane finds it, then releases the root — so no worker reads a
+  mutable or half-written input, and lane 2 sees the tree lane 1 left rather than the
+  tree at filing time.
+- **Halts.** The board halts — log line, comment on the card, `runs/<run-id>/halt.txt`,
+  deadman notice, driver exits — on the first of: a card whose attempt failed (gave up,
+  crashed, timed out), rework rounds exhausted, or an assigned card escalated to
+  Triage by the engine (`block_loop_detected`). Driving on would only file more work
+  against a broken step, and polling would read as a stall. A timed-out card is also
+  blocked by the driver, because the dispatcher would otherwise put it back at `ready`
+  and retry it. A worker log with ≥3 upstream 4xx/5xx marks the halt
+  "provider-starved", because the restart decision differs.
+- **Deadman.** Two or more non-parked cards blocked on `needs_input` log a DEADMAN
+  line, write `runs/<run-id>/deadman.txt`, and send Telegram when tokens are set. It
+  notifies once per distinct stuck set, so one stall is one message, and a failed board
+  read is logged rather than raised. Parked cards (lanes not yet open) are excluded —
+  they are also `needs_input`.
+- **CLI timeouts.** Every `hermes` and `git` call has a 60 s timeout
+  (`CLI_TIMEOUT_S`): a hung CLI would otherwise stall the driver while its lock stays
+  live and `start-board.sh` keeps seeing a healthy driver.
+- **Index sweep.** Every tick the driver unstages anything under the board's `runs/`
+  (all runs, in the kanban repo), because a staged hand-off reaches every later card's
+  `git diff --cached` and the operator's `git status`. `run-audit.py` fails a run that
+  leaves one staged (E14).
+
+### Work directory pinning
+
+When a run's first lane opens, the driver pins the work directory's repository, branch
+and HEAD (`runs/<run-id>/workdir.json`) and checks them every tick. A branch switch, a
+commit or reset under the board, or a path staged in an external work directory that
+is not the lane's is logged once as a WARNING, recorded as `workdir_drift` in
+`run-summary.json`, and fails `run-audit.py` (E17). It is reported, never corrected:
+switching a branch back would make the board a second writer fighting the operator,
+and a staged path is the human's. Every gate result and `commit_target` in the summary
+name the repository, branch and HEAD the work was staged into, so a board with an
+external `default-workdir` says where its deliverable went.
+
+Inside the work directory (and declared `targets`) the lane owns the tree: it may
+change, replace or delete anything there, and no staged or uncommitted file is
+promised to survive. Outside those roots the board touches nothing.
+
+## Records
+
+- **Document chain** — `runs/<run-id>/chain.jsonl`: one `lane_open` record per lane
+  (the run's own beginning: inputs are written, the root is released next, so a
+  "written before the run" finding is measured from here); one record per card as it
+  starts (the lane documents its body names, any unresolved `<PLACEHOLDER>`) and as it
+  finishes (attached patch, result, verdict, and for worker cards the staged set).
+  Rework-round cards (`RVa1-r2`, `P1-rev-1`) are recorded like base cards. Every gate
+  rework adds a `rework` record (gate, round, cards filed, findings).
+- **Verdict ledger** — `runs/<run-id>/verdicts.jsonl`: every verdict, rework and
+  escalation.
+- `mission/doc-chain.py --runs boards/<slug>/runs` checks the chain against the
+  filesystem and exits 1 on: a named document that is missing (F1); one a card reads
+  but that was written after it started (F2); one written before the run began — a
+  previous run's leftover (F3); an unresolved placeholder in a filed body (F4); a
+  worker that attached and staged nothing (F5); a REJECT with no round filed (F6 — what
+  an invisible stall looks like). `--history` counts reviews and reworks.
 
 ## Known traps
 
-Found by running the flow, not by reading it. Each is current behaviour unless it
-says otherwise:
+Each is current behaviour, with what to do about it.
 
-- **A worker that cannot complete its card is told the wrong reason.**
-  `kanban_complete` refuses an unsatisfied-parent card with *"unknown id or
-  already terminal"* — neither of which is true. A worker hitting that will
-  reliably burn several minutes hunting `--force` flags that do not exist.
-  Check the card's parents first.
-- **Never unlink, archive or re-parent a card while the dispatcher is claiming
-  it.** The worker spawns holding the pre-change view and then fights a board
-  that has moved. Board surgery is safe on a parked lane.
-- **`work/` holds only what the idea asks a human to receive** — exactly the
-  files the plan's Files blocks name. Every transient (scratch, per-card
-  patches, review files) lives under `runs/scratch/<card-id>/`: the bodies say
-  so, `<RUNS>` is a render value and deliberately not a lane document (the chain
-  must not stat scratch as a hand-off), and a worker that leaves pytest caches in
-  `work/` is reported as a note (E16) and left in place — the board removes
-  nothing, so the tree is the gate-holder's.
-- **A verdict is logged, not just spoken.** Every review and gate record in
-  `runs/chain.jsonl` carries the `verdict` it reached, and every time a gate sends
-  work back a `rework` record names the gate, the round, the cards filed and the
-  findings. The same facts go to `runs/verdicts.jsonl` — run state beside the
-  chain, unstaged like everything else under `runs/`. `doc-chain.py` prints
-  `reviews:`/`rework:` lines and `--history` counts them; its `F6` fails a REJECT
-  with no round filed, which is what an invisible stall looks like.
-- **A commit made while a driver is live is suspect.** The repo is edited live
-  from outside the session (an IDE changelist commit has no pathspec, so it takes
-  whatever the run has staged): one such commit brought two generated
-  generated files into HEAD and the next deleted tracked documents — restored from
-  the last good commit. Check
-  `git log --stat` for `boards/*/work|runs` additions and for missing documents;
-  untrack generated paths with `git rm --cached`.
-- **Inside the work directory, the lane owns the tree.** There is no promise that a
-  staged or uncommitted file survives the run: the lane may change, replace or
-  delete anything under `<WORKDIR>` and the declared target roots, and it is the one
-  that decides. What the board does promise is that it never *commits*, never
-  branches, and never touches anything outside those roots — its only writes to any
-  index are stage and unstage. Outside the work directory the index is yours
-  ordinary work, and a path you stage in an EXTERNAL work directory that is not the
-  lane's, a branch switch, or a commit under a live run are reported and fail the
-  audit (E17). Reported, not corrected — the board's only
-  git writes are stage and unstage.
-- **Nothing under a board's `runs/` is ever staged.** The hand-offs (the refined
-  idea, the plan) travel by path; the cards attach the document itself and the
-  driver sweeps the index every tick, because a staged hand-off is handed to
-  every later card's `git diff --cached` and to the operator's `git status`
- . `run-audit.py` fails a run that leaves one staged (E14).
-- **A board can run its workers without the goal judge** (`"goal": false`
-  in `board.json`). The judge is a self-check that needs a REACHABLE auxiliary
-  model, and a reachable-but-failing one reports its transport error as the
-  verdict `continue`, i.e. "not done yet", which no evidence can satisfy — every
-  goal-mode card wedges. The switch has to reach the FILING
-  path (`create-board.sh` → `file_board`), because that is where a card's
-  `goal` is decided.
-- **An assigned card in Triage is an escalation, and it halts the board.** A
-  worker that cannot complete returns its card there for a human; the driver used
-  to poll forever with a stale log, which reads as a stall.
-- **The index is board state, and `git diff --cached --name-only` lists all of
-  it** — not just the directory you run it from. A pending entry from anywhere (a
-  repo cleanup, another board's staged entry) is handed to every card that checks
-  the index, and two cards went off-contract chasing one.
-  Nothing here commits, so a previous run's staged entries outlive it until
-  `reset.sh` unstages this board's generated paths (the files stay; only the
-  pending entry goes) — a refile clears only the staged entries under
-  `runs/artifacts`.
-- **`work/` is never cleared by anything in the template.** A new idea inherits
-  the previous run's directory on purpose — that is what makes a *fix* task
-  possible — and no script offers to clear it, `reset.sh` included. Delete it
-  yourself when you mean to. Never with
-  `git restore --staged --worktree -- work/`: against tracked paths that means
-  "restore to HEAD", so it resurrects the committed deliverable and un-stages any
-  pending removal at once.
-- **A lane is never handed the last run's `refined.md`.** The idea gate checks
-  the refined idea's *structure*, so a leftover would pass it and the plan would be
-  built on the old idea. The incoming run's hand-offs are under
-  its own `runs/<run-id>/`, so this is a property of the paths rather than a
-  deletion anything has to remember. **It therefore rests on minting being
-  correct**: a driver that rejoins the wrong run, or mints one per restart instead
-  of per armed idea, brings #31 back.
-- **A killed driver leaves its workers running.** They keep writing to the paths
-  rendered into their own card bodies at filing time, which name their own run — so
-  an orphan cannot reach a later run's documents. It is still burning a worker slot
-  and a budget on an archived card, so `reset.sh` stops this board's workers before
-  archiving its cards; the document chain reports it as `F2`.
+- **A worker that cannot complete is told the wrong reason.** `kanban_complete`
+  refuses an unsatisfied-parent card with *"unknown id or already terminal"*, neither
+  of which is true, and a worker hunts for `--force` flags that do not exist. Check
+  the card's parents first.
+- **Never unlink, archive or re-parent a card while the dispatcher is claiming it.**
+  The worker spawns holding the pre-change view and fights a board that has moved.
+  Board surgery is safe on a parked lane.
+- **`work/` holds only what the idea asks a human to receive** — the files the plan's
+  Files blocks name. Transients go under `runs/<run-id>/scratch/<card-id>/`. `<RUNS>`
+  is a render value, deliberately not a lane document, so the chain never stats scratch
+  as a hand-off. Caches a worker leaves in `work/` are reported as a note (E16) and left
+  in place.
+- **An IDE commit while a driver is live is suspect.** A changelist commit has no
+  pathspec, so it takes whatever the run has staged — generated files into HEAD, or
+  pending removals of tracked documents. Check `git log --stat` for `boards/*/work|runs`
+  additions and missing documents; untrack generated paths with `git rm --cached`.
+- **The index is board state.** `git diff --cached --name-only` lists all of it, not
+  just your directory, so a pending entry from anywhere (a repo cleanup, another
+  board) is handed to every card that checks the index and can pull a card
+  off-contract. Keep the index clean before arming. Nothing commits, so a previous
+  run's staged work entries outlive it until the human commits or `reset.sh` unstages
+  them (the files stay).
+- **Clearing `work/` is by hand, never with `git restore --staged --worktree -- work/`.**
+  Against tracked paths that means "restore to HEAD": it resurrects the committed
+  deliverable and un-stages any pending removal at once.
+- **Stale-document safety rests on minting being correct.** The idea gate checks the
+  refined idea's *structure*, so a leftover `refined.md` would pass it. A lane is never
+  handed one only because each run's hand-offs are under its own `runs/<run-id>/` — a
+  driver that minted a run per restart instead of per armed idea would break that,
+  which is why `mint_run` requires an armed idea and `open_lane` checks lane/run
+  agreement.
+- **A killed driver leaves its workers running.** They write to the paths rendered into
+  their own bodies, which name their own run, so an orphan cannot reach a later run's
+  documents — but it burns a slot and a budget on an archived card and can re-stage
+  stale content. `reset.sh` stops this board's workers before archiving;
+  `run-audit.py` warns on a worker that outlived the run (E8).
+- **The goal judge can wedge every worker card.** It needs a REACHABLE auxiliary model,
+  and a reachable-but-failing one reports its transport error as the verdict
+  `continue` ("not done yet"), which no evidence satisfies. `"goal": false` turns it
+  off; the switch is read at filing (`file_lanes.file_board`), so it takes a re-create,
+  not a driver restart. `boards/minimal-goal-mode` is the probe. Goal flags go on worker
+  cards only (`lanes.goal_args`), never on reviews or gates: a goal judge can push a
+  card whose success case is *blocking* into completing, silently opening the gate it
+  guards.
 - **A leaked child-context marker blocks every card mutation.** With
-  `HERMES_DELEGATED_CHILD_CONTEXT=1` in the shell's environment the kanban CLI
-  refuses `create`, `attach`, `complete`, `unblock`: `create-board.sh` dies in its
-  pre-flight, and a driver started that way cannot drive a single card. Launch
-  them as `env -u HERMES_DELEGATED_CHILD_CONTEXT -u HERMES_HOME mission/…`.
-- **`python3` on the PATH is the Hermes venv and has no pytest.** Run the suite
-  as `mission/test.sh`; a plan whose Run steps say `python3 -m pytest` fails
-  before collecting.
-- **A Hermes command's first stderr lines can be a stale-update banner**,
-  printed while the last `hermes update` receipt is partial. It is not the
-  error: `runs_util.cli_error` drops it from driver logs, where it once hid
-  "board does not exist" for a night.
-- **Lane chaining (`Gc1 → I2`) is the one part with no run behind it**:
-  `roman-evaluator-java` is the two-lane board and has not run yet.
+  `HERMES_DELEGATED_CHILD_CONTEXT=1` in the environment the kanban CLI refuses
+  `create`, `attach`, `complete`, `unblock`. The scripts unset it; launch anything else
+  as `env -u HERMES_DELEGATED_CHILD_CONTEXT -u HERMES_HOME mission/…`.
+- **`python3` on the PATH is the Hermes venv and has no pytest.** Run the suite as
+  `mission/test.sh`; a plan whose Run steps say bare `python3 -m pytest` fails before
+  collecting.
+- **A Hermes command's first stderr lines can be a stale-update banner**, printed while
+  the last `hermes update` receipt is partial. It is not the error:
+  `runs_util.cli_error` drops it so the real error ("board does not exist") reaches the
+  driver log.
+- **Lane chaining (`Gc1 → I2`) is exercised only by `roman-evaluator-java`**, the one
+  two-lane board. Watch the lane-2 release on a multi-lane board.
 
 ## Timing instrumentation
 
-- Driver tick every 20 s appends a status snapshot to
-  `boards/<slug>/runs/<run-id>/timing.jsonl` (one JSON line per tick); a run-boundary marker
-  (ts, argv) is written at every driver start so the report covers only the
-  latest run segment.
-- On each card status *change* the driver embeds the card's run evidence
-  into that tick's snapshot: `last_run` (outcome + `elapsed_min`, from
-  `runs <id> --json` epoch fields) and `gave_up` when a run exhausted its
-  budget. The same transition also appends the card's FULL record —
-  input (title/body/assignee) + result (result field, run history,
-  attachments) — to `boards/<slug>/runs/cards/<card-id>.jsonl`: one complete
-  JSONL line per status change, so a card's whole history lives with the board
-  that produced it.
+- The driver ticks every 20 s and appends a status snapshot to
+  `runs/<run-id>/timing.jsonl`; a run-boundary marker (ts, argv) at every driver start
+  lets the report cover only the latest segment.
+- On each card status *change* the snapshot embeds the card's run evidence (`last_run`
+  outcome + `elapsed_min` from `runs <id> --json`, `gave_up` when a budget ran out),
+  and the card's FULL record — body, assignee, result, run history, attachments — is
+  appended to `runs/<run-id>/cards/<card-id>.jsonl`, so a card's history survives board
+  archiving. Per-card patches are preserved into the run directory for the same reason.
 - At a code gate the driver logs the staged-evidence line
-  (`GATE GcN evidence: …; staged: …`) — verification was the reviewer's job,
-  and the human still owns the commit.
-- On completion the driver writes `boards/<slug>/runs/<run-id>/run-summary.json` (one
-  jq-able file per run): per-card agent minutes (real minutes, from runs
-  epoch fields), wall + overhead totals, gate results. Because a lane forks
-  (`TW ∥ C`), card minutes are recorded twice over: `agent_work_min` is the SUM
-  (what a per-card ceiling is measured against), `agent_union_min` is the minutes
-  work was actually in flight — the sum minus `overlap_min` — and `overhead_min`
-  is the wall time nobody was working, measured against the union, so two cards
-  sharing the clock never read as a negative overhead.
-- If ≥2 cards end up blocked/needs_input, a DEADMAN notice is logged and
-  written to the board's `runs/` (Telegram sent if env tokens set).
-- Per-card provenance patches are preserved to
-  the run's own directory, so they survive board archiving.
-- **At each lane's code gate** the driver writes
-  `boards/<slug>/runs/<run-id>/timing-report-lane-<k>.txt` — the
-  per-card table and totals — *before* announcing the gate. That gate is
-  where you decide whether to commit, so the cost of the lane has to be
-  readable while the answer can still change the decision. Once per lane per run; a re-run
-  keeps the previous one because it writes into its own run directory.
-- The document chain: `boards/<slug>/runs/<run-id>/chain.jsonl`, one record when a
-  lane opens (the run's own beginning — the lane's inputs are written and the root is
-  released after them, so this is the baseline a "written before the run" finding is
-  measured from, not the first card's start), one per card as it
-  starts (the lane documents its filed body names, and any unresolved
-  `<PLACEHOLDER>`) and as it finishes (the patch it attached, the staged set at
-  that moment, its result). `mission/doc-chain.py --runs boards/<slug>/runs`
-  checks it against the filesystem and fails on: a named document that is missing;
-  one a card *reads* but that was written after it started; one written BEFORE the
-  run began (a previous run's leftover — the way a refined idea once survived a
-  refile); an unresolved placeholder in a filed body; a worker that attached
-  nothing and staged nothing. Exit 1 on any finding, so it can gate a run.
-- On demand, the same report: `python3 mission/timing-report.py --board <slug>`
-  (latest run segment only). The board is required — timing data is per-board.
-- The report carries three views: the per-card table, a per-lane breakdown
-  (cards, agent minutes, wall time — shown only when the board has more than
-  one lane), and a per-role share, which is where you see how the wall clock
-  divides between the roles that do the reviewing and the roles that do the work.
-  Roles come from `lanes.LANE_CARDS`, so the
-  report cannot disagree with the card graph.
-- Gate cards are the chain checkpoints: gate completion timestamps delimit
-  planning vs build vs review phases per task.
+  (`GATE GcN evidence: …; staged: …`) and, *before* announcing the gate, writes
+  `runs/<run-id>/timing-report-lane-<k>.txt`: the gate is where you decide whether to
+  commit, so the lane's cost must be readable while it can still change the decision.
+- On completion it writes `runs/<run-id>/run-summary.json`: per-card agent minutes,
+  wall and overhead totals, gate results. Because a lane forks (`TW ∥ C`),
+  `agent_work_min` is the SUM (what a per-card ceiling is measured against),
+  `agent_union_min` is the minutes work was in flight (sum minus `overlap_min`), and
+  `overhead_min` is wall time nobody worked, measured against the union so two cards
+  sharing the clock never read as negative overhead. A timed-out attempt counts as
+  worked time, or its minutes reappear as overhead and the audit passes a run that
+  burned its budget.
+- `mission/timing-report.py --board <slug>` prints the same report on demand (latest
+  segment): the per-card table, a per-lane breakdown when there is more than one lane,
+  and a per-role share showing how wall time divides between reviewing and working.
+  Roles come from `lanes.LANE_CARDS`, so the report cannot disagree with the graph.
+- Gate completion timestamps delimit the planning, build and review phases of a lane.

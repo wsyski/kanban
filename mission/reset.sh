@@ -127,11 +127,10 @@ for t in json.load(sys.stdin):
   if [ -n "$ids" ]; then
     # A worker the dispatcher spawned does NOT die with its driver: it keeps the
     # card's workspace and writes to the lane's shared output paths
-    # (runs/artifacts/lane-<k>/refined.md …), so an orphan outliving a killed
-    # run used to overwrite the documents of the NEXT run (observed 2026-09-11;
-    # the chain log reports it as F2). Per-run directories make that impossible —
-    # the orphan writes to its own run's paths — but it is still burning a
-    # worker slot and a budget on an archived card.
+    # (runs/<run-id>/artifacts/lane-<k>/refined.md …). Per-run directories keep
+    # an orphan from overwriting the next run's documents — it writes to its own
+    # run's paths — but it still burns a worker slot and a budget on an archived
+    # card (run-audit reports a worker that outlived its run as E8).
     # Stop this board's workers before archiving its cards.
     for id in $ids; do
       pkill -f "work kanban task $id" 2>/dev/null && echo "stopped the live worker for $id" || true

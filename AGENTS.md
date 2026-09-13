@@ -17,7 +17,7 @@ per board under `boards/<slug>/`, driven by `mission/run.py` over `hermes kanban
 
 ## Rules
 
-- Hermes profiles are `researcher`, `coder`, `trader` only. The `manager` profile is retired, so don't add profiles for roles; give the judge a different model with `model_override` in `board.json`.
+- Hermes profiles are `researcher` (card I), `coder` (every other work card), `trader` (no card); gates have none. Don't add profiles for roles: give the judge a different model with `model_override`/`provider_override` in `board.json`.
 - The driver never commits and never moves a branch. Board output lands in `boards/<slug>/work/` (tracked). The human commits it at a gate.
 - `boards/<slug>/runs/` is gitignored per-run scratch. Never delete run directories.
 - One driver per board. Don't re-file a board mid-run; use `mission/reset.sh`.

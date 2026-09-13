@@ -310,6 +310,11 @@ import re
 
 import board_schema
 
+
+def base_code(code):
+    """A card's code without its lane and round: `P1`, `P1-rev-1` -> `P`; `RVa1-r2` -> `RVa`."""
+    return re.match(r"[A-Za-z]*", code).group()
+
 # The option set — and the per-lane subset an idea header may carry — is declared
 # once, in board_schema. A second copy here is what let the manifest and the
 # header spell the same option two different ways.

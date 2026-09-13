@@ -232,9 +232,18 @@ def lane_options(lane):
     opts["idea"] = body
     return opts
 
+# Every CLI call is bounded: a hung `hermes` or `git` would stall the driver silently
+# while its lock stays live, and start-board.sh would keep seeing a healthy driver.
+CLI_TIMEOUT_S = 60
+
+
 def kb(*args, capture=True):
-    r = subprocess.run(["hermes", "kanban", "--board", BOARD, *args],
-                       capture_output=capture, text=True, env=runs_util.cli_env())
+    try:
+        r = subprocess.run(["hermes", "kanban", "--board", BOARD, *args],
+                           capture_output=capture, text=True, env=runs_util.cli_env(),
+                           timeout=CLI_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"kb {args[:2]}: timed out after {CLI_TIMEOUT_S}s")
     if r.returncode != 0:
         raise RuntimeError(f"kb {args[:2]}: {runs_util.cli_error(r.stderr)}")
     return r.stdout
@@ -340,7 +349,11 @@ def parents_done(state, prefixes):
     return True
 
 def git(*args):
-    r = subprocess.run(["git", "-C", WORKDIR, *args], capture_output=True, text=True)
+    try:
+        r = subprocess.run(["git", "-C", WORKDIR, *args], capture_output=True, text=True,
+                           timeout=CLI_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"git {args}: timed out after {CLI_TIMEOUT_S}s")
     if r.returncode != 0:
         raise RuntimeError(f"git {args}: {r.stderr.strip()[:200]}")
     return r.stdout.strip()
@@ -350,10 +363,6 @@ def card_id(state, title):
     if not c:
         raise RuntimeError(f"card missing: {title}")
     return c["id"]
-
-def plan_review_pass(state, lane):
-    """Latest finished plan-review verdict — superseded by latest_verdict()."""
-    return latest_verdict(state, lane, "RVp", "Gp")
 
 def _goal_args(assignee, code):
     """Delegates to lanes.goal_args — single source of the worker-only rule.
@@ -410,9 +419,8 @@ def latest_verdict_card(state, lane, reviewer_prefix, final_code=None):
     return best_card, ""
 
 
-def latest_verdict(state, lane, reviewer_prefix, gate_code, final_code=None):
+def latest_verdict(state, lane, reviewer_prefix, final_code=None):
     """The gate-relevant verdict text — see latest_verdict_card."""
-    del gate_code
     return latest_verdict_card(state, lane, reviewer_prefix, final_code)[1]
 
 
@@ -531,7 +539,7 @@ def file_revision(state, lane, round_no, findings, base="P", reviewer_prefix="RV
         rr_title = f"Gi{lane}-r{round_no + 1}: idea re-gate round {round_no + 1} - lane {lane}"
         rr_body_file, rr_assignee, rr_code = "gi-body.txt", "human-gate", "Gi"
         sender = "The idea gate"
-    if title_of_prefix(state, rev_title)[0]:
+    if title_of_prefix(state, rev_title.split(":")[0] + ":")[0]:
         return  # already filed
     gate_id = card_id(state, lanes.card_title(gate_code, lane))
     runtime, render = _round_settings(lane)
@@ -571,7 +579,7 @@ def file_revision(state, lane, round_no, findings, base="P", reviewer_prefix="RV
     # back to the worker's default model AND depth, which is the one thing the
     # pins avoid.
     rr_args += lanes.model_args(rr_code, manifest())
-    rr_args += lanes.reasoning_effort_args(rr_code, manifest())
+    rr_args += lanes.reasoning_effort_args(rr_code, lane_options(lane) or manifest())
     rr_id = json.loads(kb(*rr_args))["id"]
     kb("link", rr_id, gate_id)
     # This gate now also guards the DOWNSTREAM card against starting while
@@ -731,7 +739,11 @@ def commit_target():
 
 def git_at(cwd, *args):
     """git in an arbitrary tree, empty string on failure — for reading only."""
-    r = subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True)
+    try:
+        r = subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True,
+                           timeout=CLI_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        return ""
     return r.stdout if r.returncode == 0 else ""
 
 
@@ -760,22 +772,6 @@ def staged_files():
     out = git("diff", "--cached", "--name-only", "--", *pathspecs)
     return [l for l in out.splitlines() if l.strip()]
 
-def runs_result(card_id):
-    """Last completed run's summary/result for this card (fallback when the
-    card's result field is empty)."""
-    out = kb("runs", card_id)
-    for line in out.splitlines():
-        s = line.strip()
-        if s.startswith("→"):
-            return s[1:].strip()
-    return ""
-
-def verdict(state, prefix):
-    t, c = title_of_prefix(state, prefix)
-    if not c or c["status"] != "done":
-        return ""
-    return c.get("result") or c.get("summary") or (runs_result(c["id"]) if c.get("id") else "")
-
 def verdict_token(text):
     """"PASS" or "REJECT" — the FIRST occurrences of the tokens, wherever
     they sit in the prose. The bodies mandate the result BEGIN with the
@@ -800,9 +796,6 @@ def rejection_findings(text, limit=4000):
     return (text[m.end():] if m else (text or "")).strip()[:limit]
 
 
-REWORK_OWNERS = ("C", "TW", "TI")
-
-
 def rework_owner(verdict_text):
     """Which card owns the fix a code-loop REJECT asks for, read from its OWNER line.
 
@@ -819,7 +812,7 @@ def rework_owner(verdict_text):
     if not m:
         return "C"
     word = m.group(1).upper()
-    for code in REWORK_OWNERS:
+    for code in CODE_REWORK_BASES:
         if word == code or word.startswith(code):
             return code
     return "C"
@@ -843,9 +836,9 @@ def held_by_verdict(state, kind, lane):
     rejected — in the very tick that filed the rework round, before any hold.
     """
     if kind == "p":
-        return is_rework(latest_verdict(state, lane, "Gi", "Gi"))
+        return is_rework(latest_verdict(state, lane, "Gi"))
     if kind == "ti":
-        return verdict_token(latest_verdict(state, lane, "RVa", "Gc")) != "PASS"
+        return verdict_token(latest_verdict(state, lane, "RVa")) != "PASS"
     return False
 
 
@@ -884,7 +877,7 @@ def gate_action(state, title, kind, lane):
         evidence = (f"refined idea present, all sections, "
                     f"{n_findings} finding(s) with evidence ({os.path.getsize(refined)} bytes)")
     elif kind == "gp":
-        verdict_txt = latest_verdict(state, lane, "RVp", "Gp")
+        verdict_txt = latest_verdict(state, lane, "RVp")
         if verdict_token(verdict_txt) != "PASS":
             return f"waiting: plan review verdict = {verdict_txt[:40]!r}"
         # The plan review reads the plan by PATH, so the index count here is
@@ -892,8 +885,7 @@ def gate_action(state, title, kind, lane):
         # contradiction in the run summary of 2026-09-11.
         evidence = f"plan verdict PASS ({len(staged_files())} file(s) staged)"
     else:  # gc
-        final = "RVc" if state.get(lanes.card_title("RVc", lane)) else "RVa"
-        verdict_txt = latest_verdict(state, lane, "RVa", "Gc", final_code="RVc")
+        verdict_txt = latest_verdict(state, lane, "RVa", final_code="RVc")
         if verdict_token(verdict_txt) != "PASS":
             return f"waiting: final review verdict = {verdict_txt[:40]!r}"
         staged = staged_files()
@@ -1042,9 +1034,24 @@ def apply_lane_reasoning_effort(state, lane, opts):
 def open_lane(state, lane):
     """Resolve lane <lane> the moment its turn comes. Once per lane per run.
 
-    Returns "open" (lane may run) or "stopped" (no idea entered).
+    Returns "open" (lane may run), "stopped" (no idea entered) or "mismatch" (the
+    cards were filed against another run; nothing is touched).
     """
     if lane in _OPENED:
+        return "open"
+    # The cards were filed with THIS run's paths baked into their bodies. If the
+    # driver is pointed at a different run — minted on a restart instead of at the
+    # refile, or a hand-edited runs/current — every hand-off would be written where
+    # nothing reads it and the idea gate would wait forever for a refined.md one
+    # directory over. Checked before anything is archived, linked or written, and
+    # before a rejoin, which would otherwise release the root of such a lane.
+    if not lane_paths_agree(state, lane):
+        return "mismatch"
+    if lane_opened_on_record(lane):
+        # A restarted driver: this run already opened the lane, and re-opening would
+        # rewrite the snapshots a running card reads and comment on the lane again.
+        _OPENED.add(lane)
+        log(f"LANE {lane}: already opened on this run's record — rejoined")
         return "open"
     opts = lane_options(lane)
     if opts is None:
@@ -1121,14 +1128,6 @@ def open_lane(state, lane):
     # moment: lane 2 would otherwise be told what the tree looked like before lane
     # 1 built anything in it. Same guarantee as the idea snapshot — written before
     # the root is unblocked, so no worker can read a missing or half-written file.
-    # The cards were filed with THIS run's paths baked into their bodies. If the
-    # driver is pointed at a different run — minted on a restart instead of at the
-    # refile, or a hand-edited runs/current — every hand-off would be written where
-    # nothing reads it and the idea gate would wait forever for a refined.md one
-    # directory over. Checked here rather than trusted: the guarantee that a lane
-    # cannot inherit a stale hand-off is only as good as this agreement.
-    if not lane_paths_agree(state, lane):
-        return "mismatch"
     record_workdir_facts()
     wd_state, _ = write_workdir_state(lane, "open")
     idea_head = opts["idea"].splitlines()[0][:80] if opts["idea"] else ""
@@ -1384,6 +1383,24 @@ def chain_record(event, card, lane, ts=None, **extra):
     _PROCESS_RECORDED[0] = True
 
 
+def lane_opened_on_record(lane):
+    """Does this run's chain already hold the lane's `lane_open` record?"""
+    if not BOARD:
+        return False
+    try:
+        with open(os.path.join(RUN_DIR, "chain.jsonl")) as f:
+            for line in f:
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                if rec.get("event") == "lane_open" and rec.get("lane") == lane:
+                    return True
+    except OSError:
+        pass
+    return False
+
+
 def record_lane_open(lane):
     """One record per lane per run, at the moment its inputs exist and its root is
     about to be released — the run's own beginning.
@@ -1398,23 +1415,9 @@ def record_lane_open(lane):
     process must not re-record what this run already has (a doubled chain row is what
     load_chain_ids exists to prevent).
     """
-    if not BOARD:
+    if not BOARD or lane_opened_on_record(lane):
         return
     path = os.path.join(RUN_DIR, "chain.jsonl")
-    try:
-        with open(path) as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                except ValueError:
-                    continue
-                if rec.get("event") == "lane_open" and rec.get("lane") == lane:
-                    return
-    except OSError:
-        pass
     os.makedirs(RUN_DIR, exist_ok=True)
     with open(path, "a") as f:
         f.write(json.dumps({"ts": datetime.datetime.now().isoformat(timespec="seconds"),
@@ -1476,17 +1479,22 @@ def record_chain_done(state):
         verdict = ""
         if code.lower().startswith(VERDICT_CODES):
             verdict = "REWORK" if is_rework(result) else verdict_token(result)
+        staged = []
+        if lanes.base_code(code) in WORKER_CODES:
+            try:
+                staged = sorted(staged_files())
+            except RuntimeError as e:
+                log(f"chain: staged set for {card['title'][:20]} unavailable ({e})")
         chain_record("done", card, lane, inputs=chain_inputs(card.get("body"), lane),
-                     attached=attached, result=result[:200], verdict=verdict,
-                     staged=sorted(staged_files()) if code in WORKER_CODES else [])
+                     attached=attached, result=result[:200], verdict=verdict, staged=staged)
         if verdict:
             ledger({"event": "verdict", "lane": lane, "code": code, "card_id": card["id"],
                     "verdict": verdict, "attached": attached, "text": result[:600]})
 
 
 def card_id_lane(title):
-    """The lane a card title belongs to ('P1: …' -> 1), or None."""
-    m = re.match(r"^[A-Za-z]+[a-z]*(\d+):", title)
+    """The lane a card title belongs to ('P1: …', 'RVa1-r2: …', 'P1-rev-1: …' -> 1), or None."""
+    m = re.match(r"^[A-Za-z]+(\d+)(?:-r(?:ev-)?\d+)?:", title)
     return int(m.group(1)) if m else None
 
 
@@ -1503,7 +1511,7 @@ def note_empty_results(state):
     """
     noted = []
     for title, card in state.items():
-        if title.split(":")[0].rstrip("0123456789") not in ("I", "P", "TW", "C", "TI"):
+        if lanes.base_code(title.split(":")[0]) not in WORKER_CODES:
             continue
         if card["status"] != "done" or (card.get("result") or "").strip():
             continue
@@ -1566,15 +1574,22 @@ def unstage_run_paths():
     is shared with someone else's work.
     """
     rel = os.path.relpath(RUNS_ROOT, REPO)
-    r = subprocess.run(["git", "-C", REPO, "diff", "--cached", "--name-only",
-                        "--", rel], capture_output=True, text=True)
-    if r.returncode != 0 or not r.stdout.strip():
+    try:
+        r = subprocess.run(["git", "-C", REPO, "diff", "--cached", "--name-only",
+                            "--", rel], capture_output=True, text=True, timeout=CLI_TIMEOUT_S)
+        if r.returncode != 0 or not r.stdout.strip():
+            return
+        staged = r.stdout
+        # unstage: the board's only writes to any index are stage and unstage, and this
+        # one only ever touches paths it generated itself.
+        u = subprocess.run(["git", "-C", REPO, "restore", "--staged", "--", rel],
+                           capture_output=True, text=True, timeout=CLI_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        log(f"WARNING: unstaging {rel} timed out after {CLI_TIMEOUT_S}s")
         return
-    staged = r.stdout
-    # unstage: the board's only writes to any index are stage and unstage, and this
-    # one only ever touches paths it generated itself.
-    subprocess.run(["git", "-C", REPO, "restore", "--staged", "--", rel],
-                   capture_output=True, text=True)
+    if u.returncode != 0:
+        log(f"WARNING: could not unstage {rel}: {u.stderr.strip()[:200]}")
+        return
     log(f"unstaged {len(staged.split())} path(s) under {rel} "
         f"(nothing run-generated stays in the index)")
 
@@ -1669,7 +1684,7 @@ def tick():
                 continue
             if not lane_is_armed(lane):
                 continue        # prefilled, not running: waiting to be armed
-            if open_lane(st, lane) == "stopped":
+            if open_lane(st, lane) != "open":
                 continue
             st = state = board()   # archive/link above changed the board
         elif not parents or not parents_done(st, parents):
@@ -1772,7 +1787,7 @@ def file_code_revision(state, lane, round_no, findings, owner="C", max_rounds=2,
     rev_title = (f"{owner}{lane}-rev-{round_no}: {what} revision round {round_no}"
                  f" - lane {lane}")
     rr_title = f"RVa{lane}-r{round_no + 1}: implementation re-review round {round_no + 1} - lane {lane}"
-    if title_of_prefix(state, rev_title)[0]:
+    if title_of_prefix(state, rev_title.split(":")[0] + ":")[0]:
         return  # already filed
     gate_id = card_id(state, lanes.card_title("Gc", lane))
     runtime, render = _round_settings(lane)
@@ -1809,7 +1824,7 @@ def file_code_revision(state, lane, round_no, findings, owner="C", max_rounds=2,
                f"{BOARD}-rr-C{lane}-r{round_no + 1}", "--created-by", "coder", "--json"]
     # The re-review judges the revision: same pins as the review it repeats.
     rr_args += lanes.model_args("RVa", manifest())
-    rr_args += lanes.reasoning_effort_args("RVa", manifest())
+    rr_args += lanes.reasoning_effort_args("RVa", lane_options(lane) or manifest())
     rr_id = json.loads(kb(*rr_args))["id"]
     kb("link", rr_id, gate_id)
     log(f"filed code rework round {round_no}: {rev_title} + {rr_title}")
@@ -1893,10 +1908,12 @@ def halt_if_exhausted(st):
         after the revision rounds burn out.
     Any of them means the lane cannot advance by itself: driving on would
     only file more work against a broken step. One halt per run — log,
-    write runs/halt.txt, deadman-notify; the serve loop exits.
+    write runs/halt.txt, deadman-notify; the serve loop exits. A halt already
+    recorded (escalate() sets it mid-tick) is returned as-is, so the next tick stops
+    the driver instead of driving on.
     """
     if _HALTED["reason"]:
-        return None
+        return _HALTED["reason"]
     # Exhaustion evidence lives in the card's EVENT history, not its list row:
     # `list --json` carries no runs, and the breaker appends gave_up/timed_out
     # events without a `blocked` event. A non-terminal card (not done/archived)
@@ -2051,8 +2068,11 @@ def notify_deadman(state):
              and not is_parked(c)]
     msg = f"kanban-smoke DEADMAN: {len(stuck)} cards awaiting human input: {', '.join(stuck[:6])}"
     log(msg)
-    with open(os.path.join(RUN_DIR, "deadman.txt"), "w") as f:
-        f.write(msg + "\n")
+    try:
+        with open(os.path.join(RUN_DIR, "deadman.txt"), "w") as f:
+            f.write(msg + "\n")
+    except OSError as e:
+        log(f"DEADMAN: cannot write deadman.txt ({e})")
     # Telegram if the coder gateway is configured; else the file suffices
     try:
         import urllib.request, urllib.parse
@@ -2378,6 +2398,17 @@ def adopt_and_refile(state):
     # the engine names the directory holding its evidence.
     key = f"{BOARD}-{datetime.datetime.now():%Y%m%d-%H%M%S}"
     mint_run(key, armed)
+    # Per-RUN state, cleared the moment the run changes — before filing, which can
+    # fail and leave the next tick treating the new run's lanes as already open. A
+    # serve-mode driver answers many ideas: _DRIFT would carry the previous run's
+    # findings into this run's summary (failing it on E17 for something that happened
+    # before it existed), and _ANNOUNCED is keyed by card TITLE, which repeats across
+    # runs, so a second run's human gate would never announce itself.
+    _OPENED.clear()
+    _TIMED.clear()
+    _DRIFT.clear()
+    _ANNOUNCED.clear()
+    _REPORTED.clear()
     made = file_lanes.file_board(BOARD, REPO, WORKDIR, lanes_n, key,
                                  max_runtime=cfg.get("max-runtime"),
                                  max_retries=cfg.get("max-retries"),
@@ -2388,16 +2419,6 @@ def adopt_and_refile(state):
                           workdir=WORKDIR)
     global _ARMED
     _ARMED = True
-    _OPENED.clear()
-    _TIMED.clear()
-    # Per-RUN state, and a serve-mode driver answers many ideas. _DRIFT carried the
-    # previous run's findings into this run's summary (and so failed it on E17 for
-    # something that happened before it existed); _ANNOUNCED is keyed by card TITLE,
-    # which repeats identically across runs, so a second run's human gate would never
-    # announce itself.
-    _DRIFT.clear()
-    _ANNOUNCED.clear()
-    _REPORTED.clear()
     log(f"refiled {len(made)} cards in {lanes_n} lane(s) — board ready")
     return True
 
@@ -2419,10 +2440,14 @@ def write_timing_report(lane):
         return
     _TIMED.add(lane)
     dst = os.path.join(RUN_DIR, f"timing-report-lane-{lane}.txt")
-    r = subprocess.run([sys.executable,
-                        os.path.join(REPO, "mission", "timing-report.py"),
-                        "--board", BOARD],
-                       capture_output=True, text=True)
+    try:
+        r = subprocess.run([sys.executable,
+                            os.path.join(REPO, "mission", "timing-report.py"),
+                            "--board", BOARD],
+                           capture_output=True, text=True, timeout=2 * CLI_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        log("WARNING: timing report timed out (non-fatal)")
+        return
     if r.returncode != 0:
         log(f"WARNING: timing report failed (non-fatal): {r.stderr.strip()[:200]}")
         return
@@ -2553,6 +2578,11 @@ def main():
             timeout = float(sys.argv[sys.argv.index(a) + 1]) * 60
     idle = False
     while True:
+        if _HALTED["reason"]:
+            # Recorded mid-tick (escalate): stop before an armed idea is adopted, or a
+            # fresh run is minted and then abandoned by this same exit.
+            log("BOARD HALTED — driver exiting; board state left for human inspection")
+            return 1
         try:
             # A new idea outranks the current tick: adopt it, refile, and let the
             # next pass drive the fresh cards.
@@ -2575,24 +2605,40 @@ def main():
             import traceback
             log(f"ERROR: {e}\n{traceback.format_exc()}")
             # transient CLI/board errors are expected mid-run; keep driving
-        # deadman: notify instead of silent stall. 'parked: awaiting lane
-        # activation' is filed with kind needs_input on every NOT-yet-open
-        # lane card — it is the parking brake, not human attention. Exclude
-        # it, or the deadman fires on a healthy parked board every tick.
-        st_now = board()
-        ni = [c for c in st_now.values()
-              if c["status"] == "blocked"
-              and block_reason(c) == "needs_input"
-              and not is_parked(c)]
-        if len(ni) >= 2:
-            log(f"DEADMAN: {len(ni)} cards blocked needs_input — human attention required")
-            notify_deadman(st_now)
+        deadman_check()
         if ONCE:
             return 0
         if timeout is not None and time.time() - t0 > timeout:
             log("timeout — stopping driver")
             return 1
         time.sleep(POLL)
+
+_DEADMAN_STUCK = [frozenset()]   # the stuck set last notified, so one stall is one message
+
+
+def deadman_check():
+    """Notify instead of a silent stall: two or more cards blocked on needs_input.
+
+    'parked: awaiting lane activation' is filed with kind needs_input on every
+    NOT-yet-open lane card — the parking brake, not human attention — so parked cards
+    are excluded, or the deadman fires on a healthy parked board every tick. Notified
+    once per distinct stuck set, and a failed board read is logged, never raised: the
+    loop's own try does not cover this call.
+    """
+    try:
+        st_now = board()
+        stuck = frozenset(c["id"] for c in st_now.values()
+                          if c["status"] == "blocked"
+                          and block_reason(c) == "needs_input"
+                          and not is_parked(c))
+    except Exception as e:
+        log(f"DEADMAN: board read failed ({e})")
+        return
+    if len(stuck) >= 2 and stuck != _DEADMAN_STUCK[0]:
+        log(f"DEADMAN: {len(stuck)} cards blocked needs_input — human attention required")
+        notify_deadman(st_now)
+    _DEADMAN_STUCK[0] = stuck
+
 
 if __name__ == "__main__":
     sys.exit(main())

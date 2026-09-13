@@ -29,7 +29,7 @@ def test_latest_verdict_prefers_the_newest_finished_round():
                                           completed_at=100)
     st["RVp1-r2: plan review round 2 - lane 1"] = card(
         "RVp1-r2", status="done", result="PASS: fixed", completed_at=200)
-    assert run.latest_verdict(st, 1, "RVp", "Gp").startswith("PASS")
+    assert run.latest_verdict(st, 1, "RVp").startswith("PASS")
 
 
 def test_latest_verdict_ignores_unfinished_rounds():
@@ -37,19 +37,19 @@ def test_latest_verdict_ignores_unfinished_rounds():
     st[lanes.card_title("RVp", 1)].update(status="done", result="REJECT: r1",
                                           completed_at=100)
     st["RVp1-r2: plan review round 2 - lane 1"] = card("RVp1-r2", status="running")
-    assert run.latest_verdict(st, 1, "RVp", "Gp").startswith("REJECT")
+    assert run.latest_verdict(st, 1, "RVp").startswith("REJECT")
 
 
 def test_latest_verdict_empty_when_nothing_finished():
     st = full_lane_state()
-    assert run.latest_verdict(st, 1, "RVp", "Gp") == ""
+    assert run.latest_verdict(st, 1, "RVp") == ""
 
 
 def test_latest_verdict_reads_the_result_field_first():
     st = full_lane_state()
     st[lanes.card_title("RVp", 1)].update(status="done", result="PASS: re-derived",
                                           summary="summary text", completed_at=100)
-    assert run.latest_verdict(st, 1, "RVp", "Gp") == "PASS: re-derived"
+    assert run.latest_verdict(st, 1, "RVp") == "PASS: re-derived"
 
 
 # --- rework_hold -------------------------------------------------------------
@@ -76,14 +76,6 @@ def test_rework_hold_is_lane_scoped():
     st["P2-rev-1: plan revision round 1 - lane 2"] = card("P2-rev-1", status="ready")
     assert not run.rework_hold(st, 1, "P", "Gp")
     assert run.rework_hold(st, 2, "P", "Gp")
-
-
-# --- plan_review_pass is now latest_verdict ----------------------------------
-
-def test_plan_review_pass_survives_as_the_plan_loop_reader():
-    st = full_lane_state()
-    st[lanes.card_title("RVp", 1)].update(status="done", result="REJECT: x", completed_at=5)
-    assert run.plan_review_pass(st, 1) == "REJECT: x"
 
 
 # --- escalation is idempotent -------------------------------------------------
@@ -151,7 +143,7 @@ def test_latest_verdict_does_not_read_run_summaries(monkeypatch):
                         lambda b, cid: [{"outcome": "blocked",
                                          "summary": "parked: awaiting lane activation",
                                          "ended_at": 50}])
-    assert run.latest_verdict(st, 1, "RVp", "Gp") == ""
+    assert run.latest_verdict(st, 1, "RVp") == ""
 
 
 def test_latest_verdict_reads_the_completed_run_summary_when_result_is_empty(monkeypatch):
@@ -165,7 +157,7 @@ def test_latest_verdict_reads_the_completed_run_summary_when_result_is_empty(mon
             {"outcome": "completed", "summary": "REJECT: real findings here",
              "ended_at": 100}]
     monkeypatch.setattr(run.runs_util, "board_runs", lambda b, cid: runs)
-    assert run.latest_verdict(st, 1, "RVp", "Gp") == "REJECT: real findings here"
+    assert run.latest_verdict(st, 1, "RVp") == "REJECT: real findings here"
 
 
 def test_verdict_token_finds_the_first_token_anywhere():
@@ -419,7 +411,7 @@ def test_latest_verdict_reads_the_base_card_even_when_a_round_is_listed_first():
     st = {"Gi1-r2: idea re-gate round 2 - lane 1": card("Gi1-r2", status="blocked")}
     st.update(full_lane_state())
     st[lanes.card_title("Gi", 1)].update(status="done", result="REWORK: q1", completed_at=10)
-    assert run.is_rework(run.latest_verdict(st, 1, "Gi", "Gi"))
+    assert run.is_rework(run.latest_verdict(st, 1, "Gi"))
 
 
 def test_p_waits_while_the_newest_idea_verdict_is_rework():
@@ -589,3 +581,16 @@ def test_no_code_round_means_no_extra_parent():
     assert "C1-rev" not in gc and "RVa1-r" not in gc
     st[lanes.card_title("RVa", 1)].update(status="done")
     assert run.parents_done(st, gc)
+
+
+def test_a_round_already_on_the_board_is_not_filed_again(monkeypatch):
+    """The guard looked the round up with its FULL title as a prefix, which never
+    matches; a round is recognised by its code (`P1-rev-1:`), whatever its label says."""
+    calls = []
+    monkeypatch.setattr(run, "kb", lambda *a, **k: calls.append(a) or "{}")
+    st = full_lane_state()
+    st["P1-rev-1: an older label - lane 1"] = {"id": "t_rev", "status": "running"}
+    st["C1-rev-1: an older label - lane 1"] = {"id": "t_crev", "status": "running"}
+    run.file_revision(st, 1, 1, "1. fix", base="P")
+    run.file_code_revision(st, 1, 1, "1. fix", owner="C")
+    assert calls == [], calls

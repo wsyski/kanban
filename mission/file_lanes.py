@@ -23,8 +23,11 @@ def read_board(board_dir):
 
 
 def kb(board, *args):
-    r = subprocess.run(["hermes", "kanban", "--board", board, *args],
-                       capture_output=True, text=True, env=runs_util.cli_env())
+    try:
+        r = subprocess.run(["hermes", "kanban", "--board", board, *args],
+                           capture_output=True, text=True, env=runs_util.cli_env(), timeout=60)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"kb {args[:2]}: timed out after 60s")
     if r.returncode:
         raise RuntimeError(f"kb {args[:2]}: {runs_util.cli_error(r.stderr)}")
     return r.stdout
@@ -115,19 +118,19 @@ def workdir_state(workdir, board_dir=None):
     what = ("a PREVIOUS RUN's product on this board" if own
             else "an EXISTING PROJECT this board did not create")
     inside = subprocess.run(["git", "-C", workdir, "rev-parse", "--is-inside-work-tree"],
-                            capture_output=True, text=True)
+                            capture_output=True, text=True, timeout=60)
     if inside.returncode == 0 and inside.stdout.strip() == "true":
         # What the LANE works in: files on disk, and how many of them are
         # uncommitted. Deliberately not `git ls-files` — that reads the INDEX, and
         # the line then describes a view neither the worker nor HEAD sees (a staged
         # tree reads as tracked whether or not it is in history).
         branch = subprocess.run(["git", "-C", workdir, "rev-parse", "--abbrev-ref", "HEAD"],
-                                capture_output=True, text=True).stdout.strip()
+                                capture_output=True, text=True, timeout=60).stdout.strip()
         # `-- .` scopes it to THIS directory: without the pathspec, git reports the
         # whole repository and the line said "10 file(s) on disk, 35 with uncommitted
         # changes" for a work/ holding two tracked files.
         dirty = subprocess.run(["git", "-C", workdir, "status", "--porcelain", "--", "."],
-                               capture_output=True, text=True).stdout.splitlines()
+                               capture_output=True, text=True, timeout=60).stdout.splitlines()
         detail = (f"{files} file(s) on disk, {len(dirty)} with uncommitted changes, "
                   f"git branch {branch or 'no commits yet'}")
     else:

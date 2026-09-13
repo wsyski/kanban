@@ -62,12 +62,6 @@ def elapsed_min(run):
         return 0.0
 
 
-def worked_min(board, card_id):
-    """Summed agent minutes over a card's CLOSED attempts (CLOSED_OUTCOMES)."""
-    return sum(elapsed_min(r) for r in board_runs(board, card_id)
-               if r.get("outcome") in CLOSED_OUTCOMES)
-
-
 _UPDATE_BANNER = ("⚠ A previous `hermes update`", "Gateways may still be serving",
                   "Run `hermes update` or `hermes gateway restart`")
 

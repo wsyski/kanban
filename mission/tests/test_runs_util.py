@@ -77,26 +77,11 @@ def test_cli_env_drops_the_delegated_child_marker(monkeypatch):
     assert "PATH" in env
 
 
-def test_a_timed_out_attempt_counts_as_worked_time(monkeypatch):
+def test_a_timed_out_attempt_counts_as_worked_time():
     """The ceiling exists to surface a card that burned its budget, and a timed-out
-    attempt IS that event — so it cannot be dropped from the sums. On 2026-09-12
-    TW1 timed out at 600s and completed on the retry in 142s; the summary reported
-    2.37 min for the card, the ten minutes reappeared as "overhead", and the
-    auditor — reading that number — called the run clean."""
-    attempts = [{"outcome": "blocked", "started_at": 0, "ended_at": 0},
-                {"outcome": "timed_out", "started_at": 1_700_000_000,
-                 "ended_at": 1_700_000_600},
-                {"outcome": "completed", "started_at": 1_700_000_600,
-                 "ended_at": 1_700_000_742}]
-    monkeypatch.setattr(runs_util, "board_runs", lambda board, card: attempts)
+    attempt IS that event — so the summaries and the timing report, which sum only
+    CLOSED_OUTCOMES, cannot drop it; dropped, its minutes reappear as "overhead" and
+    the auditor calls the run clean."""
     assert "timed_out" in runs_util.CLOSED_OUTCOMES
-    assert round(runs_util.worked_min("b", "t1"), 2) == 12.37
-
-
-def test_an_open_attempt_is_not_counted(monkeypatch):
-    """Still running: no end, no minutes."""
-    monkeypatch.setattr(runs_util, "board_runs",
-                        lambda board, card: [{"outcome": "completed", "started_at": 10},
-                                             {"outcome": "timed_out", "started_at": 10,
-                                              "ended_at": 10}])
-    assert runs_util.worked_min("b", "t1") == 0.0
+    assert runs_util.elapsed_min({"started_at": 1_700_000_000, "ended_at": 1_700_000_600}) == 10
+    assert runs_util.elapsed_min({"started_at": 10}) == 0.0

@@ -1,52 +1,43 @@
 # minimal-development — the cheap board
 
-The smallest idea that still travels the whole lane. Its purpose is to exercise
-the machinery — arm an idea, watch the researcher refine it, see the three gates,
-the staged work (a plain `git add` — the deliverable is tracked and your gate
-commit is what puts it in history) and a timing report — for as
-close to nothing as a full run can cost. Run it after any change to `mission/`,
-and before trusting a real board.
+The smallest idea that still travels the whole lane. It exercises the machinery — arm
+an idea, watch the researcher refine it, see the three gates, the staged work and a
+timing report — for as close to nothing as a full run can cost. Run it after any change
+to `mission/`, and before trusting a real board.
 
-Everything about the idea is chosen for speed: one function, four test cases, no
-build tool, no dependencies, no ambiguity for any card to resolve. The lane files
-11 cards and drops to 9 when it activates: `integration-tests` is false, so `TI`
-and `RVc` are archived and `Gc` is re-linked to `RVa`.
+Everything about the idea is chosen for speed: one function, four test cases, no build
+tool, no dependencies, no ambiguity for any card to resolve. `integration-tests` is
+false, so when the lane opens `TI` and `RVc` are archived and `Gc` is linked to `RVa`:
+9 live cards.
 
-Toolchain: Python 3 and pytest. Which interpreter on this machine actually has
-pytest is the researcher's to find — a worker's `python3` may not.
+Toolchain: Python 3 and pytest. Which interpreter on this machine has pytest is the
+researcher's to find — a worker's `python3` may not.
 
-`"auto-gates": true` makes the run unattended: the driver completes the three
-gates itself, records the same evidence, and still commits nothing. Set it to
-`false` to see what a human is asked at each gate. `max-runtime` is 4 minutes
-per card — a ceiling, not a target: on an idea this small, a card that needs
-longer is a card doing work the idea does not ask for, so the ceiling is also
-the check on the card bodies themselves. A timed-out card is a HARD FAILURE: the
-driver blocks it and halts the board on the first one, and nothing is retried —
-only a review that REJECTS sends work back, by filing a revision card.
+## Options, and why
 
-`"model_override": "glm-5.3-flash"` (with `"provider_override": "opencode-go"`), as on
-every shipped board, puts the judge on a different model from the author: its review
-cards — `RVp`, `RVa` and any rework round of theirs — are filed with
-`--model`/`--provider`, while every worker card runs the coder profile's default. This
-board is the cheap place to see that pin working. It carries no `"assignees"` map: every role the graph fills names its profile
-directly, and a board only needs that key when it wants a role worked somewhere else.
+- `"auto-gates": true` — the run is unattended: the driver completes the three gates,
+  records the same evidence, and commits nothing. Set it to `false` to see what a human
+  is asked at each gate.
+- `"max-runtime": "4m"` — a ceiling, not a target. On an idea this small a card that
+  needs longer is doing work the idea does not ask for, so the ceiling also checks the
+  card bodies. A timed-out card is a hard failure: the driver halts the board, and only
+  a review that REJECTS sends work back.
+- `"max-reworks": 2` — rounds should be cheap here.
+- `"model_override": "glm-5.3-flash"`, `"provider_override": "opencode-go"`,
+  `"reasoning_effort": "medium"` — as on every shipped board, the review cards (`RVp`,
+  `RVa` and their rounds) run on a different model from the coder's default, so the
+  judge is independent of the author. This is the cheap place to see the pin working.
+  No `"assignees"` map: the graph names its profiles directly.
+- `"goal": false` — no card is filed under the goal judge. The judge needs a reachable,
+  working auxiliary model; on this machine it is reachable but fails, and a failing
+  judge reports its transport error as `continue` ("not done yet"), which wedges every
+  goal-mode card. Workers complete on their own evidence; reviews and gates still judge
+  the work. `boards/minimal-goal-mode` is the probe for when the judge works.
 
-`"goal": false` — this board files no card under the goal judge. The judge
-is a worker self-check that needs a REACHABLE auxiliary model, and this machine's
-judge is reachable but failing (`400 MissingSessionID` from the
-OpenCode provider): `judge_goal` reports a transport failure as the verdict
-`continue` — "not done yet" — so every goal-mode card became uncompletable and
-the lane wedged (ERRORS O10). Workers here complete on their own evidence;
-reviewer cards and the gates still judge the work. The switch comes off when the
-harness treats a transport failure as "cannot judge".
+## Running it
 
-    mission/reset.sh --board boards/minimal-development --yes   # after engine changes
-    hermes kanban boards rm minimal-development                 # reset archives cards, not the board
+See §3 of the root README; the board-specific commands are:
+
     mission/create-board.sh --board boards/minimal-development
     mission/start-board.sh --slug minimal-development           # then drag Triage → Todo
-    mission/start-board.sh --slug minimal-development --once    # or: open lane 1 now
-
-Then audit it — `mission/run-audit.py --runs boards/minimal-development/runs`
-exits 0 only at 0 errors and 0 warnings.
-
-The roman-number page is a separate board: `boards/roman-evaluator-js/`.
+    mission/run-audit.py --runs boards/minimal-development/runs # exits 0 only at 0 errors, 0 warnings

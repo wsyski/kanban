@@ -18,9 +18,17 @@ import argparse
 import datetime
 import json
 import os
+import re
 import sys
 
 WORKER_CODES = ("I", "P", "TW", "C", "TI")
+
+
+def base_code(code):
+    """A card's code without its lane and round: `P1` / `P1-rev-1` -> `P`, `RVa1-r2` -> `RVa`."""
+    return re.match(r"[A-Za-z]*", code).group()
+
+
 # Which card produces which hand-off, by role.
 PRODUCED_BY = {"REFINED": "I", "PLAN": "P"}
 TOLERANCE_S = 2.0
@@ -112,7 +120,7 @@ def analyze(recs, runs_dir=None):
             # a stale read. What still matters for an output path is F3 — a
             # leftover from an earlier run sitting where this card will write
             # (a refined idea surviving into a later run).
-            is_output = PRODUCED_BY.get(role) == code.rstrip("0123456789")
+            is_output = PRODUCED_BY.get(role) == base_code(code)
             if not os.path.exists(path):
                 if not is_output:
                     findings.append(f"F1 {code} lane {lane}: {role} missing at {path}")
@@ -135,7 +143,7 @@ def analyze(recs, runs_dir=None):
             findings.append(f"F4 {code} lane {lane}: filed body still names {ph}")
         done = dones.get(r["card_id"], {})
         produced = {"attached": done.get("attached", []), "staged": done.get("staged", [])}
-        if code.rstrip("0123456789") in WORKER_CODES and done \
+        if base_code(code) in WORKER_CODES and done \
                 and not produced["attached"] and not produced["staged"]:
             findings.append(f"F5 {code} lane {lane}: finished with nothing attached "
                             f"and nothing staged")

@@ -143,8 +143,9 @@ The idea file is the ONE copy. There is no import step and no second copy
 under mission/: the file you edit is the file the board reads, and it stays
 editable until the driver activates that lane.
 
-Without --board you get an empty board with the parser defaults below — 2
-lanes, no integration cards, human gates — and --slug/--title are required:
+Without --board you get an empty board on the board_schema option defaults
+(1 lane; refinement, unit and integration tests on; human gates) — and
+--slug/--title are required:
 
     mission/create-board.sh --slug scratch --title "Scratch"
 
@@ -219,7 +220,8 @@ if board_dir:
     lanes = cfg.get("lanes", 1)
 else:
     board_dir = os.path.join(repo, "boards", slug)
-    lanes = 2                       # parser default: an empty two-lane board
+    import board_schema
+    lanes = board_schema.OPTIONS["lanes"][1]   # the schema's default, like every other option
 # A board's work is board output: it belongs inside the board, not at the repo
 # root, so nothing a board generates leaks into the template. An explicit workdir still points anywhere.
 # board_schema requires an explicit default-workdir to be absolute, so abspath

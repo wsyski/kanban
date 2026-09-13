@@ -402,3 +402,20 @@ def test_the_pre_flight_refuses_a_remap_to_a_profile_that_is_not_there(tmp_path)
                             ["coder", "researcher"])
     assert code == 1, (code, out)
     assert "profile senior not available" in out, out
+
+
+def test_a_re_review_takes_the_depth_the_lanes_idea_sets(monkeypatch, tmp_path):
+    """The base review cards get the LANE's resolved effort (an idea header wins over
+    the manifest); a rework round of the same review must not fall back to the board's."""
+    calls = _capture_rework(monkeypatch, tmp_path, PINNED)
+    monkeypatch.setattr(run, "lane_options", lambda lane: {"reasoning_effort": "low"})
+    state = {lanes.card_title(c, 1): {"id": f"id-{c}", "status": "blocked"}
+             for c in ("Gi", "Gp", "Gc")}
+    run.file_revision(state, 1, 1, "1. fix the plan", base="P",
+                      reviewer_prefix="RVp", gate_code="Gp")
+    run.file_code_revision(state, 1, 1, "1. fix the code", owner="C")
+    created = [c for c in calls if c[0] == "create"]
+    for prefix in ("RVp1-r2", "RVa1-r2"):
+        rr = next(c for c in created if c[1].startswith(prefix))
+        assert _arg(rr, "--reasoning") == "low", rr[1]
+        assert _arg(rr, "--model") == "glm-5.3-flash", rr[1]
