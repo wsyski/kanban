@@ -6,7 +6,7 @@
   "unit-tests": true,
   "integration-tests": false,
   "auto-gates": true,
-  "goal": false,
+  "goal": true,
   "max-runtime": "4m",
   "max-reworks": 2,
   "model_override": "glm-5.3-flash",
