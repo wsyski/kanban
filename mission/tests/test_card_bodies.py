@@ -38,22 +38,21 @@ def all_texts():
         yield name, read(name)
 
 
-def test_the_integration_card_may_change_the_implementation_under_rules():
-    """An end-to-end test that cannot REACH the deliverable is a gap only the
-    integration level sees, so that card may change code — under rules that keep the
-    change reviewable: minimal, named, staged, attached separately, and never a
-    rewrite to make a test pass, never the TW card's files, never the plan."""
+def test_the_integration_card_may_change_anything_to_make_the_integration_tests_work():
+    """HUMAN RULE (2026-09-13): the integration card may change everything and the test
+    must work — the implementation, the TW card's unit tests, build and configuration.
+    What keeps it reviewable: every change outside its own tests is staged, attached
+    apart from them and named with its reason, and the final review judges it."""
     ti = read("ti-body.txt")
-    assert "MAY also change the IMPLEMENTATION" in ti
-    assert "MINIMAL" in ti
+    assert "MAY change ANY file" in ti
+    for what in ("implementation", "the TW card's unit tests", "build", "configuration"):
+        assert what in ti, what
     assert "patch-code.diff" in ti
     assert "WHY the end-to-end run needed it" in ti
-    assert "may not rewrite the implementation to make a test pass" in ti
-    assert "may not edit the TW card's unit tests" in ti
     assert "may not change the plan" in ti
-    assert "no implementation change needed" in ti
-    assert "do not edit the test and do not force it through" in ti
-    assert "routes the fix to whoever owns it" in ti
+    assert "no change outside the integration tests" in ti
+    done = ti.split("DONE WHEN:", 1)[1].split("\n\n", 1)[0]
+    assert "integration suite is GREEN" in done and "unit suite still green" in done
 
 
 def test_the_final_review_re_derives_the_code_checks_on_the_tree_the_gate_gets():
@@ -63,7 +62,9 @@ def test_the_final_review_re_derives_the_code_checks_on_the_tree_the_gate_gets()
     rvc = read("rvc-body.txt")
     assert "as it STANDS is the plan's implementation" in rvc
     assert "the implementation review saw it BEFORE these changes" in rvc
-    assert "minimal" in rvc
+    assert "outside its own integration test files" in rvc
+    assert "REJECT with `OWNER: TI`" in rvc
+    assert "PASS requires" in rvc and "green" in rvc
     assert "OWNER: TI` for an integration test" in rvc
     # and the earlier review knows the limit of its own verdict
     rva = read("rva-body.txt")
@@ -299,3 +300,132 @@ def test_every_worker_and_verdict_body_carries_the_worker_contract():
     for rule in ("kanban.db", "tool_search", "request-review", "block", "memories", "skills",
                  "/opt/backup/agents/", "full sentences", "-p no:cacheprovider"):
         assert rule in text, rule
+
+
+REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+FINISH = "a failing test is a finished card, not a blocker"
+
+
+def judge_window(code, body):
+    """What the goal judge reads: title + body, cut at 2000 chars from the start
+    (`_goal_gate` → `goals._truncate(goal, 2000)`). A rule past the cut is invisible
+    to it: every rendered DONE WHEN: line sits beyond 3700 chars."""
+    text = file_lanes.render_body(body, repo=REPO, board="b", workdir="/w", lane=1,
+                                  run_id="r1")
+    return f"{lanes.card_title(code, 1)}\n\n{text}"[:2000]
+
+
+def test_the_goal_judge_sees_that_a_failing_test_is_a_finish():
+    """HUMAN RULE (2026-09-13): a failing test is always an acceptable finish for a
+    worker card; only the reviewers reject. C2 on roman-evaluator-java reported a red
+    test, the judge said `blocked`, and C2 blocked itself — so the rule has to be in
+    the part of the body the judge actually reads."""
+    for code, body in (("C", "c-body.txt"), ("TW", "tw-body.txt"), ("TI", "ti-body.txt")):
+        window = judge_window(code, body)
+        assert FINISH in window, body
+        assert "complete" in window.split(FINISH, 1)[1], body
+
+
+def test_done_when_never_requires_a_green_suite():
+    """The integration card is the one exception: its finish is green (test above)."""
+    for body in ("c-body.txt", "tw-body.txt"):
+        done = read(body).split("DONE WHEN:", 1)[1].split("\n\n", 1)[0]
+        assert "every failing test" in done, body
+        assert "A green suite is not part of this finish" in done, body
+    done = read("c-body.txt").split("DONE WHEN:", 1)[1].split("\n\n", 1)[0]
+    assert "test-fix.diff" in done and "Neither is a blocker" in done
+
+
+def test_the_coder_may_correct_a_tw_test_only_when_every_condition_holds():
+    c = read("c-body.txt")
+    assert "never edit them to make them pass" in c
+    for condition in ("`done`", "unsatisfiable", "intent", "no test is deleted",
+                      "coverage does not shrink", "test-fix.diff", "plan step",
+                      "TEST DEFECT (not corrected)"):
+        assert condition in c, condition
+    assert "say so in your result and stop" not in c
+
+
+def test_the_result_fragment_carries_the_test_lines_and_keeps_them_visible_to_the_judge():
+    """`_goal_gate` judges `summary or result` (kanban_tools.py:585): a short summary
+    hides the evidence the result carries."""
+    text = read("_result-field.txt")
+    assert "TEST FIX: <test> (plan step <n>)" in text
+    assert "TEST DEFECT (not corrected): <test>" in text
+    assert "`result` only" in text
+    assert "repeat" in text and "summary" in text
+
+
+def test_block_is_only_for_a_missing_external_decision_or_tool():
+    text = read("_worker-contract.txt")
+    assert "missing external decision or a missing tool" in text
+    assert "never for a test, a plan step or another card's output" in text
+
+
+def test_a_worker_never_blocks_with_kind_dependency():
+    """`_route_block` sends `--kind dependency` to `todo` and `recompute_ready` puts it
+    straight back: no recurrence count, no human. Goal mode allows only needs_input and
+    dependency (kanban_tools._GOAL_MODE_BLOCK_ALLOWED_KINDS), so the contract names the
+    one to use."""
+    text = read("_worker-contract.txt")
+    assert "never `block --kind dependency`" in text
+    assert "`--kind needs_input`" in text
+
+
+def test_the_implementation_review_judges_every_test_the_coder_changed():
+    rva = read("rva-body.txt")
+    assert "test-fix.diff" in rva
+    assert "REJECT with `OWNER: C`" in rva
+    assert "REJECT with `OWNER: TW`" in rva
+    for body in ("rva-body.txt", "rvc-body.txt"):
+        assert "may not edit the TW card's files" not in read(body), body
+
+
+def test_the_integration_card_that_cannot_get_green_still_completes():
+    """Wedge guard: green is required, but a TI card that cannot reach it after genuine
+    effort completes naming each failing test — the final review rejects. The judge has
+    to read that inside its window, or it pushes the card into a block."""
+    window = judge_window("TI", "ti-body.txt")
+    assert "cannot get the integration suite green" in window
+    assert "never block" in window.split("cannot get the integration suite green", 1)[1]
+
+
+def test_the_plan_review_checks_every_asserted_property_is_achievable():
+    assert "achievable with the plan's named toolchain" in read("_plan-checklist.txt")
+
+
+def test_the_coders_test_fix_diff_holds_only_its_own_correction():
+    """`git diff --cached` after staging diffs against HEAD: the TW card's whole file
+    plus C's edit. Taken before staging, against the index still holding TW's version,
+    the diff is the correction alone — what the review has to judge."""
+    c = read("c-body.txt")
+    assert "`git diff -- <the test paths> > <RUNS>/scratch/<YOUR-CARD-ID>/test-fix.diff`" in c
+    assert "git diff --cached -- <the test paths>" not in c
+    assert "BEFORE you stage it" in c
+    assert "restore the TW card's version" in c
+    revision = c.split("ON A REVISION CARD:", 1)[1]
+    assert "restore the TW card's version" in revision
+
+
+def test_finish_never_stops_implementation_at_a_red_test():
+    """TW tests are red by design while C works; FINISH governs the end of the card,
+    not each step."""
+    assert "never keep going over red tests" not in read("c-body.txt")
+    assert "Once every [C] step is implemented" in judge_window("C", "c-body.txt")
+    assert "Once every [TW] step is written" in judge_window("TW", "tw-body.txt")
+    assert "or cannot keep the unit suite green" in judge_window("TI", "ti-body.txt")
+
+
+def test_the_final_review_routes_every_red_test_to_the_integration_card():
+    rvc = read("rvc-body.txt")
+    assert "The TW card is not routed from this review" in rvc
+    assert "OWNER: TW" not in rvc and "C|TW|TI" not in rvc
+
+
+def test_no_body_hardcodes_a_rework_cap():
+    """`max-reworks` is per lane and read from the lane's idea header, which does not
+    exist yet when the cards are filed — so a number in the prose is a second source
+    of truth that disagrees with any board or lane that sets its own cap."""
+    cap = re.compile(r"\bmax\s+\d+|\d+\s+(?:rework\s+)?rounds?\b", re.I)
+    offenders = [name for name, text in all_texts() if cap.search(text)]
+    assert offenders == [], offenders

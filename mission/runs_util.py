@@ -7,6 +7,7 @@ epoch seconds instead; everything elapsed is computed from those.
 """
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -114,3 +115,55 @@ def cli_error(stderr, limit=300):
     lines = [l for l in (stderr or "").strip().splitlines()
              if not l.strip().startswith(_UPDATE_BANNER)]
     return "\n".join(lines).strip()[-limit:]
+
+
+# A transport failure in a card's worker log, for the driver's re-queue and the
+# auditor's E18 alike. Only the transport's own forms count: under -Q (goal mode) a
+# line that IS the error (`HTTP 400: Error from provider …`); in the TUI the
+# failed-call line (`API call failed (attempt 1/3): BadRequestError [HTTP 400]`),
+# the `📝 Error: HTTP 400: …` under it and the response box's `HTTP 400: …`
+# (agent/turn_recovery.py; measured in the 2026-09-10 and 2026-09-13 storm logs);
+# and the goal loop's error sentence. A status code inside a sentence — `assert
+# response status 404`, `HTTP 404 from the stub` — is a test's or a tool's: the
+# work, not the provider.
+UPSTREAM_ERROR = re.compile(r"(\[HTTP\s*[45]\d\d\]|^\W*(?:Error:\s*)?HTTP\s*[45]\d\d:|"
+                            r"goal judge: API call failed)")
+
+
+def ledger_log_offsets(run_dir):
+    """Card id -> the worker-log byte offsets a run recorded, oldest first.
+
+    The driver records one (`attempt` in `verdicts.jsonl`) just before each unblock
+    that starts an attempt. The previous worker has exited by then, its buffered
+    stdout flushed, so an offset is a clean boundary between attempts — the log's
+    own lines carry no timestamps, and a session id is no boundary either: under -Q
+    it goes to stderr at once while stdout lands after it.
+    """
+    out = {}
+    try:
+        with open(os.path.join(run_dir, "verdicts.jsonl")) as f:
+            for line in f:
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                if rec.get("event") == "attempt" and rec.get("card_id"):
+                    out.setdefault(rec["card_id"], []).append(int(rec.get("log_offset") or 0))
+    except OSError:
+        pass
+    return out
+
+
+def upstream_hits_since(path, offset):
+    """UPSTREAM_ERROR lines in a worker log from byte `offset` on, as (count, first
+    line). An offset past the end means the dispatcher rotated the log at spawn
+    (`_rotate_worker_log`), so the whole new file is the attempt's."""
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            f.seek(offset if offset <= f.tell() else 0)
+            text = f.read().decode(errors="replace")
+    except OSError:
+        return 0, None
+    hits = [l.strip() for l in text.splitlines() if UPSTREAM_ERROR.search(l)]
+    return len(hits), (hits[0] if hits else None)

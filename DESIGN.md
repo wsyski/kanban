@@ -76,17 +76,26 @@ Gi(n)      ──REWORK───────→ I(n)-rev-N          → Gi(n)-r(
 - **Cap:** all three loops read `lanes.max_reworks` for the lane — `max-reworks` from
   the idea header or manifest, default 3. It is distinct from `max-retries`, the engine's per-card ATTEMPT budget,
   which is pinned to 1 because a failed card is final — the board's only retry is a
-  review that sends work back.
+  review that sends work back. The review and gate bodies say "up to the board's rework
+  cap", never a number: a lane's cap comes from its idea header, which does not exist
+  yet when the cards are filed (`test_no_body_hardcodes_a_rework_cap`).
 - **Live-guard:** a round is filed only when the previous round's cards are all done
   (`rework_hold`). A REJECT as the latest verdict alone does not trigger filing, or
   every round would be filed at once.
+- **Downstream hold:** the card after a live round waits on the graph, not on a block:
+  Gp's parents include the plan round (`lane_graph`), TW and C wait for Gp, and P waits
+  for the idea gate's verdict (`held_by_verdict`). A `block --kind dependency` would not
+  hold — the engine sends it to `todo` and `recompute_ready` promotes it back as soon as
+  the parents are done (`kanban_db._route_block`).
 - **Rendering:** a revision card is rendered exactly like the card it revises — same
   paths, workdir, ceiling and skill — plus the numbered findings and a pointer to the
   full verdict.
 - **Owner:** the code loop's revision goes to the card the verdict names
   (`OWNER: C` / `TW` / `TI`). The implementation review judges the C patch and the TW
-  tests in one pass, and C may not edit TW's files, so a rejected test filed against C
-  could never be fixed. No usable owner line means `C`.
+  tests in one pass, and C corrects a TW test only under c-body hard rule 3 (TW `done`,
+  evidence, a separate `test-fix.diff` that RVa checks against the plan), so a test
+  defect C did not correct, filed against C, could never be fixed. No usable owner
+  line means `C`.
 - On a lane with integration tests the code re-review also repeats the final review,
   and `TI` waits until the newest implementation verdict is PASS. `P` stays parked while
   the newest idea verdict is REWORK.
@@ -97,7 +106,7 @@ Gi(n)      ──REWORK───────→ I(n)-rev-N          → Gi(n)-r(
   re-verify only the fixed lines. Framed as "re-verify everything", a plan fix dies at
   the turn ceiling.
 - **Escalation:** when the rounds are exhausted the driver comments `ESCALATION` on
-  the card, records it in `verdicts.jsonl`, and halts the board (below).
+  the card, records it in `verdicts.jsonl`, and halts the board ([stall classes](#stall-classes)).
 
 ## Profiles and the worker contract
 
@@ -119,18 +128,20 @@ profiles a board needs from its manifest (`lanes.required_profiles`), and a mani
 spawned and nothing reports it, so a role that loses its profile must be remapped in
 the same change.
 
-**Independent judge.** The review cards (`lanes.JUDGE_CODES` = RVp, RVa, RVc, and
-their rework rounds) carry `model_override`/`provider_override` — the engine's own
+**Independent review model.** The review cards (`lanes.JUDGE_CODES` = RVp, RVa, RVc,
+and their rework rounds) carry `model_override`/`provider_override` — the engine's own
 task-property names — while author cards run the coder's default. Every shipped board
-pins `glm-5.3-flash` on `opencode-go`, so the model that judges is not the model that
+pins `glm-5.3-flash` on `opencode-go`, so the model that reviews is not the model that
 wrote the work. It is board-level only, so no idea header can buy a lane a different
-judge; `board_schema` refuses a provider without a model, as the engine does.
+review model; `board_schema` refuses a provider without a model, as the engine does.
+The review model is not the *goal judge* (see [the goal judge](#the-goal-judge)).
 Reasoning depth is not pinned: stock `hermes kanban create` has no flag for it, and
 carrying a Hermes patch for it costs more to maintain than the depth is worth, so every
 card runs at its profile's configured effort.
 
 **Worker contract.** The rules every worker shares — board access through
-`kanban_show` or the CLI, no branches/commits/follow-up cards, no questions, no caches
+`kanban_show` or the CLI, no branches/commits/follow-up cards, no questions, a block
+only for a missing decision or tool and never `--kind dependency`, no caches
 in `work/`, full sentences, no memory/skill/config writes, end the card as the body
 says — live once in `mission/card-bodies/_worker-contract.txt`, included by every
 worker and verdict body as `<WORKER_CONTRACT>`. The profile SOUL's `## Kanban Cards`
@@ -160,50 +171,29 @@ how to read them.
 - **Restart rejoins.** A lane already opened on this run (a `lane_open` record in
   `chain.jsonl`) is rejoined, not re-opened, so a running card's snapshots are not
   rewritten and the lane is not commented on twice. The lane/run agreement check runs
-  first, so a rejoin never releases a mismatched lane. A single restart recovers a
-  stalled run.
+  first, so a rejoin never releases a mismatched lane. What a restart keeps and which
+  halts it repeats: [restart and reset](#restart-and-reset).
 - **A recorded halt stops the loop before any refile**, so an armed idea is not adopted
   into a fresh run that the same exit would abandon.
 - **Snapshots before release.** At open the driver writes the idea snapshot and the
   work directory as the lane finds it, then releases the root — so no worker reads a
   mutable or half-written input, and lane 2 sees the tree lane 1 left rather than the
   tree at filing time.
-- **Promotion honours every stop but the parking brake.** The graph decides *when* a
-  card's turn has come; it may only release the board's own brake — a card filed blocked
-  at birth, or the older `parked: awaiting lane activation`. Any other block is somebody
-  saying STOP, and the driver hears it instead of unblocking the card again:
-  the worker's own block is re-promoted **once** (reason commented on the card, log line
-  `re-promoted <code> once`), and the second one escalates and halts naming the worker's
-  words; a block the driver recorded at a runtime ceiling is never promoted away.
-  Measured 2026-09-13 on roman-evaluator-java: C2 blocked itself at 15:52:41 and
-  promotion undid it six seconds later, so a worker's "I cannot complete this" existed
-  only as a comment nobody read. `run.block_origin`/`should_repromote` own the rule.
-- **Halts.** The board halts — log line, comment on the card, `runs/<run-id>/halt.txt`,
-  deadman notice, driver exits — on the first of: a card whose attempt failed (gave up,
-  crashed, timed out), rework rounds exhausted, a worker that blocked its own card twice,
-  a card the driver blocked at its runtime ceiling, or an assigned card escalated to
-  Triage by the engine (`block_loop_detected`). Driving on would only file more work
-  against a broken step, and polling would read as a stall. A timed-out card is also
-  blocked by the driver, because the dispatcher would otherwise put it back at `ready`
-  and retry it. A worker log with ≥3 upstream 4xx/5xx marks the halt
-  "provider-starved", because the restart decision differs.
-- **Provider starvation is not a content failure.** A card whose attempt died in an
-  upstream 4xx/5xx storm — ≥3 such lines in its worker log, and a clean exit that never
-  called `kanban_complete`/`kanban_block` — is re-queued **once**, in the open
-  (`RE-QUEUED (once)` comment on the card): halting a whole run for a flake the worker
-  never got to work through is the one thing the one-attempt rule is not about. The
-  re-queue is stamped (`_REQUEUED`, keyed by the exhaustion event's own timestamp), so
-  the event that caused it — which stays in the card's history for ever — cannot halt
-  the next tick. From the second failure of any kind the ordinary rules apply. Timeouts
-  are never re-queued: a ceiling is the board's own rule, not a flake.
-- **Deadman.** Two or more non-parked cards blocked on `needs_input` log a DEADMAN
-  line, write `runs/<run-id>/deadman.txt`, and send Telegram when tokens are set. It
-  notifies once per distinct stuck set, so one stall is one message, and a failed board
-  read is logged rather than raised. Parked cards (lanes not yet open) are excluded —
-  they are also `needs_input`.
+- **Stops, halts and the deadman.** Promotion releases only the parking brake; a
+  worker's stop is re-promoted once; everything else halts naming the cause. The
+  whole algorithm, with its decision tables, is
+  [how a lane avoids and escapes a stall](#how-a-lane-avoids-and-escapes-a-stall).
 - **CLI timeouts.** Every `hermes` and `git` call has a 60 s timeout
   (`CLI_TIMEOUT_S`): a hung CLI would otherwise stall the driver while its lock stays
   live and `start-board.sh` keeps seeing a healthy driver.
+- **One `show` per card per board snapshot.** Every block reader (`card_record`,
+  `_blocked_event_payload`, `live_worker_pid`, the chain's attachment read) goes through
+  `run.card_show`, memoised inside `show_memo` — one per `tick` and one per
+  `deadman_check`. A `show` is 0.25 s, and the readers asked per card several times a
+  tick (~80 calls on a 2-lane board). A fresh `list` (`board()`) empties the memo, so a
+  card read while `running` and `blocked` in the next snapshot is read again; a driver
+  write through `kb` drops the memo entry of every card it names. A failed read is not
+  remembered.
 - **Index sweep.** Every tick the driver unstages anything under the board's `runs/`
   (all runs, in the kanban repo), because a staged hand-off reaches every later card's
   `git diff --cached` and the operator's `git status`. `run-audit.py` fails a run that
@@ -224,6 +214,256 @@ external `default-workdir` says where its deliverable went.
 Inside the work directory (and declared `targets`) the lane owns the tree: it may
 change, replace or delete anything there, and no staged or uncommitted file is
 promised to survive. Outside those roots the board touches nothing.
+
+## How a lane avoids and escapes a stall
+
+A stall is a lane that cannot advance while the board says nothing, and it looks exactly
+like a slow lane. The board works against it in three layers. The card bodies take away
+the reasons to stall. The driver gets a card moving again, once, only where the cause is
+known to heal. Everything else halts the board and names the cause. There is never an
+unbounded wait or retry: driving on would only file more work against a broken step, and
+polling would hide the stall.
+
+### Prevention: filing and the card bodies
+
+| rule | where | why |
+|---|---|---|
+| Goal mode is opt-in: `"goal"` is a board-level key, default `false`, read at filing | `board_schema.OPTIONS`, `file_lanes.file_board` → `lanes.goal_args` | a goal judge that cannot answer wedges every worker card ([the goal judge](#the-goal-judge)). Changing the key means re-creating the board. Restarting the driver does not change it |
+| Goal flags go on worker cards only (I, P, TW, C, TI and their rounds), never on reviews or gates | `lanes.goal_args` | a goal judge can push a card whose success case is *blocking* into completing, which silently opens the gate it guards |
+| Every card is bounded: the per-card `max-runtime` (default 60m), the global `agent.max_turns` (80), and under goal mode `goal-max-turns` (default 40). `max-retries` is pinned to 1 | `board_schema.OPTIONS`, `file_lanes.file_board` | nothing else bounds a worker. A card that reaches its ceiling has failed for good, and nothing retries it |
+| Each worker body's FINISH paragraph sits in the first 2000 characters of title + body | card bodies; `test_card_bodies.test_the_goal_judge_sees_that_a_failing_test_is_a_finish` | the goal judge reads the card cut at 2000 characters (`goals.judge_goal`), so a rule past the cut does not exist for it |
+| `result` is the report. A `summary`, if written, repeats every failing-test, TEST FIX and TEST DEFECT line | `_result-field.txt` | the completion gate judges `summary or result` (`tools/kanban_tools._goal_gate`), so a short summary hides the evidence that the card is finished |
+| For TW and C a failing test still finishes the card: name each failing test and complete. Only a review rejects | `tw-body.txt`, `c-body.txt` FINISH | TW's tests are red by design while C works (`TW ∥ C`). A card that blocks or loops on a red test burns its budget and keeps the defect from the review that would route it |
+| C may correct a TW test only under c-body hard rule 3. Conditions: TW is `done`, a run shows the assertion is unsatisfiable, the intent is kept and no coverage is lost. The fix goes in a separate `test-fix.diff`, which RVa checks against the plan (check e) | `c-body.txt`, `rva-body.txt` | without this, a wrong test leaves C a choice between failing and fudging. The separate diff keeps the correction reviewable |
+| TI may change any file in the work tree. It must get the integration suite green with the unit suite still green. If it cannot after genuine effort, it completes and names each failure | `ti-body.txt` FINISH, hard rule 2 | some gaps show up only end to end. RVc requires green and rejects with `OWNER: TI` |
+| Workers `block` only for a missing external decision or tool, with `--kind needs_input`, never `--kind dependency`. A plan step believed wrong, or another card's defect, goes in the result and the card completes | `_worker-contract.txt` | the review can route an upstream defect back to its owner; a block cannot. A dependency block never even reaches `blocked` ([block origins](#block-origins)). The researcher's missing-toolchain stop (`i-body.txt`) is the sanctioned block |
+| RVp rejects a test step that asserts something the plan's named toolchain cannot produce, or a FAIL that the plan's own Findings contradict | `_plan-checklist.txt` item 4 | an unachievable assertion costs least in the plan, before TW, C and a review round spend on it |
+| A REJECT names its owner. RVa names C, TW or TI. RVc names TI (for any red test, or any change TI made outside its tests) or C. No usable owner means C | `rva-body.txt`, `rvc-body.txt`, `run.rework_owner` | a round filed against a card that cannot fix the defect repeats until it escalates ([rework loops](#rework-loops)) |
+
+### The goal judge
+
+- **Two different models.** The *goal judge* is the auxiliary task `auxiliary.goal_judge`.
+  With no `auxiliary:` override in the profile's `config.yaml` it runs on the worker's
+  profile model. The *review model* is `model_override`/`provider_override`, set on the
+  review cards only (`lanes.JUDGE_CODES`, `lanes.model_args`). Pinning the review model
+  does not move the goal judge.
+- **It sees text only**: the card's title and body (cut at 2000 characters), plus the
+  worker's claim. It neither runs nor reads the work, so its verdict depends on how the
+  claim is worded. A claim that names failing tests without saying the body counts that
+  as finished reads as "not done".
+- **It acts in two places.**
+  1. It gates `kanban_complete` and `request-review` on `summary or result`. A `done`
+     verdict lets the completion through. `continue` rejects it with the judge's reason,
+     and the worker keeps going. `blocked` rejects it as unachievable. A missing
+     auxiliary client, or an exception raised in the gate, fails open: the completion
+     goes through.
+  2. After each turn that ends without a terminal call, the goal loop
+     (`goals.run_kanban_goal_loop`) judges the last response and nudges the worker. The
+     loop can end by blocking the card itself, **with no kind**, with one of three
+     fixed reasons: "Goal-mode judge ruled the goal unachievable: …", "Goal-mode
+     worker's output looked complete but it never called kanban_complete after a
+     finalize nudge …", or "Goal-mode worker exhausted its turn budget …"
+     (`run.JUDGE_BUDGET_BLOCK_MARK`). The driver treats the first two as the worker's
+     own block and halts at once on the third ([block origins](#block-origins)). A
+     goal-mode worker's own block is `needs_input`, because the worker contract says so.
+- **It can wedge every worker card.** When the judge's API call fails inside
+  `judge_goal`, the failure is logged as `goal judge: API call failed` and returned as
+  the verdict `continue`. No evidence satisfies that verdict, so every completion is
+  rejected and every goal loop spends its budget. The judge runs *outside* a turn, and
+  an OpenCode relay answered it `400 MissingSessionID` until the loop held the
+  conversation it judges (`hermes-kanban-goal-judge-affinity.patch`). This is why goal
+  mode is opt-in.
+- **Probing it.** There is no probe board, because goal mode is a manifest key. Before
+  arming a real board with `"goal": true`, set it on `boards/minimal-development`,
+  re-create and run that board, then set it back. A working probe proves that the judge
+  answers and can say `done`. It does not prove the judge checks the work.
+  - *Working:* `I1` completes in one turn. The worker's profile log
+    (`~/.hermes/profiles/<p>/logs/agent.log`) shows `goal judge: verdict=done` and
+    `kanban goal loop: task … completed by worker after 1 turn(s)`.
+  - *Failing:* `I1` never completes and stops at its per-card `max-runtime`. The same log
+    names the cause in `goal judge: API call failed`.
+
+  | Symptom | Cause | Lever |
+  |---|---|---|
+  | every judge call fails `400 MissingSessionID` | the auxiliary request carries no `x-opencode-session` | `hermes-kanban-goal-judge-affinity.patch` |
+  | the judge answers but never `done` | the model cannot follow the strict JSON verdict contract | `auxiliary.goal_judge.provider` / `.model` in the profile's `config.yaml` |
+
+  If the judge cannot be made to answer, the board keeps `"goal": false`.
+
+### Block origins
+
+Promotion only looks at a blocked card whose parents are done and that no verdict holds
+back. The only block it may release is the board's own parking brake. Any other block
+is somebody saying STOP. `run.block_origin` classifies a block by the reason on its
+newest block event, and `run.should_repromote` decides what to do:
+
+| origin | recognised by | `should_repromote` | driver action | what the human sees |
+|---|---|---|---|---|
+| `parked` | `is_parked`: reason `initial_status` (the card was filed blocked) or `parked: awaiting lane activation` | `release` | unblocks the card, as often as the graph asks | log `unblocked <code> (parents done)` |
+| `worker` | any other non-empty reason: the worker's block, the goal loop's "unachievable" or "never called kanban_complete" block, or a human's block | `repromote` the first time, then `stop` | re-promotes once, after the worker's process exits (below). A second block escalates and halts | comment `RE-PROMOTED (once): …` and log `re-promoted <code> once`, then `ESCALATION: its own worker blocked it twice (…)` |
+| `judge_budget` | reason starts `Goal-mode worker exhausted its turn budget` | `stop` | escalates at the top of the tick, wherever the card sits. One such card behind an unfinished parent is below the deadman threshold | the halt, plus `goal judge: API call failed` in `~/.hermes/profiles/<assignee>/logs/agent.log` (`judge_log_hint`) |
+| `timeout` | reason contains `TIMEOUT:`, the block the driver sets at a runtime ceiling (`stop_a_timeout`) | `stop` | never promoted away. Only a review sends work back | "a ceiling is not a review; a human resets the board" |
+| `driver` | reason starts `HALTED:`, the block the driver puts on a card it halted for (`driver_block`) | `stop` | never promoted away. A restart reads this block as the driver's stop, never as the worker's | "blocked by the driver when it halted" |
+| `other` | the newest block event has no reason (`hermes kanban block <id>` with no words; the driver always gives one) | `stop` | escalates at the top of the tick, wherever the card sits, like `judge_budget`: nobody can interpret it, and a card held behind a verdict would otherwise wait unseen. A card whose record cannot be read has no block event and is not halted on | "blocked without a reason (by a human or a worker)" |
+| `unreadable` | the card's `show --json` failed (`card_record` notes the error in `_READ_ERROR`; a good read clears it): a CLI timeout or "database is locked" | `skip` | leaves the card for this tick: no unblock, no escalation, not stuck, not a reasonless block. A failed read is not remembered by the per-tick memo, so the next tick reads again. `UNREADABLE_LIMIT` (3) promotion ticks in a row unreadable escalates and halts; a good read restarts the count | log `<code>: could not read its card (…)` once per streak, then "could not read card <code> (<error>)" |
+
+Why a worker's stop gets exactly one re-promotion:
+
+- **Why promotion hears a stop at all.** On 2026-09-13, roman-evaluator-java C2 blocked
+  itself at 15:52:41, and promotion undid the block six seconds later. The worker's "I
+  cannot complete this" survived only as a comment nobody read.
+- **Why it gets one retry.** Lane 2 of roman-evaluator-java healed on the retry.
+- **Why a spent turn budget gets none.** A failing goal judge reads as `continue`, so a
+  second budget would burn the same way.
+- **Why a human's block counts too.** A block event carries no actor, so a human who
+  blocks a gate with a reason gets the same one re-promotion before the halt finds
+  them. A block with no reason halts at once. To stop a card dead, reset the board.
+
+**Waiting for the worker to exit.** `kanban_block` is a tool call, not the worker's
+exit. The worker may still be finishing its turn, so unblocking at once would put a
+second worker on the card and record the log offset before the first worker's output
+lands. `run.live_worker_pid` reads the pid from the card's newest `spawned` event. While
+that process is alive the driver defers the re-promotion and logs the deferral once. A
+blocked card has no runtime ceiling bounding that wait, and a pid the OS has reused
+would hold it indefinitely. So `REPROMOTE_WAIT_S` (5 min) after the block, the driver
+re-promotes anyway and logs that it stopped waiting.
+
+**Two blocks the engine reroutes before the driver sees them.**
+
+- **A `--kind dependency` block never reaches `blocked`.** `kanban_db._route_block`
+  sends it to `todo` as a `dependency_wait` event, and `recompute_ready` promotes it
+  again without counting a recurrence. Once the card's parents are done, `run.card_stall`
+  handles it:
+  - the first such event counts as the card's one re-promotion (ledger `repromote`
+    with `via: dependency_wait`, comment `RE-PROMOTED (once)`)
+  - a second one halts the board, and so does a dependency block after an ordinary
+    re-promotion
+  - events whose reason starts `rework in flight:` are ignored
+- **A second block of the same kind after an unblock goes to Triage.** The engine counts
+  recurrences up to `BLOCK_RECURRENCE_LIMIT` (2), then routes the card to Triage
+  (`block_loop_detected`). `run.escalated_to_triage` halts on that, and
+  `run.triage_halt_reason` carries the block's words, so the worker's reason still
+  surfaces.
+
+### Stall classes
+
+Every halt goes through `run.record_halt`: a `BOARD HALTED: …` log line,
+`runs/<run-id>/halt.txt`, and one notice. Through `run.escalate`, the card also gets an
+`ESCALATION: …` comment where there is a card to put it on. The ledger keeps that
+comment to one per key, across restarts too. The driver then exits.
+
+| stall | detected by | driver action | message |
+|---|---|---|---|
+| a card attempt failed (`gave_up`: retries spent, a crash, a failed spawn) | `halt_if_exhausted` → `_exhaustion_event` | comments `BOARD HALTED:` on the card and halts. The reason says "provider-starved" when the attempt's log holds ≥3 upstream lines | the event's error |
+| a provider-starved attempt: `gave_up` with ≥3 `runs_util.UPSTREAM_ERROR` lines since the attempt's offset, and an exit that never called `kanban_complete`/`kanban_block` (reason `protocol violation`, or `trigger_outcome` `crashed`) | `halt_if_exhausted`, `provider_hits` | **re-queues once** (`requeue_provider_starved`): marks the attempt, unblocks, and records `requeue` with its time. An exhaustion event at or before that time is ignored, and any later failure halts | comment `RE-QUEUED (once): …`, log `re-queued <code> once` |
+| timeout (`timed_out`) | `halt_if_exhausted` → `stop_a_timeout` | blocks the card with `TIMEOUT: … hard failure`, because the dispatcher would put it back at `ready`, then halts. Never re-queued | `BOARD HALTED:` on the card |
+| rate-limit wall: `RATE_LIMIT_LIMIT` (3) closed runs in a row ending `rate_limited` | `card_stall` | `driver_block` `HALTED: …` (promoting a `todo` card first, so the block is accepted), then escalates | "provider quota wall" |
+| stale reclaim: `RECLAIM_LIMIT` (2) `reclaimed` events whose payload is not `manual` (an operator's `reclaim`) | `card_stall` | same | "its claim was reclaimed n times" |
+| dependency loop: a second `dependency_wait` with the parents done | `card_stall` | same | "its own worker blocked it twice, the last time with `--kind dependency`" |
+| a worker blocked its card a second time | promotion: `should_repromote` → `stop` | escalates | `stop_reason`, quoting the worker's words |
+| a goal loop spent its turn budget | the top-of-tick scan for `JUDGE_BUDGET_BLOCK_MARK` | escalates | `stop_reason` + `judge_log_hint` |
+| a blocked card whose newest block event has no reason | the same top-of-tick scan, `is_reasonless_block` | escalates | "blocked without a reason (by a human or a worker)" |
+| a blocked card promotion reaches could not be read `UNREADABLE_LIMIT` (3) ticks running | promotion: `should_repromote` → `skip`, counted in `_UNREADABLE_TICKS` | escalates. Fewer ticks only skip the card, so a transient CLI failure never halts a healthy board | "could not read card <code> (<last error>)" |
+| the engine escalated an assigned card to Triage | `escalated_to_triage` | escalates | `triage_halt_reason` |
+| a lane card sits in `review` or `scheduled` (statuses no lane uses, reached only through `request-review`, which the worker contract forbids, or by hand) | the tick's status scan | escalates | "a status no lane uses" |
+| a lane card was archived or removed by hand (a card the lane's own options do not drop) | `missing_lane_card`: `list --json` omits archived cards, so the children wait on a parent that reads as not done | escalates on the first live card after it, or halts when there is none | "… is no longer on the board" |
+| a lane root was filed against a different run | `open_lane` → `lane_paths_agree`, checked before anything is archived, linked or written | escalates on the root at once and never releases it | "filed against a different run than runs/current names" |
+| a gate whose parents are all done keeps giving the same `waiting:` message for `GATE_WAIT_S` (10 min) | the gate loop, `gate_wait_reason` | escalates under the key `<gate>-wait`, so this halt never uses up the gate's rework-exhaustion comment | "verdict unreadable" (Gp/Gc), "the gate's input will not appear by itself" (Gi) |
+| rework rounds exhausted | `rework_rounds` | escalates on the gate or plan card | [rework loops](#rework-loops) |
+| a blocked card whose block reason carries `ESCALATION` | `halt_if_exhausted` | halts | the block reason |
+| the tick raised the same exception `TICK_ERROR_LIMIT` (3) times running | `note_tick_outcome`: a good tick or a different exception restarts the count | halts | the exception |
+| `runs/current` names a run with no lane card and no idea card to arm, or with lane cards but no P card | `empty_run_reason` (a lane is counted by its P card) | halts | the reason plus `RESET_STEPS`, because the armed idea card is already archived |
+| the run directory is gone under a live run | `run_directory_is_gone` | halts, writing halt.txt to `runs/` | "run directory disappeared" |
+| the driver died without a halt | `run-audit.py`: no halt, no finish banner, no live pid in `runs/driver.lock` | nothing is running | E1 "the driver died without a halt or the finish banner … restart it with start-board.sh" |
+| two or more cards `is_stuck`, with no halt | `deadman_check` | sends a notice once per distinct stuck set. No halt | `DEADMAN` line, `deadman.txt`, Telegram |
+
+Where a row's reasoning is not obvious from the table:
+
+- **Why the driver blocks the rate-limit, reclaim and dependency cards before halting.**
+  The engine retries those cards for ever without counting a failure:
+  `check_respawn_guard` retries every cooldown, `release_stale_claims` returns the card
+  to `ready`, and `recompute_ready` promotes again. Without the block, the retries would
+  go on after the driver exits.
+- **Why timeouts are never re-queued.** A runtime ceiling is the board's own rule. A
+  provider flake is not.
+- **Why a repeated tick exception halts.** roman-evaluator-java once logged one
+  `ValueError` 26 times.
+- **Why a waiting gate halts.** A minimal-development run sat on
+  `Gc1: waiting: final review verdict` until a human killed it.
+- **How the empty-run case arises.** `create-board.sh` mints its run and files the
+  parked lanes in one step, and a refile archives only once it has an armed card. So only
+  a filing that failed after `mint_run`, or cards archived under a live driver, leaves
+  a run like that.
+
+**Upstream lines belong to an attempt.** The dispatcher opens a card's worker log
+append-only, so one file holds every attempt, including every earlier run of that card,
+and the log's lines carry no timestamps. A session id is no boundary either. Under `-Q`
+the id goes to stderr at once and the buffered stdout lands after it: in one 2026-09-10
+storm log, 10 of 12 `HTTP 400` lines followed the only id.
+
+The driver therefore records the log's byte size in `verdicts.jsonl` (`attempt`,
+`run.mark_attempt`) before every unblock that starts an attempt: lane release,
+re-promotion or re-queue. It does so once the previous worker has exited and flushed.
+A parked card never ran, a re-queue follows the exit, and a re-promotion waits for it.
+
+Counting starts at an offset:
+
+- `provider_hits` counts from the card's newest offset, and run-audit's E18 counts from
+  its first offset in the run.
+- A card with no offset, such as a rework round filed ready, counts its whole log.
+- An offset past the end of the file (the log was rotated at spawn) counts from 0.
+
+Both counts match only the transport's own forms (`runs_util.UPSTREAM_ERROR`). A
+whole-file count let an earlier attempt's storm, or a tool's `HTTP 404`, re-queue a
+later failure and label every later halt.
+
+### Restart and reset
+
+- **A restart keeps the run's allowances.** `run.rejoin_chain` → `load_one_shots`
+  rebuilds them from `runs/<run-id>/verdicts.jsonl`:
+  - `repromote` records, including `via: dependency_wait`
+  - `requeue` records, with their time
+  - `escalation` records, keyed by code or `key`
+  - `attempt` log offsets
+  
+  `lane_open` records in `chain.jsonl` are rejoined the same way. A restart is not a new
+  run, so it grants no second re-promotion or re-queue and repeats no comment.
+- **Some state lives in memory only.** The tick-exception count, the gate-wait clock
+  and the deferral log line all start over on a restart.
+- **A halt that rests on the board's record halts the restarted driver again**, because
+  the new process reads the same record:
+  - a `gave_up`/`timed_out` event on a card that is not done
+  - a driver `HALTED:` or `TIMEOUT:` block
+  - a worker's second block, or a spent budget
+  - a card in Triage, `review` or `scheduled`
+  - a `card_stall` count (runs and events stay on the card)
+  - an exhausted rework loop
+  - a missing lane card, a mismatched lane, an empty or partial run
+  
+  An escalation already in the ledger adds no comment, but it still halts.
+  `reset_attempt_budgets` clears only the engine's failure counter; the events remain.
+  A gate wait halts again after another `GATE_WAIT_S`, and a tick exception halts again
+  only if it repeats. So a restart recovers a driver that stopped without a halt, and
+  only `mission/reset.sh` clears a halt (README's Resetting sequence).
+- **`reset.sh` stops the driver first.** The pid comes from `runs/driver.lock`, and the
+  script acts on it only when it is a live process running this repo's `mission/run.py`.
+  If that process does not stop, the script stops too. Stopping the driver matters
+  because a driver left serving reads the archived board as a failed filing and halts
+  with the wrong cause, or drives the cards `create-board.sh` files next. Only then does
+  the script unstage the board's paths, and then, card by card, stop the card's live
+  worker before archiving the cards.
+- **Every halt sends one notice.** `record_halt` → `send_notice` writes `deadman.txt` and
+  sends Telegram when tokens are set. The driver is exiting, so nothing else would push
+  the news.
+- **Deadman, short of a halt.** `run.deadman_check` notifies when two or more cards are
+  `is_stuck`. A card counts as stuck when it is blocked, `should_repromote` says `stop`,
+  and its origin is `worker`, `judge_budget` or `other` with its block event read. An
+  `unreadable` card is `skip`, so it is not counted. A ceiling or a `HALTED:` block halts through its own
+  path (`halt_if_exhausted` stops a timeout; a `HALTED:` block is set by a halt already
+  recorded). Parked cards are not counted, and
+  neither are self-blocks still owed their re-promotion: TW and C blocking in parallel
+  are both released on the next tick. The notice goes out once per distinct stuck set,
+  and a failed board read is logged, not raised.
 
 ## Records
 
@@ -257,14 +497,10 @@ Each is current behaviour, with what to do about it.
   refuses an unsatisfied-parent card with *"unknown id or already terminal"*, neither
   of which is true, and a worker hunts for `--force` flags that do not exist. Check
   the card's parents first.
-- **A worker that blocks its own card costs a re-promotion, and the board says so.**
-  Blocking is how a worker asks for a human — but it is also the only way a card gets
-  unstuck without a review, so the driver re-promotes it once and comments the reason on
-  the card. The second block escalates and halts the board with that reason in the halt
-  text. A *human* blocking a gate gets the same single re-promotion before the halt finds
-  them: the block event carries no actor, so the driver cannot tell a worker's stop from a
-  person's, and one extra attempt followed by a loud halt is the bounded version of that.
-  To stop a card dead, reset the board (`mission/reset.sh`) — that is the human brake.
+- **Blocking a card is not a hard stop.** A block event carries no actor, so a human
+  blocking a gate — or a worker blocking its card — gets one re-promotion before the
+  second block halts the board ([block origins](#block-origins)). To stop a card dead,
+  reset the board (`mission/reset.sh`): that is the human brake.
 - **Never unlink, archive or re-parent a card while the dispatcher is claiming it.**
   The worker spawns holding the pre-change view and fights a board that has moved.
   Board surgery is safe on a parked lane.
@@ -297,17 +533,9 @@ Each is current behaviour, with what to do about it.
   documents — but it burns a slot and a budget on an archived card and can re-stage
   stale content. `reset.sh` stops this board's workers before archiving;
   `run-audit.py` warns on a worker that outlived the run (E8).
-- **The goal judge can wedge every worker card.** It needs a REACHABLE auxiliary model —
-  and one the relay ACCEPTS. The judge runs *outside* a turn, so an OpenCode relay
-  answered it `400 MissingSessionID` until the loop held the conversation it judges
-  (`hermes-kanban-goal-judge-affinity.patch`). A judge that fails, however it fails,
-  reports its transport error as the verdict `continue` ("not done yet"), which no
-  evidence satisfies. `"goal": false` turns it off; the switch is read at filing
-  (`file_lanes.file_board`), so it takes a re-create, not a driver restart.
-  `boards/minimal-goal-mode` is the probe. Goal flags go on worker
-  cards only (`lanes.goal_args`), never on reviews or gates: a goal judge can push a
-  card whose success case is *blocking* into completing, silently opening the gate it
-  guards.
+- **The goal judge can wedge every worker card** when it cannot answer, and a working
+  probe proves only that it answers. Mechanism, probe and levers:
+  [the goal judge](#the-goal-judge).
 - **A leaked child-context marker blocks every card mutation.** With
   `HERMES_DELEGATED_CHILD_CONTEXT=1` in the environment the kanban CLI refuses
   `create`, `attach`, `complete`, `unblock`. The scripts unset it; launch anything else

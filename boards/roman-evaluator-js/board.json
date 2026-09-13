@@ -5,6 +5,7 @@
   "lanes": 1,
   "integration-tests": false,
   "auto-gates": true,
+  "goal": true,
   "max-runtime": "10m",
   "max-reworks": 2,
   "model_override": "glm-5.3-flash",

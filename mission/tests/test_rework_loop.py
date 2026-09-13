@@ -102,6 +102,9 @@ def test_a_board_can_turn_the_goal_judge_off(monkeypatch):
     assert run._goal_args("coder", "C") == []
     assert run._goal_args("coder", "TW") == []
     monkeypatch.setattr(run, "board_defaults", lambda: {})
+    assert run._goal_args("coder", "C") == [], \
+        "goal mode is opt-in: no 'goal' key must not enable the judge"
+    monkeypatch.setattr(run, "board_defaults", lambda: {"goal": True})
     assert run._goal_args("coder", "C") == ["--goal", "--goal-max-turns", "40"]
 
 
@@ -356,8 +359,8 @@ def test_an_implementation_reject_files_a_coder_round(monkeypatch):
 
 def test_an_rva_reject_naming_the_tests_goes_to_the_test_card(monkeypatch):
     """The fork's own gap: the review judges the C patch AND the TW card's tests in one
-    pass, and the C card may not edit the TW card's files — a rejected test sent
-    to the coder could only burn its rounds to a human escalation."""
+    pass, and the C card corrects a TW test only under c-body hard rule 3 — a rejected
+    test sent to the coder could only burn its rounds to a human escalation."""
     filed = _recording(monkeypatch)
     st = full_lane_state()
     rva = lanes.card_title("RVa", 1)
@@ -471,6 +474,7 @@ def test_a_reject_that_names_the_tests_files_the_test_cards_revision(monkeypatch
     assert "1. the assertion is a tautology" in body
     assert "Tests only — no implementation" in body, body          # tw-body's hard rule 5
     assert "never edit them to make them pass" not in body, body   # NOT the coder's body
+    assert "change summary" not in body, "a summary hides the finish from the goal judge"
     assert "show t_rv" in body
     rr = next(c for c in calls if c[0] == "create" and c[1].startswith("RVa1-r3"))
     assert _arg(rr, "--parent") == "t_1", "the re-review hangs off the revision card"
@@ -504,7 +508,7 @@ def quiet_halt(monkeypatch, tmp_path):
 
 
 def _event(kind):
-    return lambda cid: {"kind": kind, "reason": kind}
+    return lambda cid, events=None: {"kind": kind, "reason": kind}
 
 
 def test_a_timeout_halts_and_blocks_the_card_instead_of_retrying(monkeypatch, quiet_halt):

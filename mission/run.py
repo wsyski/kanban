@@ -7,7 +7,7 @@ a PASS verdict with staged-file evidence — still no commit.
 
 Usage: mission/run.py [--serve] [--once] [--timeout-min 120]
 """
-import json, shutil, subprocess, sys, time, os, re, datetime
+import contextlib, json, shutil, subprocess, sys, time, os, re, datetime
 
 # No default: this repo has no one board, and a stale default would drive the
 # wrong one. Enforced in main(), not here — the test suite imports this module.
@@ -19,6 +19,10 @@ ONCE = "--once" in sys.argv
 # gates close would make every new idea a terminal command again.
 SERVE = "--serve" in sys.argv
 POLL = 20
+# How long a re-promotion waits for the blocked worker's pid to go away. The card is
+# blocked, so no runtime ceiling bounds the wait, and a pid the OS reused would
+# otherwise hold it for as long as that unrelated process lives.
+REPROMOTE_WAIT_S = 5 * 60
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import board_schema
@@ -238,6 +242,10 @@ CLI_TIMEOUT_S = 60
 
 
 def kb(*args, capture=True):
+    if args[:1] not in (("show",), ("list",)) and _SHOW_MEMO["cards"]:
+        # A driver write changes the card it names: the next read in this tick fetches.
+        for a in args:
+            _SHOW_MEMO["cards"].pop(a, None)
     try:
         r = subprocess.run(["hermes", "kanban", "--board", BOARD, *args],
                            capture_output=capture, text=True, env=runs_util.cli_env(),
@@ -247,6 +255,35 @@ def kb(*args, capture=True):
     if r.returncode != 0:
         raise RuntimeError(f"kb {args[:2]}: {runs_util.cli_error(r.stderr)}")
     return r.stdout
+
+# Card id -> its `show --json`, for one board snapshot inside a tick or a deadman pass
+# (None outside them). Every block reader asks per card, and on a 2-lane board that was
+# ~80 `show` calls a tick at 0.25 s each. A fresh `list` drops it: a card read while
+# `running` may be `blocked` in the next snapshot, and its old events would then read as
+# a block with no reason.
+_SHOW_MEMO = {"cards": None}
+
+
+@contextlib.contextmanager
+def show_memo():
+    _SHOW_MEMO["cards"] = {}
+    try:
+        yield
+    finally:
+        _SHOW_MEMO["cards"] = None
+
+
+def card_show(card_id):
+    """A card's parsed `show --json`, once per snapshot inside show_memo. Raises like kb;
+    a failed read is not remembered."""
+    memo = _SHOW_MEMO["cards"]
+    if memo is not None and card_id in memo:
+        return memo[card_id]
+    record = json.loads(kb("show", card_id, "--json"))
+    if memo is not None:
+        memo[card_id] = record
+    return record
+
 
 def board():
     """Live cards, keyed by title.
@@ -258,6 +295,8 @@ def board():
     out loud rather than dropping it.
     """
     out = json.loads(kb("list", "--json"))
+    if _SHOW_MEMO["cards"]:
+        _SHOW_MEMO["cards"].clear()
     state = {}
     for card in out:
         if card["title"] in state:
@@ -373,7 +412,7 @@ def _goal_args(assignee, code):
     judge the work).
     """
     cfg = board_defaults()
-    return lanes.goal_args(code, enabled=bool(cfg.get("goal", True)),
+    return lanes.goal_args(code, enabled=bool(cfg.get("goal", board_schema.OPTIONS["goal"][1])),
                            max_turns=cfg.get("goal-max-turns"))
 
 
@@ -463,11 +502,10 @@ def code_rework_rounds(state, lane):
 def rework_retries():
     """Retry budget for a REVISION card — 1, always.
 
-    It used to be a `rework-max-retries` option, and that option is gone: a revision
-    is a card like any other, and the one-attempt rule makes every card's budget 1. A
-    knob whose only legal value is 1 is noise in a manifest, in the option table and
-    here — and it was the name that invited reading it as "how many reworks", which is
-    `max-reworks` (a count of ROUNDS, enforced by the driver, not by the dispatcher).
+    A revision is a card like any other, and the one-attempt rule makes every card's
+    budget 1, so this is not a board option: a knob whose only legal value is 1 is noise.
+    It is not "how many reworks" either — that is `max-reworks`, a count of ROUNDS the
+    driver enforces, while this is the dispatcher's attempts at one card.
     """
     return "1"
 
@@ -798,8 +836,8 @@ def rework_owner(verdict_text):
     """Which card owns the fix a code-loop REJECT asks for, read from its OWNER line.
 
     The fork is why this exists. The implementation review judges the coder's patch AND
-    the tester's tests in one pass, but the coder may not edit the tester's files
-    (c-body hard rule 3) — so a REJECT naming a bad test, sent to the coder the way
+    the tester's tests in one pass, but the coder corrects a tester's test only under
+    c-body hard rule 3 — so a REJECT naming a bad test, sent to the coder the way
     every round was sent before the fork, could only burn its rounds to a human
     escalation. The reviewer names the owner (`OWNER: C` / `OWNER: TW` / `OWNER: TI`)
     and the round is filed for that card. No line, or a line naming nothing usable,
@@ -1017,6 +1055,13 @@ def open_lane(state, lane):
     # directory over. Checked before anything is archived, linked or written, and
     # before a rejoin, which would otherwise release the root of such a lane.
     if not lane_paths_agree(state, lane):
+        # Refusing every tick never stops anything: the refusal is logged once, and
+        # the board halts on it.
+        root = lanes.lane_root_code(True, lane_refinement(lane))
+        escalate(live_card(state, root, lane)["id"], f"{root}{lane}",
+                 f"lane {lane}'s root was filed against a different run than "
+                 f"runs/current names ({_read_current_run()!r}) — check runs/current "
+                 f"and re-arm the idea")
         return "mismatch"
     if lane_opened_on_record(lane):
         # A restarted driver: this run already opened the lane, and re-opening would
@@ -1225,14 +1270,54 @@ def load_chain_ids(run_dir=None):
     return started, done
 
 
+def load_one_shots(run_dir=None):
+    """What this run has already spent: (re-promoted card ids, re-queued card id ->
+    stamp, escalated codes, card id -> newest attempt log offset, card ids whose
+    dependency block was noted), from its ledger.
+
+    Each is granted once per run, and a driver restart is not a new run: rebuilt from
+    memory alone, a rejoin would grant a second re-promotion or re-queue and repeat
+    the comment that announced the first.
+    """
+    repromoted, requeued, escalated, dependency = set(), {}, set(), set()
+    offsets = {cid: marks[-1] for cid, marks in
+               runs_util.ledger_log_offsets(run_dir or RUN_DIR).items()}
+    try:
+        with open(os.path.join(run_dir or RUN_DIR, "verdicts.jsonl")) as f:
+            for line in f:
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                event = rec.get("event")
+                if event == "repromote" and rec.get("card_id"):
+                    repromoted.add(rec["card_id"])
+                    if rec.get("via") == "dependency_wait":
+                        dependency.add(rec["card_id"])
+                elif event == "requeue" and rec.get("card_id"):
+                    requeued[rec["card_id"]] = rec.get("at") or 0
+                elif event == "escalation" and rec.get("code"):
+                    escalated.add(rec.get("key") or rec["code"])
+    except OSError:
+        pass                             # no ledger yet: nothing spent
+    return repromoted, requeued, escalated, offsets, dependency
+
+
 def rejoin_chain():
-    """Seed this process's record guards from the run's own chain. Idempotent."""
+    """Seed this process's record guards and one-shot allowances from the run's own
+    record. Idempotent."""
     started, done = load_chain_ids()
     _CHAIN_STARTED.update(started)
     _CHAIN_DONE.update(done)
     if started or done:
         log(f"chain: rejoined {len(started)} start / {len(done)} done record(s) — a "
             f"restart does not re-record what this run already has")
+    repromoted, requeued, escalated, offsets, dependency = load_one_shots()
+    _REPROMOTED.update(repromoted)
+    _DEPENDENCY_NOTED.update(dependency)
+    _REQUEUED.update(requeued)
+    _ESCALATED.update(escalated)
+    _LOG_OFFSETS.update(offsets)
 # Review and gate cards carry a verdict; the ledger is where they outlive a run.
 VERDICT_CODES = ("rv", "g")
 
@@ -1433,7 +1518,7 @@ def record_chain_done(state):
             continue
         _CHAIN_DONE.add(card["id"])
         try:
-            ev = json.loads(kb("show", card["id"], "--json")).get("events", [])
+            ev = card_show(card["id"]).get("events", [])
             attached = [e.get("payload", {}).get("filename") for e in ev
                         if e.get("kind") == "attached"]
         except Exception as e:
@@ -1477,6 +1562,13 @@ def card_id_lane(title):
     """The lane a card title belongs to ('P1: …', 'RVa1-r2: …', 'P1-rev-1: …' -> 1), or None."""
     m = re.match(r"^[A-Za-z]+(\d+)(?:-r(?:ev-)?\d+)?:", title)
     return int(m.group(1)) if m else None
+
+
+def is_lane_card(title):
+    """A card of the lane graph or one of its rounds — never an idea card, whose title
+    is the idea's own heading and may look like `Idea2: …`."""
+    return bool(card_id_lane(title)) and lanes.base_code(title) in {
+        r[0] for r in lanes.LANE_CARDS}
 
 
 _EMPTY_RESULT_NOTED = set()
@@ -1600,22 +1692,19 @@ def halt_run_directory_gone():
     or re-arm the idea for a fresh run. The halt note goes to runs/ itself because the
     run's own directory is exactly what is missing.
     """
-    if _HALTED["reason"]:
-        return _HALTED["reason"]
-    _HALTED["reason"] = (
+    record_halt(
         f"run directory disappeared: {os.path.relpath(RUN_DIR, REPO)} — the board "
         f"deleted nothing (a file manager's trash holds it if that is where it went); "
-        f"restore it or arm the idea for a new run")
-    log(f"BOARD HALTED: {_HALTED['reason']}")
-    try:
-        with open(os.path.join(RUNS_ROOT, "halt.txt"), "w") as f:
-            f.write(f"{BOARD} halted: {_HALTED['reason']}\n")
-    except OSError:
-        pass
+        f"restore it or arm the idea for a new run", where=RUNS_ROOT)
     return _HALTED["reason"]
 
 
 def tick():
+    with show_memo():
+        return _tick()
+
+
+def _tick():
     # Nothing in this template removes a run directory (see clean_work_noise), so a
     # missing one is someone else's `rm` or trash can: say so and stop, rather than
     # record a run into a directory that came back without its evidence.
@@ -1623,14 +1712,53 @@ def tick():
         halt_run_directory_gone()
         return True
     st = state = board()
+    empty = empty_run_reason(st)
+    if empty:
+        record_halt(empty)
+        return True
     record_timing(st)
     if halt_if_exhausted(st):
         return True          # truthy = board finished/stopped; serve loop halts
     esc_title, esc_card = escalated_to_triage(st)
     if esc_card is not None:
         escalate(esc_card["id"], esc_title.split(":")[0],
-                 "the board escalated this card to Triage for a human — the lane "
-                 "cannot advance by itself")
+                 triage_halt_reason(esc_card))
+        return True
+    # `review` and `scheduled` are engine statuses no lane uses (kanban_db.VALID_STATUSES).
+    # A card reaches them only by a call the worker contract forbids (`request-review`)
+    # or a hand; the dispatcher would then run a review of a card no gate reads, or
+    # nothing at all, and the lane's graph waits either way.
+    for title, card in st.items():
+        if is_lane_card(title) and card.get("status") in ("review", "scheduled"):
+            escalate(card["id"], title.split(":")[0],
+                     f"a lane card sits in `{card['status']}`, a status no lane uses — "
+                     f"reached only by `request-review`/`schedule`, which the worker "
+                     f"contract forbids; the lane's graph cannot follow it")
+            return True
+    # A spent turn budget or a reasonless block is a stop wherever the card sits.
+    # Promotion only reaches a card whose parents are done and no verdict holds, and one
+    # stuck card is under the deadman's threshold, so either block behind a held parent
+    # stalled silently. A reasonless block is a human's (the driver always gives one):
+    # nothing the driver can interpret, so nothing to wait for.
+    for title, card in st.items():
+        if card.get("status") == "blocked" and (
+                block_reason_text(card).startswith(JUDGE_BUDGET_BLOCK_MARK)
+                or is_reasonless_block(card)):
+            escalate(card["id"], title.split(":")[0], stop_reason(card))
+            return True
+    gone, gone_lane = missing_lane_card(st)
+    if gone:
+        order = [c["code"] for c in lanes.lane_cards(gone_lane)]
+        # the comment goes where the wait is: the first live card after the gone one
+        rest = [c for c in (live_card(st, code, gone_lane)
+                            for code in order[order.index(gone) + 1:]) if c]
+        reason = (f"{gone}{gone_lane} is no longer on the board (archived or removed "
+                  f"by hand) — the driver never archives it, and the cards after it "
+                  f"wait on it for ever; restore it or reset the board")
+        if rest:
+            escalate(rest[0]["id"], f"{gone}{gone_lane}", reason)
+        else:
+            record_halt(reason)
         return True
     workdir_drift(st)
     # 0. open the lanes whose turn has come. Promotion below only ever looks at
@@ -1639,6 +1767,8 @@ def tick():
     #    integration-tests=false board and refreshes the idea snapshot.
     if open_lanes(st):
         st = state = board()
+    if _HALTED["reason"]:
+        return True
     note_empty_results(st)
     # The promotion graph is built AFTER the lanes are opened, never before: open_lane
     # prunes the lane's optional cards (I and Gi on a `refinement: false` lane), and a
@@ -1666,6 +1796,8 @@ def tick():
             if not lane_is_armed(lane):
                 continue        # prefilled, not running: waiting to be armed
             if open_lane(st, lane) != "open":
+                if _HALTED["reason"]:
+                    return True
                 continue
             st = state = board()   # archive/link above changed the board
         elif not parents or not parents_done(st, parents):
@@ -1673,6 +1805,18 @@ def tick():
         if held_by_verdict(st, kind, lane):
             continue
         verdict = should_repromote(card)
+        if verdict == "skip":
+            n = _UNREADABLE_TICKS[card["id"]] = _UNREADABLE_TICKS.get(card["id"], 0) + 1
+            err = _READ_ERROR.get(card["id"], "")
+            if n >= UNREADABLE_LIMIT:
+                escalate(card["id"], code,
+                         f"could not read card {code} ({err}) {n} ticks running — the "
+                         f"driver cannot tell what blocked it")
+                return True
+            if n == 1:
+                log(f"{code}: could not read its card ({err}) — skipped until a read "
+                    f"succeeds")
+            continue
         if verdict == "stop":
             # The driver grants a worker's stop ONE more attempt, and records it;
             # a second block, or a ceiling the driver itself set, is the end of the
@@ -1681,7 +1825,21 @@ def tick():
             escalate(card["id"], code, stop_reason(card))
             return True
         if verdict == "repromote":
+            pid, blocked_at = live_worker_pid(card["id"])
+            if pid and time.time() - blocked_at < REPROMOTE_WAIT_S:
+                # A block is a tool call, not the worker's exit: it may still be
+                # finishing its turn. Unblocking now would put a second worker on the
+                # card and record the log offset before the first one's output landed.
+                if card["id"] not in _REPROMOTE_DEFERRED:
+                    _REPROMOTE_DEFERRED.add(card["id"])
+                    log(f"re-promotion of {code} deferred: its blocked worker "
+                        f"(pid {pid}) is still running")
+                continue
+            if pid:
+                log(f"re-promotion of {code}: stopped waiting for pid {pid} — blocked "
+                    f"{REPROMOTE_WAIT_S // 60} min ago, the pid may have been reused")
             _REPROMOTED.add(card["id"])
+            ledger({"event": "repromote", "code": code, "card_id": card["id"]})
             try:
                 kb("comment", card["id"],
                    f"RE-PROMOTED (once): this card was blocked "
@@ -1691,6 +1849,7 @@ def tick():
                 log(f"WARNING: could not comment on {code} ({e})")
             log(f"re-promoted {code} once — it blocked itself: "
                 f"{block_reason_text(card)[:90]}")
+        mark_attempt(card)
         kb("unblock", card["id"])
         record_chain_start(card, lane)
         log(f"unblocked {title.split(':')[0]} (parents done)")
@@ -1699,32 +1858,15 @@ def tick():
     #     state, then one record per card as it finishes.
     record_chain_starts(st)
     record_chain_done(st)
-    # 2. rework loops — FILE FIRST, so the holds below exist before promotion
-    #    runs on the next card.
+    # 2. rework loops — FILE FIRST, so a round's cards are in the graph before
+    #    promotion runs on the next card.
     rework_rounds(st)
     st = state = board()
-    # 2b. rework holds: while an idea- or plan-rework round is live, the gate
-    # guards its DOWNSTREAM card too — P/TW must not start on work the gate
-    # has just sent back. Round cards were filed in step 2, so a hold exists
-    # the moment the verdict lands; this is also the recovery path after a
-    # driver restart mid-rework. Blocking needs ready/running; the downstream
-    # card is blocked-by-parents here in the normal flow, so a no-op failure
-    # is expected and harmless — skip it rather than spam the error log.
-    # The code loop (RVa REJECT) is held by parents instead: lane_graph links a
-    # filed round's C{lane}-rev / RVa{lane}-r<r> cards into RVa's and Gc's
-    # parents, so the gate cannot open while the round is live. TI keeps its
-    # verdict-based hold (held_by_verdict), which is the same guarantee.
-    for lane in range(1, board_lane_count(st) + 1):
-        for base, gate, downstream in (("I", "Gi", "P"), ("P", "Gp", "TW")):
-            if not rework_hold(st, lane, base, gate):
-                continue
-            t, c = title_of_prefix(st, f"{downstream}{lane}:")
-            if c and c["status"] in ("ready", "todo"):
-                try:
-                    kb("block", "--kind", "dependency", c["id"],
-                       f"rework in flight: {gate}{lane} sent the work back")
-                except RuntimeError as e:
-                    log(f"LANE {lane}: hold on {downstream}{lane} skipped ({e})")
+    # 2b. No block holds the card downstream of a live rework round: `block --kind
+    # dependency` lands in `todo` and recompute_ready promotes it straight back once its
+    # parents are done (kanban_db._route_block), so it never held anything. The graph
+    # does: Gp waits for the plan round (lane_graph), TW waits for Gp, and P waits for
+    # the idea gate's verdict (held_by_verdict).
     # 3. gates
     for title, parents, kind, lane in lane_graph(st):
         if kind not in ("gi", "gp", "gc"):
@@ -1733,6 +1875,7 @@ def tick():
         if not card or card["status"] == "done":
             continue
         if not parents_done(st, parents):
+            _WAITING.pop(card["id"], None)
             continue
         if kind == "gc":
             # Read the tree the gate is about to judge: the card bodies point at the
@@ -1745,9 +1888,17 @@ def tick():
             # waiting on a rework round sits here for minutes, and the old path
             # wrote the identical line every tick (six in two minutes on
             # 2026-09-11) — the same spam the gate announcement was fixed for.
-            if _WAITING.get(card["id"]) != msg:
-                _WAITING[card["id"]] = msg
+            seen, since = _WAITING.get(card["id"], (None, 0))
+            if seen != msg:
+                _WAITING[card["id"]] = (msg, time.time())
                 log(f"{title.split(':')[0]}: {msg}")
+            elif time.time() - since >= GATE_WAIT_S:
+                code = title.split(":")[0]
+                escalate(card["id"], code, gate_wait_reason(title, msg, kind),
+                         key=f"{code}-wait")
+                return True
+        else:
+            _WAITING.pop(card["id"], None)
     # done when every lane that HAS an idea reached its final gate
     last = 0
     for lane in range(1, board_lane_count(st) + 1):
@@ -1778,10 +1929,12 @@ def file_code_revision(state, lane, round_no, findings, owner="C", max_rounds=2,
 
     Mirrors file_revision. The owner is the card the REVIEW named (`rework_owner`), not
     always the coder: the fork's implementation review judges the tester's tests as
-    well as the coder's patch, and the coder may not edit the tester's files — a
-    rejected test sent to the coder could not be fixed. Whoever owns it, the round
-    ends in the SAME re-review card, so the loop keeps one shape: revision → RVa
-    round → verdict, bounded by max_rounds, then escalation.
+    well as the coder's patch, and the coder corrects a tester's test only under
+    c-body hard rule 3 — a rejected test sent to the coder could not be fixed. The
+    integration card may change any file, so an OWNER: TI round fixes whatever its own
+    changes broke. Whoever owns it, the round ends in the SAME re-review card, so the
+    loop keeps one shape: revision → RVa round → verdict, bounded by max_rounds, then
+    escalation.
     """
     body_file, role, what = CODE_REWORK_ROLES.get(owner, CODE_REWORK_ROLES["C"])
     rev_title = (f"{owner}{lane}-rev-{round_no}: {what} revision round {round_no}"
@@ -1794,7 +1947,8 @@ def file_code_revision(state, lane, round_no, findings, owner="C", max_rounds=2,
     rbody = render(body_file)
     rbody += (f"\nREVISION ROUND {round_no} of {max_rounds} (max {max_rounds}, then human "
               f"escalation).\n\nThe review returned the work. Address EXACTLY:\n{findings}\n"
-              f"Fix only these, re-stage your files, re-attach, complete with a change summary.\n")
+              f"Fix only these, re-stage your files, re-attach, and complete with a result that "
+              f"says what changed and names every test still failing.\n")
     rbody += _full_verdict_pointer(verdict_card_id)
     args = ["create", rev_title, "--body", rbody,
             "--assignee", lanes.assignee_for(role, manifest().get("assignees")),
@@ -1830,32 +1984,134 @@ def file_code_revision(state, lane, round_no, findings, owner="C", max_rounds=2,
     record_rework(lane, "Gc", round_no, [rev_title, rr_title], findings, state)
 
 
-def escalate(card_id, code, reason):
+def escalate(card_id, code, reason, key=None):
     """Escalate a rework loop that exhausted its rounds — once per run.
 
     The card is already blocked (parked is how it waits), and blocking a
     blocked card is a no-op the CLI reports as failure: the old path raised,
     main()'s catch-all logged it, and the next tick tried again — escalation
     spam instead of escalation. A comment is readable where the human is
-    already looking; the in-memory set keeps it to one line per loop.
+    already looking; the ledger record keeps it to one comment per loop, across a
+    restart too (rejoin_chain). The halt is not once: a restarted driver that meets
+    the same escalation must stop again, not read the tick as a finished run.
     """
-    if code in _ESCALATED:
-        return
-    _ESCALATED.add(code)
-    kb("comment", card_id, f"ESCALATION: {reason}")
-    ledger({"event": "escalation", "code": code, "card_id": card_id,
-            "findings": " ".join((reason or "").split())[:600]})
-    log(f"ESCALATED: {code} — {reason}")
+    key = key or code        # a halt that shares a gate's code keeps its own once
+    if key not in _ESCALATED:
+        _ESCALATED.add(key)
+        kb("comment", card_id, f"ESCALATION: {reason}")
+        ledger({"event": "escalation", "code": code, "card_id": card_id,
+                **({"key": key} if key != code else {}),
+                "findings": " ".join((reason or "").split())[:600]})
+        log(f"ESCALATED: {code} — {reason}")
     # Escalation = rework rounds exhausted = the lane cannot advance by
     # itself; halt the board the way a gave_up trip does (same tick).
-    if not _HALTED["reason"]:
-        _HALTED["reason"] = f"{code}: {reason}"
-        log(f"BOARD HALTED: {_HALTED['reason']}")
-        try:
-            with open(os.path.join(RUN_DIR, "halt.txt"), "w") as f:
-                f.write(f"{BOARD} halted: {_HALTED['reason']}\n")
-        except OSError:
-            pass
+    record_halt(f"{code}: {reason}")
+
+
+def record_halt(reason, where=None):
+    """The halt itself — reason held, logged, written to halt.txt and sent as a notice —
+    once per driver. A stop with a card to comment on goes through escalate();
+    `where` is the directory for the notes when the run's own is not usable."""
+    if _HALTED["reason"]:
+        return
+    _HALTED["reason"] = reason
+    log(f"BOARD HALTED: {reason}")
+    where = where or RUN_DIR or RUNS_ROOT
+    try:
+        with open(os.path.join(where, "halt.txt"), "w") as f:
+            f.write(f"{BOARD} halted: {reason}\n")
+    except OSError:
+        pass
+    # halt.txt and a card comment wait to be looked at; the driver is exiting, so the
+    # notice is the only push a human gets.
+    send_notice(f"{BOARD} HALTED: {reason}", where)
+
+
+# The documented way back from a board whose run cannot be driven (README "Resetting").
+RESET_STEPS = ("mission/reset.sh --board boards/{b} --yes; hermes kanban boards rm {b}; "
+               "mission/create-board.sh --board boards/{b}; "
+               "mission/start-board.sh --slug {b}")
+
+
+def empty_run_reason(state):
+    """Why runs/current cannot be driven, or None: it names a run, and the board holds
+    neither a lane card nor an idea card to arm — or lane cards but no P card.
+
+    A refile that failed after `mint_run` leaves exactly that, and a restart rejoins
+    it: tick() found nothing to do and returned False for ever. A lane is counted by
+    its P card (board_lane_count), so a filing that died before one exists opens and
+    checks nothing either. create-board.sh mints its run and files the parked lanes
+    (plus a Triage card per idea) in one go, and a refile archives only after it has
+    an armed card, so only a failed filing — or cards archived under a live driver —
+    looks like this."""
+    run_id = _read_current_run()
+    if not run_id:
+        return None
+    lane_cards = [t for t in state if is_lane_card(t)]
+    if lane_cards and not board_lane_count(state):
+        return (f"run {run_id} (runs/current) holds lane cards but no plan card — its "
+                f"filing stopped part-way, or the plan card was archived by hand; reset "
+                f"the board: {RESET_STEPS.format(b=BOARD)}")
+    if lane_cards or any(c.get("status") in ("triage", "todo", "ready")
+                         for c in state.values()):
+        return None
+    return (f"run {run_id} (runs/current) has no lane cards and no idea card to arm — "
+            f"its filing failed; reset the board: {RESET_STEPS.format(b=BOARD)}")
+
+
+# The same exception this many ticks running is a loop, not a transient: measured on
+# roman-evaluator-java, 26 identical ValueErrors in 15 minutes and nothing stopped.
+TICK_ERROR_LIMIT = 3
+_TICK_ERROR = {"sig": None, "n": 0}
+
+
+def note_tick_outcome(exc=None):
+    """Count consecutive identical tick exceptions; a good tick (None) or a different
+    exception restarts the count, and the limit halts naming the exception."""
+    sig = f"{type(exc).__name__}: {exc}" if exc is not None else None
+    _TICK_ERROR["n"] = _TICK_ERROR["n"] + 1 if sig and sig == _TICK_ERROR["sig"] else int(bool(sig))
+    _TICK_ERROR["sig"] = sig
+    if _TICK_ERROR["n"] >= TICK_ERROR_LIMIT:
+        record_halt(f"the tick raised the same exception {TICK_ERROR_LIMIT} times "
+                    f"running — {sig}; retrying will not change it")
+
+
+# A gate whose parents are all done and which still gives the same `waiting:` reason
+# after this long is not waiting for anything: minimal-development ...-135050 sat on
+# `Gc1: waiting: final review verdict` until a human killed it. Wall time, in memory
+# only — a restart restarts the clock.
+GATE_WAIT_S = 10 * 60
+
+
+def gate_wait_reason(title, msg, kind):
+    what = msg.removeprefix("waiting: ")
+    # Gp and Gc wait on a review's verdict; Gi on the researcher's refined idea.
+    cause = ("verdict unreadable — the review finished but the gate finds no PASS it "
+             "can read" if kind in ("gp", "gc") else
+             "the gate's input will not appear by itself")
+    return (f"{title.split(':')[0]} {what} for {GATE_WAIT_S // 60} min with every "
+            f"parent done: {cause}")
+
+
+def missing_lane_card(state):
+    """(code, lane) of a card this lane keeps that is no longer on the board, or
+    (None, None).
+
+    `list --json` omits archived cards (kanban_db.list_tasks), so a parent someone
+    else archived reads as not done and its children wait with nothing in the log.
+    open_lane archives only the cards the lane's own options drop, and those are
+    exactly the codes `lanes.lane_cards` leaves out for the same options."""
+    for lane in range(1, board_lane_count(state) + 1):
+        opts = lane_options(lane)
+        if opts is None:
+            continue
+        codes = [c["code"] for c in lanes.lane_cards(
+            lane, integration_tests=opts["integration-tests"],
+            unit_tests=opts["unit-tests"], refinement=opts.get("refinement", True))]
+        for code in codes:
+            if live_card(state, code, lane) is None:
+                return code, lane
+    return None, None
 
 
 def clean_work_noise():
@@ -1893,6 +2149,18 @@ def escalated_to_triage(state):
     return None, None
 
 
+def triage_halt_reason(card):
+    """The triage halt names the block that put the card there: the engine routes a
+    second same-kind block to Triage, so this is where a worker's or judge's words
+    surface — the "blocked twice" stop never sees them."""
+    msg = ("the board escalated this card to Triage for a human — the lane cannot "
+           "advance by itself")
+    text = block_reason_text(card)
+    if text.startswith(JUDGE_BUDGET_BLOCK_MARK):
+        return f"{msg} ({text}); {judge_log_hint(card)}"
+    return f"{msg} ({text})" if text else msg
+
+
 def halt_if_exhausted(st):
     """Stop the whole driver the moment any card gives up: retries exhausted,
     max_runtime reached, or a rework loop escalated.
@@ -1913,6 +2181,9 @@ def halt_if_exhausted(st):
     """
     if _HALTED["reason"]:
         return _HALTED["reason"]
+    # Built before open_lanes prunes: a pruned parent reads as not done, which only
+    # defers card_stall's dependency count to the next tick.
+    graph = {t: parents for t, parents, _k, _l in lane_graph(st)}
     # Exhaustion evidence lives in the card's EVENT history, not its list row:
     # `list --json` carries no runs, and the breaker appends gave_up/timed_out
     # events without a `blocked` event. A non-terminal card (not done/archived)
@@ -1921,7 +2192,15 @@ def halt_if_exhausted(st):
     for title, c in st.items():
         if c.get("status") in ("done", "archived"):
             continue
-        p = _exhaustion_event(c["id"])
+        record = card_record(c["id"])
+        events = record.get("events", [])
+        stall = card_stall(st, c, record, graph.get(title))
+        if stall:
+            # The engine keeps retrying this card after the driver exits: block it.
+            driver_block(c, f"{HALT_BLOCK_MARK} {stall}")
+            escalate(c["id"], title.split(":")[0], stall)
+            return _HALTED["reason"]
+        p = _exhaustion_event(c["id"], events)
         if p is None:
             continue
         # The event that caused a re-queue is history: it stays in the card for
@@ -1942,10 +2221,12 @@ def halt_if_exhausted(st):
         if p.get("kind") == "gave_up" or c.get("status") == "blocked":
             # Provider starvation is not a content failure — the worker never got
             # to try (see requeue_provider_starved). One re-queue, in the open; the
-            # ordinary rules apply from the second failure on.
+            # ordinary rules apply from the second failure on. A `crashed` trip had no
+            # terminal call: the dead-worker sweep only closes a card still `running`.
             hits = provider_hits(c["id"])
-            if (hits >= 3 and "protocol violation" in str(p.get("reason") or "")
-                    and c["id"] not in _REQUEUED):
+            if (hits >= 3 and c["id"] not in _REQUEUED
+                    and ("protocol violation" in str(p.get("reason") or "")
+                         or p.get("trigger") == "crashed")):
                 requeue_provider_starved(c, hits)
                 continue
             reason_txt = str(p.get("reason") or "")
@@ -1960,32 +2241,25 @@ def halt_if_exhausted(st):
                 break
         else:
             return None
-    _HALTED["reason"] = f"{title}: {reason_txt or 'exhausted (see board)'}"
+    reason = f"{title}: {reason_txt or 'exhausted (see board)'}"
     # Distinguish machine-slow from provider-starved: a card whose worker log
     # shows upstream 4xx/5xx storms timed out because of the provider, not the
     # task's size — the restart decision changes.
     hits = provider_hits(c["id"])
     if hits >= 3:
-        _HALTED["reason"] += (f" — provider-starved ({hits} upstream 4xx/5xx in "
-                              f"worker log)")
-    log(f"BOARD HALTED: {_HALTED['reason']}")
+        reason += f" — provider-starved ({hits} upstream 4xx/5xx in worker log)"
     # The reason must be readable where the human looks first: on the card
     # itself, not only in runs/halt.txt or the driver log.
     try:
-        kb("comment", c["id"], f"BOARD HALTED: {_HALTED['reason']}")
+        kb("comment", c["id"], f"BOARD HALTED: {reason}")
     except RuntimeError as e:
         log(f"WARNING: halt comment failed ({e})")
-    notify_deadman(st)
-    try:
-        with open(os.path.join(RUN_DIR, "halt.txt"), "w") as f:
-            f.write(f"{BOARD} halted: {_HALTED['reason']}\n")
-    except OSError:
-        pass
+    record_halt(reason)
     return _HALTED["reason"]
 
 
 _HALTED = {"reason": None}   # mutable holder: functions assign inner keys
-_ESCALATED = set()   # gate codes already escalated this driver run
+_ESCALATED = set()   # gate codes already escalated this run (rejoined on restart)
 
 
 def stop_a_timeout(card, payload):
@@ -2001,13 +2275,37 @@ def stop_a_timeout(card, payload):
     Best effort: if the card is already blocked or was re-claimed a heartbeat ago
     the call can be refused, and the halt is still the right outcome.
     """
+    driver_block(card, f"TIMEOUT: {payload.get('reason') or 'runtime ceiling reached'} "
+                       f"— hard failure; a timed-out card is not retried, only a review "
+                       f"sends work back")
+
+
+# The reason prefix of the block the driver puts on a card it halted for: the engine
+# would otherwise keep retrying the card with no driver to hear it.
+HALT_BLOCK_MARK = "HALTED:"
+
+
+def driver_block(card, reason):
+    """Block a card so the dispatcher stops claiming it — best effort, never raises.
+
+    `block` only moves a `running` or `ready` card (kanban_db.block_task). A card read
+    as `todo` (a dependency block waiting for recompute_ready) is promoted first — but
+    the engine may have promoted it since, and `promote` refuses a `ready` card, so its
+    failure is ignored and the block is tried either way. `blocked` and `triage` are
+    not dispatched: a second same-kind block routes to triage (_route_block), and a
+    restart meeting either leaves it alone."""
+    if card.get("status") in ("blocked", "triage"):
+        return
+    if card.get("status") == "todo":
+        try:
+            kb("promote", card["id"])
+        except Exception:
+            pass
     try:
-        kb("block", "--kind", "needs_input", card["id"],
-           f"TIMEOUT: {payload.get('reason') or 'runtime ceiling reached'} — hard "
-           f"failure; a timed-out card is not retried, only a review sends work back")
+        kb("block", "--kind", "needs_input", card["id"], reason)
     except Exception as e:                      # never take the driver down here
-        log(f"WARNING: could not block the timed-out card "
-            f"{card['title'].split(':')[0]} ({e})")
+        log(f"WARNING: could not block {(card.get('title') or card['id']).split(':')[0]} "
+            f"({e})")
 
 
 EXHAUSTION_KINDS = ("gave_up", "timed_out")
@@ -2025,19 +2323,42 @@ def worker_log_path(card_id):
 
 
 def provider_hits(card_id):
-    """Upstream 4xx/5xx lines in a card's worker log — the driver's only evidence
-    that a card died of the provider rather than of the task."""
+    """Upstream 4xx/5xx lines from the card's newest attempt — the driver's only
+    evidence that a card died of the provider rather than of the task.
+
+    The log is append-only per card, so it holds every earlier attempt too, and a
+    whole-file count let an earlier storm re-queue a later failure and label every
+    later halt. The attempt starts at the offset `mark_attempt` recorded before the
+    unblock that started it; a card with none (a rework round, filed ready) has had
+    no attempt before this one, so it counts from 0."""
+    return runs_util.upstream_hits_since(worker_log_path(card_id),
+                                         _LOG_OFFSETS.get(card_id, 0))[0]
+
+
+# Card id -> byte size of its worker log when the driver last started an attempt
+# (rejoined from the ledger on restart).
+_LOG_OFFSETS = {}
+
+
+def mark_attempt(card):
+    """Record where the attempt the driver is about to start begins in the card's log.
+
+    Called before every unblock that starts one (lane release, re-promotion,
+    re-queue): the previous worker has exited, so nothing of it lands after this.
+    """
     try:
-        text = open(worker_log_path(card_id), errors="replace").read()
+        offset = os.path.getsize(worker_log_path(card["id"]))
     except OSError:
-        return 0
-    return text.count("HTTP 4") + text.count("HTTP 5")
+        offset = 0
+    _LOG_OFFSETS[card["id"]] = offset
+    ledger({"event": "attempt", "code": card["title"].split(":")[0],
+            "card_id": card["id"], "log_offset": offset})
 
 
-# Cards this driver has already re-queued once for provider starvation, mapped to
-# the time of the re-queue. Keyed by time because the exhaustion event that caused
-# it stays in the card's history for ever: without the stamp the next tick would
-# halt the board for the very flake it just forgave.
+# Cards this run has already re-queued once for provider starvation (rejoined from
+# the ledger on restart), mapped to the time of the re-queue. Keyed by time because
+# the exhaustion event that caused it stays in the card's history for ever: without
+# the stamp the next tick would halt the board for the very flake it just forgave.
 _REQUEUED = {}
 
 
@@ -2059,16 +2380,108 @@ def requeue_provider_starved(card, hits):
         kb("comment", card["id"], reason)
     except Exception as e:                      # never take the driver down here
         log(f"WARNING: could not comment on {code} ({e})")
+    mark_attempt(card)
     try:
         kb("unblock", card["id"])
     except Exception as e:
         log(f"WARNING: could not re-queue {code} ({e})")
     _REQUEUED[card["id"]] = time.time()
+    ledger({"event": "requeue", "code": code, "card_id": card["id"],
+            "at": _REQUEUED[card["id"]]})
     log(f"re-queued {code} once: {hits} upstream 4xx/5xx in its worker log and no "
         f"terminal kanban call")
 
 
-def _exhaustion_event(card_id):
+def card_events(card_id):
+    """A card's event history from one `show --json`, [] when it cannot be read."""
+    return card_record(card_id).get("events", [])
+
+
+def card_record(card_id):
+    """A card's `show --json` (events and runs), {} when it cannot be read — and then
+    `_READ_ERROR` says why, so a failed read never passes for a card with no events."""
+    try:
+        record = card_show(card_id)
+    except Exception as e:
+        _READ_ERROR[card_id] = str(e) or type(e).__name__
+        return {}
+    _READ_ERROR.pop(card_id, None)
+    _UNREADABLE_TICKS.pop(card_id, None)
+    return record if isinstance(record, dict) else {}
+
+
+_READ_ERROR = {}         # card id -> why its latest `show` failed; a good read drops it
+# Promotion ticks in a row a blocked card could not be read. A CLI timeout or "database
+# is locked" is a transient: the card is skipped, and only a streak halts.
+UNREADABLE_LIMIT = 3
+_UNREADABLE_TICKS = {}
+
+
+# The engine retries both of these for ever without counting a failure: a rate-limited
+# exit (kanban_db_dispatch.check_respawn_guard) every cooldown, a stale claim
+# (kanban_db.release_stale_claims) straight back to `ready`.
+RATE_LIMIT_LIMIT = 3
+RECLAIM_LIMIT = 2
+_DEPENDENCY_NOTED = set()   # cards whose first dependency block was recorded (ledger)
+
+
+def card_stall(state, card, record, parents):
+    """Why a card the engine keeps retrying by itself must stop, or None.
+
+    A worker's `block --kind dependency` never reaches `blocked`: `_route_block` sends
+    it to `todo` and recompute_ready promotes it again, with no recurrence count. With
+    the card's parents done that is a worker block the engine has already re-promoted,
+    so the first is recorded as the card's one re-promotion and the second is a stop."""
+    events = record.get("events", [])
+    # Only the rate-limited runs since the last run that ended any other way: one
+    # that got through means the quota came back.
+    closed = [r for r in record.get("runs", []) if r.get("ended_at") is not None]
+    walled = 0
+    for r in reversed(closed):
+        if r.get("outcome") != "rate_limited":
+            break
+        walled += 1
+    if walled >= RATE_LIMIT_LIMIT:
+        return (f"provider quota wall — {walled} rate-limited exits in a row; the engine "
+                f"retries it every cooldown and counts no failure")
+    # An operator's `reclaim` (payload `manual`) is a person, not a stale worker.
+    reclaims = [e for e in events if e.get("kind") == "reclaimed"
+                and not (isinstance(e.get("payload"), dict) and e["payload"].get("manual"))]
+    if len(reclaims) >= RECLAIM_LIMIT:
+        return (f"its claim was reclaimed {len(reclaims)} times (a stale claim: the "
+                f"worker stopped heartbeating) — the engine puts it back to `ready` and "
+                f"counts no failure")
+    # The driver's own rework hold wrote `rework in flight: …` before it was dropped,
+    # and a run filed then still carries those events.
+    deps = [e["payload"] for e in events if e.get("kind") == "dependency_wait"
+            and isinstance(e.get("payload"), dict)
+            and e["payload"].get("kind") == "dependency"
+            and not str(e["payload"].get("reason") or "").startswith("rework in flight:")]
+    if not deps or (parents and not parents_done(state, parents)):
+        return None
+    why = deps[-1].get("reason") or ""
+    cid, code = card["id"], card["title"].split(":")[0]
+    if len(deps) >= 2 or (cid in _REPROMOTED and cid not in _DEPENDENCY_NOTED):
+        return (f"its own worker blocked it twice, the last time with `--kind "
+                f"dependency` ({why}) — the engine re-queues such a block by itself, "
+                f"so the lane cannot advance")
+    if cid not in _DEPENDENCY_NOTED:
+        _DEPENDENCY_NOTED.add(cid)
+        _REPROMOTED.add(cid)
+        ledger({"event": "repromote", "code": code, "card_id": cid,
+                "via": "dependency_wait"})
+        try:
+            kb("comment", cid, f"RE-PROMOTED (once): this card's worker blocked it with "
+                               f"`--kind dependency` ({why}) and the engine returned it "
+                               f"to the pool; a second block halts the run.")
+        except Exception as e:
+            log(f"WARNING: could not comment on {code} ({e})")
+        log(f"{code}: its worker blocked it with --kind dependency ({why[:90]}) — "
+            f"counted as its one re-promotion")
+    return None
+
+
+def _exhaustion_event(card_id, events=None):
     """Payload of the newest gave_up/timed_out event on a card, or None.
 
     The dispatcher breaker emits these when a card exhausts max_retries or is
@@ -2077,15 +2490,13 @@ def _exhaustion_event(card_id):
     block-event reader cannot see it. ``at`` is the event's own timestamp, and it
     is what tells a fresh failure from the one a re-queue already forgave.
     """
-    try:
-        ev = json.loads(kb("show", card_id, "--json"))
-    except Exception:
-        return None
-    for e in reversed(ev.get("events", [])):
+    for e in reversed(card_events(card_id) if events is None else events):
         if e.get("kind") in EXHAUSTION_KINDS:
             payload = e.get("payload") if isinstance(e.get("payload"), dict) else {}
             return {"kind": e.get("kind"),
                     "at": e.get("created_at") or 0,
+                    # the outcome that tripped the breaker (_record_task_failure)
+                    "trigger": payload.get("trigger_outcome"),
                     "reason": str(payload.get("error")
                                   or payload.get("outcome")
                                   or e.get("kind"))}
@@ -2096,26 +2507,13 @@ def _blocked_event_payload(card_id):
     """Latest block event payload, or None.
 
     block_task stores the reason and kind in the EVENT PAYLOAD, not in the
-    task's result field — and `list --json` has neither key. Reading result
-    text (as this used to) therefore matched nothing and the deadman never
-    saw a genuinely stuck board.
+    task's result field — and `list --json` has neither key, so result text
+    matches nothing and the deadman would never see a genuinely stuck board.
     """
-    try:
-        ev = json.loads(kb("show", card_id, "--json"))
-    except Exception:
-        return None
-    for e in reversed(ev.get("events", [])):
+    for e in reversed(card_events(card_id)):
         if e.get("kind") in ("blocked", "block_loop_detected") and isinstance(e.get("payload"), dict):
             return e["payload"]
     return None
-
-
-def block_reason(card):
-    """'needs_input' when the card's latest block event was kind needs_input."""
-    p = _blocked_event_payload(card["id"])
-    if p and p.get("kind") == "needs_input":
-        return "needs_input"
-    return "other"
 
 
 def is_parked(card):
@@ -2130,21 +2528,56 @@ def is_parked(card):
     reason = str((p or {}).get("reason") or "")
     return bool(p) and ("awaiting lane activation" in reason or reason == "initial_status")
 
+def is_reasonless_block(card):
+    """The newest block event has no reason (`hermes kanban block <id>` with no words
+    stores `reason: None`, kanban_db._route_block). A card whose record cannot be read
+    has no block event at all, and is not one."""
+    p = _blocked_event_payload(card["id"])
+    return p is not None and not p.get("reason")
+
+
 def block_reason_text(card):
     """Reason text of a card's newest block event, '' when it never blocked."""
     return str((_blocked_event_payload(card["id"]) or {}).get("reason") or "")
 
 
 # Cards the driver has already re-promoted once this run because their own worker
-# blocked them. The parking brake is released as often as the graph asks; a stop
-# that came from the worker is honoured once, and then escalated.
+# blocked them (rejoined from the ledger on restart). The parking brake is released
+# as often as the graph asks; a stop that came from the worker is honoured once, and
+# then escalated.
 _REPROMOTED = set()
+_REPROMOTE_DEFERRED = set()   # deferral already logged, so one wait is one line
+
+
+def live_worker_pid(card_id):
+    """(pid, blocked_at): the pid of the card's newest worker if that process is still
+    alive on this host, else None — also when no `spawned` event carries one
+    (kanban_db_dispatch appends `spawned {"pid": N}` per attempt) — and the
+    `created_at` of the card's newest block event (0 when none)."""
+    events = card_events(card_id)
+    blocked_at = next((e.get("created_at") or 0 for e in reversed(events)
+                       if e.get("kind") in ("blocked", "block_loop_detected")), 0)
+    for e in reversed(events):
+        if e.get("kind") == "spawned" and isinstance(e.get("payload"), dict):
+            try:
+                pid = int(e["payload"].get("pid"))
+                os.kill(pid, 0)
+            except (TypeError, ValueError, ProcessLookupError):
+                return None, blocked_at
+            except PermissionError:
+                pass                        # alive, owned by someone else
+            return pid, blocked_at
+    return None, blocked_at
 
 TIMEOUT_BLOCK_MARK = "TIMEOUT:"
+# The goal loop's kind-less block when the turn budget runs out. A judge whose API
+# call fails reads as `continue`, so a spent budget is almost always the judge.
+JUDGE_BUDGET_BLOCK_MARK = "Goal-mode worker exhausted its turn budget"
 
 
 def block_origin(card):
-    """Where a card's newest block came from: 'parked' | 'timeout' | 'worker'.
+    """Where a card's newest block came from: 'parked' | 'timeout' | 'driver' (a halt's
+    block) | 'judge_budget' | 'worker' | 'other' | 'unreadable' (its `show` failed).
 
     Promotion may only release the board's own parking brake. Every other block is
     somebody saying STOP — a worker that could not finish the card, or the driver
@@ -2153,11 +2586,18 @@ def block_origin(card):
     blocked its own card at 15:52:41 and promotion undid it six seconds later, so
     the only sign of the stop was a comment nobody read.
     """
+    card_record(card["id"])
+    if card["id"] in _READ_ERROR:
+        return "unreadable"
     if is_parked(card):
         return "parked"
     text = block_reason_text(card)
     if TIMEOUT_BLOCK_MARK in text:
         return "timeout"
+    if text.startswith(HALT_BLOCK_MARK):
+        return "driver"
+    if text.startswith(JUDGE_BUDGET_BLOCK_MARK):
+        return "judge_budget"
     return "worker" if text else "other"
 
 
@@ -2168,12 +2608,16 @@ def should_repromote(card):
                  asks, because that is how a lane opens
     'repromote'  the worker blocked its own card and has not yet used its one
                  re-promotion this run
-    'stop'       the driver recorded a ceiling, or the worker has blocked the card
-                 twice: the lane cannot advance by itself, and the driver says so
-                 instead of looping
+    'stop'       the driver recorded a ceiling, the goal loop spent its turn budget
+                 (a second budget would fail the same way), or the worker has
+                 blocked the card twice: the lane cannot advance by itself, and the
+                 driver says so instead of looping
+    'skip'       the card's record could not be read: nothing is known this tick
     """
     origin = block_origin(card)
-    if origin in ("timeout", "other"):
+    if origin == "unreadable":
+        return "skip"
+    if origin in ("timeout", "driver", "other", "judge_budget"):
         return "stop"
     if origin == "worker" and card["id"] in _REPROMOTED:
         return "stop"
@@ -2182,24 +2626,61 @@ def should_repromote(card):
 
 def stop_reason(card):
     """Why promotion refuses to release a card, in the words the human needs."""
-    if block_origin(card) in ("timeout", "other"):
+    origin = block_origin(card)
+    if origin == "judge_budget":
+        return (f"the goal loop spent its turn budget ({block_reason_text(card)}) — "
+                f"almost always a failing goal judge, whose failure reads as "
+                f"`continue`; {judge_log_hint(card)}")
+    if origin == "driver":
+        return (f"blocked by the driver when it halted ({block_reason_text(card)}) — a "
+                f"human resets the board to try again")
+    if origin == "timeout":
         return (f"blocked by the driver ({block_reason_text(card)}) — a ceiling is "
                 f"not a review; a human resets the board to try again")
+    if origin == "other":
+        return ("blocked without a reason (by a human or a worker) — nothing says why "
+                "it stopped; a human unblocks it or resets the board")
     return (f"its own worker blocked it twice ({block_reason_text(card)}) — the lane "
             f"cannot advance by itself")
 
 
+def judge_log_hint(card):
+    """Where a failing goal judge leaves its trace: the assignee profile's agent log."""
+    profile = card.get("assignee") or "<profile>"
+    return (f"look for `goal judge: API call failed` in "
+            f"~/.hermes/profiles/{profile}/logs/agent.log")
+
+
+def is_stuck(card):
+    """Blocked, and promotion will not release it: a human is needed.
+
+    `should_repromote` decides, whatever the block's kind: a self-block the driver
+    will still re-promote is not stuck (TW and C blocking in parallel are both
+    released on the next tick), a worker's second block or a spent turn budget is.
+    A ceiling or a `HALTED:` block halts through its own path, so it is not counted
+    here. A reasonless block counts only with its block event read: an unreadable card
+    is not a stall."""
+    if card["status"] != "blocked" or should_repromote(card) != "stop":
+        return False                                  # parked cards are "release"
+    origin = block_origin(card)
+    if origin == "other":
+        return is_reasonless_block(card)
+    return origin not in ("timeout", "driver")
+
+
 def notify_deadman(state):
-    stuck = [f"{t.split(':')[0]}" for t, c in state.items()
-             if c["status"] == "blocked"
-             and block_reason(c) == "needs_input"
-             and not is_parked(c)]
+    stuck = [f"{t.split(':')[0]}" for t, c in state.items() if is_stuck(c)]
     if not stuck:
         return          # the halt path calls this too; nothing waits on a human
     msg = f"kanban-smoke DEADMAN: {len(stuck)} cards awaiting human input: {', '.join(stuck[:6])}"
     log(msg)
+    send_notice(msg)
+
+
+def send_notice(msg, where=None):
+    """deadman.txt, and Telegram when the gateway's tokens are set."""
     try:
-        with open(os.path.join(RUN_DIR, "deadman.txt"), "w") as f:
+        with open(os.path.join(where or RUN_DIR, "deadman.txt"), "w") as f:
             f.write(msg + "\n")
     except OSError as e:
         log(f"DEADMAN: cannot write deadman.txt ({e})")
@@ -2539,14 +3020,23 @@ def adopt_and_refile(state):
     _DRIFT.clear()
     _ANNOUNCED.clear()
     _REPORTED.clear()
-    made = file_lanes.file_board(BOARD, REPO, WORKDIR, lanes_n, key,
-                                 max_runtime=cfg.get("max-runtime"),
-                                 max_retries=cfg.get("max-retries"),
-                                 targets=cfg.get("targets"), run_id=key,
-                                 goal_max_turns=cfg.get("goal-max-turns"),
-                                 assignees=cfg.get("assignees"))
-    file_lanes.file_ideas(BOARD, REPO, BOARD_DIR, lanes_n, key, run_id=key,
-                          workdir=WORKDIR)
+    try:
+        made = file_lanes.file_board(BOARD, REPO, WORKDIR, lanes_n, key,
+                                     max_runtime=cfg.get("max-runtime"),
+                                     max_retries=cfg.get("max-retries"),
+                                     targets=cfg.get("targets"), run_id=key,
+                                     goal_max_turns=cfg.get("goal-max-turns"),
+                                     assignees=cfg.get("assignees"))
+        file_lanes.file_ideas(BOARD, REPO, BOARD_DIR, lanes_n, key, run_id=key,
+                              workdir=WORKDIR)
+    except Exception as e:
+        # runs/current already names the new run, and a board with no cards gives
+        # tick() nothing to drive: it idled for ever on an empty run directory.
+        # The armed Triage card is archived already, so there is nothing to re-arm.
+        record_halt(f"filing run {key} failed ({e}) — runs/current names it, but it "
+                    f"has no cards (or only some) and the armed idea card is archived; "
+                    f"reset the board: {RESET_STEPS.format(b=BOARD)}")
+        raise
     global _ARMED
     _ARMED = True
     log(f"refiled {len(made)} cards in {lanes_n} lane(s) — board ready")
@@ -2725,7 +3215,9 @@ def main():
             if SERVE and adopt_and_refile(board()):
                 idle = False
                 continue
-            if tick():
+            finished = tick()
+            note_tick_outcome()
+            if finished:
                 if _HALTED["reason"]:
                     log("BOARD HALTED — driver exiting; board state left "
                         "for human inspection")
@@ -2740,7 +3232,11 @@ def main():
         except Exception as e:
             import traceback
             log(f"ERROR: {e}\n{traceback.format_exc()}")
-            # transient CLI/board errors are expected mid-run; keep driving
+            # transient CLI/board errors are expected mid-run; keep driving — until
+            # the same one repeats, which halts
+            note_tick_outcome(e)
+            if _HALTED["reason"]:
+                continue
         deadman_check()
         if ONCE:
             return 0
@@ -2753,7 +3249,7 @@ _DEADMAN_STUCK = [frozenset()]   # the stuck set last notified, so one stall is 
 
 
 def deadman_check():
-    """Notify instead of a silent stall: two or more cards blocked on needs_input.
+    """Notify instead of a silent stall: two or more cards `is_stuck`.
 
     Every not-yet-open lane card is filed blocked (`create --initial-status
     blocked`) — the parking brake, not human attention — so parked cards are
@@ -2761,17 +3257,20 @@ def deadman_check():
     once per distinct stuck set, and a failed board read is logged, never raised: the
     loop's own try does not cover this call.
     """
+    with show_memo():
+        _deadman_check()
+
+
+def _deadman_check():
     try:
         st_now = board()
-        stuck = frozenset(c["id"] for c in st_now.values()
-                          if c["status"] == "blocked"
-                          and block_reason(c) == "needs_input"
-                          and not is_parked(c))
+        stuck = frozenset(c["id"] for c in st_now.values() if is_stuck(c))
     except Exception as e:
         log(f"DEADMAN: board read failed ({e})")
         return
     if len(stuck) >= 2 and stuck != _DEADMAN_STUCK[0]:
-        log(f"DEADMAN: {len(stuck)} cards blocked needs_input — human attention required")
+        log(f"DEADMAN: {len(stuck)} blocked cards promotion will not release — human "
+            f"attention required")
         notify_deadman(st_now)
     _DEADMAN_STUCK[0] = stuck
 

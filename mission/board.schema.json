@@ -44,7 +44,7 @@
       "type": "string"
     },
     "goal": {
-      "default": true,
+      "default": false,
       "type": "boolean"
     },
     "goal-max-turns": {

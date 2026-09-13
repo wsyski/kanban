@@ -25,13 +25,12 @@ researcher's to find — a worker's `python3` may not.
 - `"max-reworks": 2` — rounds should be cheap here.
 - `"model_override": "glm-5.3-flash"`, `"provider_override": "opencode-go"` — as on
   every shipped board, the review cards (`RVp`, `RVa` and their rounds) run on a
-  different model from the coder's default, so the judge is independent of the author. This is the cheap place to see the pin working.
+  different model from the coder's default, so the review model is independent of the author. This is the cheap place to see the pin working.
   No `"assignees"` map: the graph names its profiles directly.
-- `"goal": false` — no card is filed under the goal judge. The judge needs a reachable,
-  working auxiliary model; on this machine it is reachable but fails, and a failing
-  judge reports its transport error as `continue` ("not done yet"), which wedges every
-  goal-mode card. Workers complete on their own evidence; reviews and gates still judge
-  the work. `boards/minimal-goal-mode` is the probe for when the judge works.
+- `"goal": false` — no card is filed under the goal judge, so the smoke run does not
+  depend on the auxiliary model. Workers complete on their own evidence; reviews and gates
+  still judge the work. Setting it to `true` here is the goal-judge probe
+  ([DESIGN.md, *The goal judge*](../../DESIGN.md#the-goal-judge), probe bullet).
 
 ## Running it
 

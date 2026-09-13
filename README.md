@@ -25,13 +25,12 @@ how its runs went is not kept here — the runs describe themselves (§4).
 | `roman-evaluator-js` | a browser page: `roman-evaluator.html`, a DOM-free parsing module with unit tests, `run.sh`, two launch modes | 1 | auto, 10 min |
 | `roman-evaluator-java` | the same problem twice: a roman CLI (`roman-cli/`) then a spec-first Spring Boot service (`roman-service/`) consuming lane 1's rule; needs JDK 17, Maven, a warm `~/.m2` | 2 | auto, 20 min |
 | `portfolio-engineering` | a GPW small-cap research pipeline built into the Hermes `trader` profile (external `default-workdir`) | 1 | human, 60 min (default) |
-| `minimal-goal-mode` | the `minimal-development` shape (one function, `sign`) with **`goal: true`** — the probe for whether this machine's goal judge works | 1 | auto, 6 min |
 | `blade-workspace` | a documentation pass on an **external** repository; no refinement, unit or integration tests, so its lane is `P RVp Gp C RVa Gc` | 1 | auto, 10 min |
 
 Every shipped board pins its review cards (`RVp`, `RVa`, `RVc` and their rework rounds)
 to a different model from the one that did the work — `"model_override":
-"glm-5.3-flash"`, `"provider_override": "opencode-go"` — so the judge is independent of
-the author. Every other card runs its profile's default. The schema has no default for
+"glm-5.3-flash"`, `"provider_override": "opencode-go"` — so the review model is
+independent of the author. Every other card runs its profile's default. The schema has no default for
 the pin, so a new board must set it.
 
 What the template consists of:
@@ -205,7 +204,7 @@ disagreement loudly — the header is an HTML comment, invisible in a rendered v
 
 Re-create a board after engine changes:
 
-    mission/reset.sh --board boards/<slug> --yes    # archive cards, stop workers, unstage
+    mission/reset.sh --board boards/<slug> --yes    # stop driver + workers, archive cards, unstage
     hermes kanban boards rm <slug>                  # reset archives cards, not the board
     mission/create-board.sh --board boards/<slug>
     mission/start-board.sh --slug <slug>            # then drag Triage → Todo
@@ -327,18 +326,22 @@ run — so read the runs themselves:
 
 **Audit every run; that is the loop's stopping rule.** `run-audit.py` exits 0 only when a
 finished run has no errors and no warnings. It reads the driver log (terminal state,
-error vocabulary, held gates), `run-summary.json` (gate wording, restarts, per-card
+including a driver that died: no halt, no finish banner and no live process holding
+`runs/driver.lock`; error vocabulary; held gates), `run-summary.json` (gate wording, restarts, per-card
 budget against the board's ceiling), the document chain, the workers that outlived the
 run and the board's end state, then prints the per-card table and wall/agent/overhead.
 It also reads the cards' own logs, which is the only place a **provider storm the run
-survived** can be seen (E18: one warning per card, with the count and the first line) —
+survived** can be seen (E18: one warning per card, with the count and the first line,
+counting only this run's attempts in a log the card keeps across runs) —
 the driver's record says nothing about a flake whose worker retried and finished.
 A warning alone fails it. The loop is: run, audit, fix, run again — no cycle is done
 while the auditor reports anything.
 
-A halted board writes its reason to `runs/<run-id>/halt.txt`, comments it on the card,
-and the driver exits. A deadman notice (`deadman.txt`, Telegram when tokens are set)
-means two or more cards are waiting on a human.
+A halted board writes its reason to `runs/<run-id>/halt.txt`, comments it on the card
+where there is one, sends it once as a notice (`deadman.txt`, Telegram when tokens are
+set), and the driver exits. Short of a halt, a deadman notice means two or more blocked
+cards are waiting on a human — cards the driver will still re-promote are not counted.
+Every halt and what it says: [DESIGN.md](DESIGN.md#stall-classes).
 
 **Worker sessions** are not in `runs/`. Each card's worker runs in its assignee
 profile's session store, tagged `source=kanban` and titled `Work kanban task <task-id>`.
@@ -353,40 +356,46 @@ with the CLI:
 ## 5. Operational rules
 
 - **One driver per board.** Duplicates idle silently and interleave log output. Kill
-  all, start one. A restarted driver rejoins the lanes already opened on this run
-  instead of re-opening them, so a restart is safe and recovers a stalled run.
+  all, start one. A restart is safe: it rejoins this run's lanes and the one-shot
+  allowances the run already spent, and recovers a driver that stopped without a halt.
+  It does not undo a halt that rests on the board's record — only `mission/reset.sh`
+  clears that ([restart and reset](DESIGN.md#restart-and-reset)).
 - **Re-filing mid-run is forbidden.** `create-board.sh` refuses if the board exists.
   To start over, `mission/reset.sh --board boards/<slug>`: it stops this board's
-  workers, archives its cards and unstages its leftover index entries — one board only,
+  driver (the pid in `runs/driver.lock`), unstages its leftover index entries, then stops
+  its workers and archives its cards — one board only,
   nothing deleted, no `git reset`, no force-push. Orphaned workers otherwise burn full
   budgets on archived cards and re-stage stale content.
 - **A failure is final; only a REVIEW retries work.** Every card, revision cards
-  included, gets one attempt, so a timeout, crash or failed spawn blocks the card and
-  the driver halts the board there. Work comes back only through a review that REJECTS.
-  So `max-retries` is 1 and the schema refuses any other value; the count you choose is
-  `max-reworks`. Two bounded exceptions, each recorded as a comment on the card:
-  - a **provider-starved** attempt is re-queued **once** in the same run. Evidence is
-    required: ≥3 upstream 4xx/5xx lines in the worker log *and* a crash that never called
-    `kanban_complete`/`kanban_block` — the worker never got to try. A second failure of
-    any kind halts as usual, and below the threshold nothing is re-queued.
-  - a card whose **own worker blocked it** is re-promoted **once**, with the worker's
-    reason commented on the card. The second block halts the board naming that reason.
-    A block the *driver* recorded — a runtime ceiling — is never promoted away: a ceiling
-    is not a review.
-- **An escalation halts the board** — rework rounds exhausted, a card the engine
-  escalated to Triage, a worker that blocked its own card twice, or a card the driver
-  blocked at its runtime ceiling. The driver writes `runs/<run-id>/halt.txt` and exits,
-  because the lane cannot advance by itself and polling on would read as a stall.
+  included, gets one attempt, so a timeout, crash or failed spawn halts the board there.
+  Work comes back only through a review that REJECTS. So `max-retries` is 1 and the
+  schema refuses any other value; the count you choose is `max-reworks`. Two bounded
+  exceptions, each announced by a comment on the card: a **provider-starved** attempt is
+  re-queued **once** (never a timeout), and a card its **own worker blocked** is
+  re-promoted **once**; the next failure or block halts. A spent goal-loop turn budget,
+  a block with no reason, or a block the driver set, halts at once. Evidence thresholds
+  and messages: [block origins](DESIGN.md#block-origins) and [stall classes](DESIGN.md#stall-classes).
+- **Every other stall halts the board, naming its cause** — rework rounds exhausted, a
+  card the engine escalated to Triage or keeps retrying without counting a failure, a
+  gate that waits for 10 minutes with every parent done, the same tick exception 3
+  times, a lane card archived by hand, a run with no cards to drive — because the lane
+  cannot advance by itself and polling would read as a stall. Two of them (a failed
+  refile and a restart onto its empty run) name the [Resetting](#resetting) sequence,
+  because the armed idea card is already archived. The full decision tables:
+  [how a lane avoids and escapes a stall](DESIGN.md#how-a-lane-avoids-and-escapes-a-stall).
 - **Turn budgets are global, not per-profile.** `agent.max_turns` (80) in
   `~/.hermes/config.yaml` governs every kanban worker. A profile-level shadow value
   kills runs — never set `agent.max_turns` on a worker profile.
 - **Worker cards are turn-bounded; reviews and gates never are.** Worker cards (I, P,
   TW, C, TI and their rounds) are filed with a turn ceiling and, with `goal` on, a goal
   judge that checks the body's `DONE WHEN:` line. A goal judge on a review or gate could
-  complete a card whose success case is blocking.
-- **The judge is a different model.** `model_override`/`provider_override` (board-level
-  only, so no lane can buy itself a different judge) go on the review cards and their
-  rounds. `board_schema` refuses a provider without a model.
+  complete a card whose success case is blocking. Goal mode is off unless `board.json`
+  sets `"goal": true`; see [the goal judge](DESIGN.md#the-goal-judge) before turning it on.
+- **The review model is a different model.** `model_override`/`provider_override`
+  (board-level only, so no lane can buy itself a different review model) go on the
+  review cards and their rounds. The goal judge is not affected: it runs on the worker's
+  profile model unless the profile sets `auxiliary.goal_judge`. `board_schema` refuses a
+  provider without a model.
 - **Refinement is optional.** `refinement: false` drops `I` and `Gi` from a lane: the
   plan card becomes its root and plans from the raw idea, whose `### Done means` section
   the code gate judges against. The human's first veto moves to the plan gate.

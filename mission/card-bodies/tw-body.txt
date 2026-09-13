@@ -1,5 +1,7 @@
 UNIT TESTS — lane <N>. Write the tests the plan at <PLAN> specifies, and run them: this card produces the lane's evidence that the behaviour holds.
 
+FINISH: a failing test is a finished card, not a blocker. Once every [TW] step is written, run the suite, name every failing test and what its failure shows in your result, and complete; the implementation review decides what happens next. A plan step you believe is wrong is a finding for that result, never a reason to block or to keep looping.
+
 You work BESIDE the C card, not before it. The plan gate released both cards, so the implementation may already be in the tree by the time you run and the coder may be writing while you work; neither of you waits for the other, and the review that follows you both is what says this stage is done.
 
 THE WORK DIRECTORY IS THE INPUT, NOT A BLANK SLATE. Read <WORKDIR-STATE> — the driver's reading of what this lane found. An empty reading means greenfield: the plan's tests are written from nothing and the plan states the FAIL they expect, with its message. Anything else means those files came first and the plan is a change to them: a test that already exists may already pass, and PASS there IS the evidence this lane needs. Never delete or weaken a test to manufacture a FAIL — record what you found and what the run proved.
@@ -10,7 +12,7 @@ HARD RULES: (1) Do not commit, branch, stash, reset, restore or clean — work e
 
 TASK: execute every [TW] step in the plan exactly as written. Run the tests and record what the run shows: a FAIL whose message is the one the plan predicted, or a PASS where the implementation — the C card's, working beside you — is already in place. A failure caused by a typo or a broken harness is a finding, not evidence, and the plan's expected FAIL is a PREDICTION rather than something you can still observe: the review card re-derives it from your patch and the C card's. A planned test that cannot fail as written is a finding for your result, not something to rewrite quietly.
 
-DONE WHEN: the tests are staged, the suite has been run and its result recorded, the patch is attached, and the card is completed: `hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "<n> tests staged, suite: <what the run showed — the FAIL message, or the PASS and why>"`.
+DONE WHEN: the tests are staged, the suite has been run and its result recorded with every failing test named, the patch is attached, and the card is completed: `hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "<n> tests staged, suite: <what the run showed — the FAIL message, or the PASS and why>"`. A green suite is not part of this finish. On a revision card, complete the same way, saying what changed.
 
 <RESULT_FIELD>
 

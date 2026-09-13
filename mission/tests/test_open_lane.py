@@ -69,6 +69,7 @@ def _board_env(monkeypatch, tmp_path, calls, it=False, ut=True):
     run._OPENED.clear()
     # tick() also remembers which gate messages it has already logged
     run._WAITING.clear()
+    run._TICK_ERROR.update(sig=None, n=0)
     # Driver memory outlives a test unless it is cleared here: the re-promotion
     # allowance, the provider re-queues, the escalate-once set and the halt holder
     # are all per-driver-run by design, and one test leaking them into the next is
@@ -473,9 +474,14 @@ def test_a_lane_the_driver_refuses_is_neither_pruned_nor_released(monkeypatch, t
     _board_env(monkeypatch, tmp_path, calls)
     monkeypatch.setattr(run, "board", lambda: _state(root_status="blocked"))
     monkeypatch.setattr(run, "lane_paths_agree", lambda state, lane: False)
-    run.tick()
-    assert [c for c in calls if c[0] in ("unblock", "archive", "link", "unlink", "comment")] == [], calls
+    assert run.tick() is True
+    assert [c for c in calls if c[0] in ("unblock", "archive", "link", "unlink")] == [], calls
     assert not os.path.exists(os.path.join(str(tmp_path), "snapshots", "lane-1.md"))
+    # Refused once, then halted: the refusal repeated every tick and never stopped.
+    assert "different run" in run._HALTED["reason"]
+    assert [c[2] for c in calls if c[0] == "comment"] == [
+        c[2] for c in calls if c[0] == "comment" and c[2].startswith("ESCALATION")], calls
+    assert [c for c in calls if c[0] == "comment"], calls
 
 
 def test_a_restarted_driver_rejoins_a_lane_it_already_opened(monkeypatch, tmp_path):
@@ -498,7 +504,7 @@ def test_an_escalation_stops_the_driver_on_the_next_tick(monkeypatch, tmp_path):
     calls = []
     _board_env(monkeypatch, tmp_path, calls)
     monkeypatch.setattr(run, "halt_if_exhausted", halt_check)
-    monkeypatch.setattr(run, "_exhaustion_event", lambda card_id: None)
+    monkeypatch.setattr(run, "_exhaustion_event", lambda card_id, events=None: None)
     monkeypatch.setattr(run, "_HALTED", {"reason": None})
     monkeypatch.setattr(run, "_ESCALATED", set())
     run.escalate("id-Gp", "Gp1", "plan rounds exhausted")
@@ -532,6 +538,180 @@ def test_a_refile_that_fails_midway_leaves_no_state_from_the_previous_run(monkey
     assert not run._OPENED and not run._TIMED
 
 
+def test_a_refile_that_fails_after_minting_halts_naming_the_empty_run(monkeypatch, tmp_path):
+    """`current` already names the new run when filing raises, and the armed Triage
+    card is already archived — so the halt cannot say "re-arm the idea": there is no
+    card left to arm. It names the reset sequence, and lands in the new run."""
+    import file_lanes
+    import pytest
+    calls = []
+    _board_env(monkeypatch, tmp_path, calls)
+    monkeypatch.setattr(run, "BOARD", "b")
+    monkeypatch.setattr(run, "RUNS_ROOT", str(tmp_path / "runs"))
+    monkeypatch.setattr(run, "CURRENT_RUN", str(tmp_path / "runs" / "current"))
+    for name in ("SNAP_DIR", "TIMING_PATH", "CARDS_DIR", "VERDICTS_PATH"):
+        monkeypatch.setattr(run, name, getattr(run, name))     # mint_run moves them
+    monkeypatch.setattr(run, "_RUN_DIR_SEEN", {"path": None})
+    monkeypatch.setattr(run, "armed_ideas", lambda st: [(1, "## Idea 1: x\n", "t_idea")])
+    monkeypatch.setattr(run, "validate_armed", lambda armed: True)
+    monkeypatch.setattr(file_lanes, "read_board", lambda d: {"lanes": 1})
+    monkeypatch.setattr(run, "board", lambda: {})
+
+    def fail(*a, **k):
+        raise RuntimeError("hermes kanban create failed")
+
+    monkeypatch.setattr(file_lanes, "file_board", fail)
+    with pytest.raises(RuntimeError):
+        run.adopt_and_refile({})
+    key = run._read_current_run()
+    reason = run._HALTED["reason"]
+    assert key.startswith("b-") and key in reason
+    assert "hermes kanban create failed" in reason
+    assert "reset.sh" in reason and "create-board.sh" in reason
+    assert "re-arm" not in reason
+    halt = tmp_path / "runs" / key / "halt.txt"
+    assert "hermes kanban create failed" in halt.read_text()
+
+
+def _current_run(monkeypatch, tmp_path, run_id="b-20260913-134352"):
+    runs = tmp_path / "runs"
+    (runs / run_id).mkdir(parents=True, exist_ok=True)
+    (runs / "current").write_text(run_id + "\n")
+    monkeypatch.setattr(run, "RUNS_ROOT", str(runs))
+    monkeypatch.setattr(run, "CURRENT_RUN", str(runs / "current"))
+    monkeypatch.setattr(run, "RUN_DIR", str(runs / run_id))
+    return run_id
+
+
+def test_a_restart_onto_a_run_with_no_cards_halts_instead_of_idling(monkeypatch, tmp_path):
+    """A restart after a failed refile rejoins the empty run: no lane card to drive, no
+    Triage card to arm, and tick() returned False for ever."""
+    calls = []
+    _board_env(monkeypatch, tmp_path, calls)
+    run_id = _current_run(monkeypatch, tmp_path)
+    monkeypatch.setattr(run, "board", lambda: {})
+    assert run.tick() is True
+    assert run_id in run._HALTED["reason"]
+    assert "reset.sh" in run._HALTED["reason"]
+
+
+def test_a_board_waiting_for_its_first_idea_is_not_an_empty_run(monkeypatch, tmp_path):
+    """create-board.sh mints a run and files the parked lanes plus a Triage card per
+    idea: a board between create-board and arming holds both, and must not halt."""
+    calls = []
+    _board_env(monkeypatch, tmp_path, calls)
+    _current_run(monkeypatch, tmp_path)
+    monkeypatch.setattr(run, "board", lambda: _state(root_status="blocked"))
+    run.tick()
+    assert run._HALTED["reason"] is None
+    idea = {"Idea 1: is_even": {"id": "t_idea", "status": "triage", "title": "Idea 1: is_even",
+                                "body": "RAW IDEA for lane 1 — human input"}}
+    monkeypatch.setattr(run, "board", lambda: idea)
+    assert run.tick() is False
+    assert run._HALTED["reason"] is None
+
+
+def _gate_waiting(monkeypatch, tmp_path, calls, clock, msgs):
+    _board_env(monkeypatch, tmp_path, calls)
+    monkeypatch.setattr(run, "board", lambda: _state(root_status="done"))
+    monkeypatch.setattr(run.time, "time", lambda: clock[0])
+    monkeypatch.setattr(run, "gate_action", lambda *a: msgs[0])
+
+
+def test_a_gate_waiting_ten_minutes_on_the_same_reason_halts(monkeypatch, tmp_path):
+    """minimal-development ...-135050: `Gc1: waiting: final review verdict` logged
+    once, its parents done, and the run killed by hand. A verdict the gate cannot read
+    will not become readable by waiting."""
+    calls, clock = [], [1000.0]
+    _gate_waiting(monkeypatch, tmp_path, calls, clock,
+                  ["waiting: final review verdict = ''"])
+    assert run.tick() is False
+    clock[0] += run.GATE_WAIT_S - 1
+    assert run.tick() is False
+    assert run._HALTED["reason"] is None
+    clock[0] += 1
+    assert run.tick() is True
+    assert "Gi1" in run._HALTED["reason"]
+    assert "verdict unreadable" not in run._HALTED["reason"]   # Gi waits on no verdict
+    assert [c for c in calls if c[0] == "comment" and c[1] == "id-Gi"
+            and c[2].startswith("ESCALATION")], calls
+    run._OPENED.clear()
+
+
+def test_a_gate_wait_halt_does_not_spend_the_gates_rework_escalation(monkeypatch, tmp_path):
+    """escalate() comments once per key, rebuilt from the ledger on restart. The wait
+    halt shares the gate's code with "rework rounds exhausted", so under one key a
+    genuine exhaustion after the restart would halt without its comment or record."""
+    calls, clock = [], [1000.0]
+    _gate_waiting(monkeypatch, tmp_path, calls, clock,
+                  ["waiting: final review verdict = ''"])
+    monkeypatch.setattr(run, "BOARD", "b")
+    monkeypatch.setattr(run, "VERDICTS_PATH", str(tmp_path / "runs" / "verdicts.jsonl"))
+    run.tick()
+    clock[0] += run.GATE_WAIT_S
+    assert run.tick() is True
+    run._ESCALATED.clear()
+    run._HALTED["reason"] = None
+    run.rejoin_chain()
+    calls.clear()
+    run.escalate("id-Gi", "Gi1", "idea rework rounds exhausted")
+    assert [c for c in calls if c[0] == "comment" and "rounds exhausted" in c[2]], calls
+    run._OPENED.clear()
+
+
+def test_only_a_verdict_gate_calls_its_wait_an_unreadable_verdict():
+    """Keyed on the gate, not the message: a refined.md path can contain "verdict"."""
+    gi = run.gate_wait_reason("Gi1: idea gate", "waiting: no refined idea at "
+                              "/b/runs/verdict-study/artifacts/lane-1/refined.md", "gi")
+    gc = run.gate_wait_reason("Gc1: code gate", "waiting: final review verdict = ''", "gc")
+    assert "verdict unreadable" not in gi
+    assert "verdict unreadable" in gc
+
+
+def test_a_gate_whose_waiting_reason_changes_restarts_its_clock(monkeypatch, tmp_path):
+    calls, clock, msgs = [], [1000.0], ["waiting: refined idea missing section(s): Findings"]
+    _gate_waiting(monkeypatch, tmp_path, calls, clock, msgs)
+    run.tick()
+    clock[0] += run.GATE_WAIT_S - 60
+    msgs[0] = "waiting: refined idea Findings section is empty — no environment facts"
+    run.tick()
+    clock[0] += 120
+    assert run.tick() is False
+    assert run._HALTED["reason"] is None
+    clock[0] += run.GATE_WAIT_S
+    assert run.tick() is True
+    assert "Findings section is empty" in run._HALTED["reason"]
+    run._OPENED.clear()
+
+
+def test_a_lane_card_someone_else_archived_halts_naming_it(monkeypatch, tmp_path):
+    """`list --json` leaves archived cards out, so an archived parent reads as not
+    done and its children wait with nothing in the log. open_lane archives only the
+    lane's optional cards; any other card missing is somebody else's doing."""
+    calls = []
+    _board_env(monkeypatch, tmp_path, calls)
+    st = _state(root_status="done")
+    del st[lanes.card_title("RVp", 1)]
+    monkeypatch.setattr(run, "board", lambda: st)
+    assert run.tick() is True
+    assert "RVp1" in run._HALTED["reason"]
+    assert [c for c in calls if c[0] == "comment" and c[2].startswith("ESCALATION")], calls
+    run._OPENED.clear()
+
+
+def test_the_cards_a_lane_prunes_itself_are_not_missing(monkeypatch, tmp_path):
+    calls = []
+    _board_env(monkeypatch, tmp_path, calls)
+    monkeypatch.setattr(run, "lane_options",
+                        lambda lane: {"integration-tests": False, "unit-tests": False,
+                                      "refinement": False, "auto-gates": False,
+                                      "idea": "## Idea 1: is_even\n"})
+    st = _state(root_status="done")
+    for code in ("I", "Gi", "TW", "TI", "RVc"):
+        del st[lanes.card_title(code, 1)]
+    assert run.missing_lane_card(st) == (None, None)
+
+
 def test_the_deadman_survives_a_failed_list_and_notifies_once_per_stuck_set(monkeypatch):
     """The deadman ran outside the loop's try: one failed `list` ended a serve driver.
     And it notified on every 20 s tick for the same two stuck cards."""
@@ -547,7 +727,7 @@ def test_the_deadman_survives_a_failed_list_and_notifies_once_per_stuck_set(monk
     run.deadman_check()                                   # must not raise
     stuck = {t: {"id": t, "status": "blocked"} for t in ("a", "b")}
     monkeypatch.setattr(run, "board", lambda: stuck)
-    monkeypatch.setattr(run, "block_reason", lambda c: "needs_input")
+    monkeypatch.setattr(run, "block_origin", lambda c: "judge_budget")
     monkeypatch.setattr(run, "is_parked", lambda c: False)
     run.deadman_check()
     run.deadman_check()
@@ -575,7 +755,7 @@ def test_an_empty_result_on_a_revision_card_is_noted(monkeypatch):
 def test_a_deadman_that_cannot_write_its_note_does_not_end_the_driver(monkeypatch, tmp_path):
     monkeypatch.setattr(run, "RUN_DIR", str(tmp_path / "gone"))
     monkeypatch.setattr(run, "log", lambda m: None)
-    monkeypatch.setattr(run, "block_reason", lambda c: "needs_input")
+    monkeypatch.setattr(run, "block_origin", lambda c: "judge_budget")
     monkeypatch.setattr(run, "is_parked", lambda c: False)
     run.notify_deadman({"a": {"id": "a", "status": "blocked"}})      # must not raise
 
@@ -594,7 +774,57 @@ def test_a_halt_with_nothing_stuck_sends_no_deadman(monkeypatch, tmp_path):
     logged = []
     monkeypatch.setattr(run, "RUN_DIR", str(tmp_path))
     monkeypatch.setattr(run, "log", logged.append)
-    monkeypatch.setattr(run, "block_reason", lambda c: "")
+    monkeypatch.setattr(run, "block_origin", lambda c: "other")
     monkeypatch.setattr(run, "is_parked", lambda c: False)
     run.notify_deadman({"a": {"id": "a", "status": "blocked"}})
     assert logged == [] and not (tmp_path / "deadman.txt").exists()
+
+
+def test_a_live_rework_round_is_held_by_the_graph_not_by_a_dependency_block(monkeypatch, tmp_path):
+    """`block --kind dependency` routes to `todo` (kanban_db._route_block) and
+    recompute_ready promotes it straight back once the parents are done, so it never
+    held anything; and it is refused on a `todo` card. The graph holds the round: Gp
+    waits for the plan round, TW waits for Gp, P waits for the idea gate's verdict."""
+    calls = []
+    _board_env(monkeypatch, tmp_path, calls)
+    st = _state(root_status="done")
+    for code in ("Gi", "RVp"):
+        st[lanes.card_title(code, 1)]["status"] = "done"
+    st["P1-rev-1: plan revision - lane 1"] = {"id": "id-rev", "status": "running",
+                                              "title": "P1-rev-1: plan revision - lane 1"}
+    st[lanes.card_title("TW", 1)]["status"] = "ready"
+    monkeypatch.setattr(run, "board", lambda: st)
+    run.tick()
+    assert not [c for c in calls if c[:1] == ("block",)], calls
+    graph = {t: parents for t, parents, _k, _l in run.lane_graph(st)}
+    assert "P1-rev-1" in graph[lanes.card_title("Gp", 1)]
+    assert graph[lanes.card_title("TW", 1)] == ["Gp1"]
+    # the idea loop: P is held by the gate's REWORK while the re-gate is unfinished
+    st[lanes.card_title("Gi", 1)].update(result="REWORK: name the input type", completed_at=10)
+    st["I1-rev-1: refine idea revision - lane 1"] = {
+        "id": "id-irev", "status": "done", "completed_at": 20,
+        "title": "I1-rev-1: refine idea revision - lane 1"}
+    st["Gi1-r2: accept idea - lane 1"] = {"id": "id-gi2", "status": "blocked",
+                                          "title": "Gi1-r2: accept idea - lane 1"}
+    assert run.held_by_verdict(st, "p", 1) is True
+
+
+def test_a_restart_onto_a_partly_filed_run_halts_instead_of_idling(monkeypatch, tmp_path):
+    """Filing died after I1 and Gi1: a lane is counted by its P card, so no lane is ever
+    opened or checked, and the lane cards that do exist kept the empty-run halt away."""
+    calls = []
+    _board_env(monkeypatch, tmp_path, calls)
+    run_id = _current_run(monkeypatch, tmp_path)
+    st = {t: c for t, c in _state(root_status="blocked").items()
+          if t.split(":")[0] in ("I1", "Gi1")}
+    monkeypatch.setattr(run, "board", lambda: st)
+    assert run.tick() is True
+    assert run_id in run._HALTED["reason"] and "reset.sh" in run._HALTED["reason"]
+
+
+def test_an_idea_titled_like_a_card_is_not_a_partly_filed_run(monkeypatch, tmp_path):
+    calls = []
+    _board_env(monkeypatch, tmp_path, calls)
+    _current_run(monkeypatch, tmp_path)
+    idea = {"Idea2: screener": {"id": "t_idea", "status": "triage", "title": "Idea2: screener"}}
+    assert run.empty_run_reason(idea) is None

@@ -15,7 +15,7 @@ These files are **copies of the live profiles** (`~/.hermes/profiles/<p>/SOUL.md
 
 Roles are not separate profiles: one `coder` profile works every non-research card, and each job is
 kept apart by the card that names it, so there is one work profile to keep in sync. Review
-independence comes from the judge's model, not from a profile (see Engine side).
+independence comes from the review model, not from a profile (see Engine side).
 
 ## What is inside them, and who owns which part
 
@@ -91,5 +91,5 @@ injection and blocks the whole file on a hit, so check a changed SOUL with
 ## Engine side
 
 Nothing in here is read at runtime. A worker reads its own profile's `SOUL.md` and its card, and the
-card graph reads roles, not souls. Give the judge a different model through `model_override` /
+card graph reads roles, not souls. Give the review cards a different model (the review model) through `model_override` /
 `provider_override` in `board.json`, not through a separate profile.

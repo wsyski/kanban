@@ -33,7 +33,8 @@ fields are the audit's own, `agent` is the union (a forked lane double-counts on
   there, so no card stages anything and the audit's only findings are E16 notes about the
   `work/__pycache__` the board is not allowed to delete.
 - `minimal-goal-mode` is the same graph with `goal: true`, and it is the proof the goal
-  judge works: `I1` got `verdict=done` after one turn (1.05 min).
+  judge works: `I1` got `verdict=done` after one turn (1.05 min). The board has since been removed (goal mode is a manifest key);
+  its runs are kept at `/opt/backup/agents/20260913-173136-minimal-goal-mode/`.
 - `blade-workspace` builds in an external repository (`default-workdir`), so its `work/`
   is another project's tree; its one staged file is the README pass that was committed
   there by hand at the gate.

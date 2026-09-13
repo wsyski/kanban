@@ -9,6 +9,7 @@ spec = importlib.util.spec_from_file_location(
     "run_audit", os.path.join(REPO, "mission", "run-audit.py"))
 ra = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ra)
+import runs_util  # noqa: E402  (run-audit put mission/ on the path)
 
 BASE = datetime.datetime(2026, 9, 11, 21, 21, 0)
 GOOD_LOG = ["[21:21:04] LANE 1 open: its=True uts=True auto-gates=True snapshot=… idea='## Idea 1'",
@@ -21,6 +22,10 @@ GOOD_GATES = {
     "Gp1": "auto-gate (lane 1): plan verdict PASS (2 file(s) staged). NOTHING COMMITTED.",
     "Gc1": "auto-gate (lane 1): 2 files staged, verdict PASS. NOTHING COMMITTED.",
 }
+
+
+STORM = ("⚠️  API call failed (attempt 1/3): BadRequestError [HTTP 400]\n"
+         "   📝 Error: HTTP 400: Error from provider (Console Go): Upstream request failed\n")
 
 
 def at(seconds):
@@ -195,12 +200,32 @@ def test_a_clean_run_exits_zero(tmp_path, monkeypatch, capsys):
 
 
 def test_an_unfinished_run_reports_one_line_not_a_cascade(tmp_path, monkeypatch):
-    monkeypatch.setattr(ra, "_driver_alive", lambda: True)
     monkeypatch.setattr(ra, "board_findings", lambda slug, runs: [])
-    findings, rows, _s = ra.audit(fixture(tmp_path, log=GOOD_LOG[:3], chain_recs=worker_chain(result="")))
+    runs = fixture(tmp_path, log=GOOD_LOG[:3], chain_recs=worker_chain(result=""))
+    (tmp_path / "boards" / "b" / "runs" / "driver.lock").write_text(str(os.getpid()))
+    findings, rows, _s = ra.audit(runs)
     assert [c for _s2, c, _t in findings] == ["E1"], findings
     assert "still in flight" in findings[0][2]
     assert rows == []
+
+
+def test_a_run_whose_driver_died_without_a_halt_is_reported_dead(tmp_path, monkeypatch):
+    """roman-evaluator-java-20260912-235127: the log ends on "unblocked P2" with no halt
+    and no banner, and nothing noticed. The board's own lock says whether its driver
+    lives — a pgrep for `run.py --timeout-min` misses a serve driver started without
+    one, and matches any other board's."""
+    monkeypatch.setattr(ra, "board_findings", lambda slug, runs: [])
+    runs = fixture(tmp_path, log=GOOD_LOG[:3])
+    import subprocess
+    gone = subprocess.Popen([sys.executable, "-c", "pass"])
+    gone.wait()                                  # reaped: its pid names no process
+    (tmp_path / "boards" / "b" / "runs" / "driver.lock").write_text(str(gone.pid))
+    findings, _rows, _s = ra.audit(runs)
+    assert [(s, c) for s, c, _t in findings] == [("ERROR", "E1")], findings
+    assert "driver died" in findings[0][2] and str(gone.pid) in findings[0][2]
+    (tmp_path / "boards" / "b" / "runs" / "driver.lock").unlink()
+    findings, _rows, _s = ra.audit(runs)
+    assert "driver died" in findings[0][2]
 
 
 def test_an_in_flight_worker_is_not_called_empty_result(tmp_path, monkeypatch):
@@ -302,9 +327,7 @@ def test_a_provider_storm_the_run_survived_is_a_warning(tmp_path, monkeypatch):
     home = tmp_path / "home" / "kanban" / "boards" / "b" / "logs"
     home.mkdir(parents=True)
     (home / "t_c.log").write_text(
-        "ok\nretrying after upstream error\n"
-        "ERROR HTTP 400: {'message': 'name is not supported by this endpoint'}\n"
-        "HTTP 400 again\n")
+        "ok\n" + STORM * 2 + "session_id: 20260911_212130_bbbbbb\n")
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / "home"))
     monkeypatch.setattr(ra.os.path, "expanduser", lambda p: str(tmp_path / "home"))
     findings, _rows, _s = ra.audit(runs)
@@ -314,13 +337,40 @@ def test_a_provider_storm_the_run_survived_is_a_warning(tmp_path, monkeypatch):
 
 
 def test_prose_about_status_codes_is_not_a_provider_storm(tmp_path, monkeypatch):
-    """The forms are the transport's own — an HTTP status line, or the goal loop's
-    error sentence. A card reasoning about 4xx handling is prose."""
+    """The forms are the transport's own — its failed-call line and error line, or
+    the goal loop's error sentence. A card reasoning about 4xx handling is prose, and
+    a tool's or a test's status code is the work, not the provider."""
     for line in ("the run had no provider storm", "a 400 in the logs would be odd",
-                 "upstream was slow but answered"):
-        assert not ra.UPSTREAM_ERROR.search(line), line
-    for line in ("HTTP 400: bad request", "status 503", "goal judge: API call failed"):
-        assert ra.UPSTREAM_ERROR.search(line), line
+                 "upstream was slow but answered",
+                 "E       assert response status 404", "status 503",
+                 "HTTP 404 from the stub, as the contract test expects",
+                 "- HTTP serve → html/js/css all 200"):
+        assert not runs_util.UPSTREAM_ERROR.search(line), line
+    for line in ("HTTP 400: Error from provider (Console Go): Upstream request failed",
+                 "⚠️  API call failed (attempt 1/3): BadRequestError [HTTP 400]",
+                 "   📝 Error: HTTP 503: Service Unavailable",
+                 "goal judge: API call failed"):
+        assert runs_util.UPSTREAM_ERROR.search(line), line
+
+
+def test_an_earlier_attempt_in_the_same_card_log_is_not_this_runs_storm(tmp_path, monkeypatch):
+    """The log is append-only per card, so a file touched by this run still holds the
+    attempts before it — here flushed after their own session id, as -Q writes them.
+    The run's first recorded attempt offset is where its lines start."""
+    clean_probe(monkeypatch)
+    runs = fixture(tmp_path, chain_recs=worker_chain())
+    home = tmp_path / "home" / "kanban" / "boards" / "b" / "logs"
+    home.mkdir(parents=True)
+    earlier = ("session_id: 20260911_200000_aaaaaa\n"
+               + "HTTP 400: Error from provider (Console Go): Upstream request failed\n" * 3)
+    (home / "t_c.log").write_text(earlier + "ok\nsession_id: 20260911_212130_bbbbbb\n")
+    with open(os.path.join(runs, "verdicts.jsonl"), "a") as f:
+        f.write(json.dumps({"event": "attempt", "card_id": "t_c",
+                            "log_offset": len(earlier.encode())}) + "\n")
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(ra.os.path, "expanduser", lambda p: str(tmp_path / "home"))
+    findings, _rows, _s = ra.audit(runs)
+    assert "E18" not in codes(findings), findings
 
 
 def test_a_card_log_from_an_earlier_run_is_ignored(tmp_path, monkeypatch):

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Reset ONE board: stop its workers, clear its stale index entries, archive its cards.
+# Reset ONE board: stop its driver and workers, clear its stale index entries, archive its cards.
 #
 # Usage:
 #   mission/reset.sh --board boards/<slug>        # interactive
@@ -32,8 +32,8 @@ board built is yours to keep or delete, and so is every runs/<run-id>/ holding a
 earlier run's log, timing and hand-offs. There is no flag that clears either.
 `rm` them yourself when you mean to.
 
-What this does: archive the board's cards, stop the workers still holding them,
-and unstage what a dead run left in the git index. No `git reset`, no
+What this does: stop the board's driver, archive its cards, stop the workers
+still holding them, and unstage what a dead run left in the git index. No `git reset`, no
 `git clean`, never a force-push.
 
 The board DEFINITION survives: board.json, the lane-<k>.md ideas and the board's
@@ -81,6 +81,7 @@ EOF
 # directory, clean it yourself" — took the run state and the card archival down
 # with it, so a board pointing at another repository could not be reset at all.
 echo "board:    $SLUG"
+echo "stopping: this board's driver and workers"
 echo "archiving: this board's cards; unstaging its leftover index entries"
 echo "KEEPING:  $WORKDIR (the product)"
 echo "KEEPING:  $BOARD_DIR/runs (every run's evidence) — both yours to rm, never this script's"
@@ -93,6 +94,43 @@ echo "keeping:  $BOARD_DIR/board.json, lane-*.md, README.md"
 # gitignored, nothing later reads it, and deciding it has outlived its usefulness
 # is a human's call, made with rm. What this script does is stop the workers,
 # unstage what a dead run left in the index, and archive the cards.
+
+# The driver goes first. One left serving reads the archived board as a run whose
+# filing failed and halts naming the wrong cause — or drives the cards create-board.sh
+# files next. Its pid is in the board's lock (acquire_lock). A killed driver leaves the
+# lock behind and the pid may since belong to anything, so only a process running THIS
+# repo's mission/run.py is stopped, however it was started (`mission/run.py`,
+# `cd mission; python3 run.py`, an absolute path) — an argument ending in run.py,
+# resolved against the process's own cwd. A zombie counts as gone.
+alive() { s=$(ps -o stat= -p "$1" 2>/dev/null) && [ -n "$s" ] && [ "${s#Z}" = "$s" ]; }
+runs_this_driver() {
+  local arg want
+  want=$(realpath -m "$REPO/mission/run.py")
+  [ -r "/proc/$1/cmdline" ] || return 1
+  while IFS= read -r -d '' arg; do
+    case "$arg" in
+      *run.py)
+        [ "${arg#/}" = "$arg" ] && arg="$(readlink "/proc/$1/cwd" 2>/dev/null)/$arg"
+        [ "$(realpath -m "$arg")" = "$want" ] && return 0 ;;
+    esac
+  done < "/proc/$1/cmdline"
+  return 1
+}
+pid=$(cat "$BOARD_DIR/runs/driver.lock" 2>/dev/null || true)
+case "$pid" in ''|*[!0-9]*) pid= ;; esac
+if [ -n "$pid" ] && alive "$pid" && runs_this_driver "$pid"; then
+  kill "$pid" 2>/dev/null || true
+  for _ in $(seq 50); do alive "$pid" || break; sleep 0.2; done
+  if alive "$pid"; then
+    echo "the driver (pid $pid) did not stop — kill it, then run this again" >&2
+    exit 1
+  fi
+  echo "stopped the driver (pid $pid)"
+else
+  note=
+  [ -n "$pid" ] && note=" (runs/driver.lock names pid $pid, which is not this board's driver)"
+  echo "no driver running for '$SLUG'$note"
+fi
 
 # The index is board state too. Whatever the last run staged and never committed
 # is still in it: the next lane would inherit those entries, `git diff --cached`

@@ -8,6 +8,7 @@
     true
   ],
   "auto-gates": true,
+  "goal": true,
   "max-runtime": "20m",
   "max-reworks": 3,
   "model_override": "glm-5.3-flash",

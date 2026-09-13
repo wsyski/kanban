@@ -90,10 +90,11 @@ IT_CODES = ("TI", "RVc")
 # gate, and the reason `required_profiles` must not demand one.
 NO_PROFILE_ROLES = frozenset({"human-gate"})
 
-# The cards that JUDGE the work. `model_override` is applied to these cards and to
-# nothing else. Keyed on the CARD CODE, not on a role: every work card is the coder's
+# The review cards. `model_override` (the review model) is applied to these cards and
+# to nothing else. Keyed on the CARD CODE, not on a role: every work card is the coder's
 # now, so a role cannot tell a verdict card from an implementation one — keyed on
-# `coder` the judge's model would land on the implementation too.
+# `coder` the review model would land on the implementation too. Not the goal judge,
+# which is `auxiliary.goal_judge` on the worker's profile.
 JUDGE_CODES = frozenset({"RVp", "RVa", "RVc"})
 
 # codes dropped when a lane runs no REFINEMENT: the researcher who turns the raw
@@ -127,11 +128,11 @@ def goal_args(code, enabled=True, max_turns=None):
     """`--goal` flags for a WORKER card at filing time; [] for gates/reviewers.
 
     ``enabled=False`` — a board whose manifest sets ``"goal": false`` —
-    files none of them. The judge gate is a worker self-check that needs a
-    REACHABLE auxiliary model; a judge that is reachable but failing returns
+    files none of them. The goal judge is a worker self-check that needs a
+    REACHABLE auxiliary model; a goal judge that is reachable but failing returns
     its transport error as the verdict ``continue`` ("not done yet"), which
     makes every goal-mode card uncompletable and the lane unwinnable (the
-    harness warns of exactly this wedge and guards only the no-client case —
+    harness warns of exactly this wedge and guards only the no-client case).
     Nothing else bounds a worker: agent.max_turns is 80 and the
     card's runtime ceiling still applies.
 
@@ -222,13 +223,13 @@ def max_reworks(cfg=None):
 
 def model_args(code, cfg):
     """`--model`/`--provider` for a card of this CODE — the manifest's
-    `model_override`, and ONLY on the cards that judge.
+    `model_override` (the review model), and ONLY on the review cards.
 
     A verdict is where a stronger model pays (it is the card the lane's done
     criterion hangs on), so the option lands on the review cards and on nothing
     else; a board that names no model files none of these flags and every card
     runs its profile's default. The provider is sent only alongside a model —
-    the engine's own rule — and it is what lets a judge run on a provider other
+    the engine's own rule — and it is what lets the review model run on a provider other
     than the profile's own (the local llama-swap endpoint, say).
     """
     if code not in JUDGE_CODES:

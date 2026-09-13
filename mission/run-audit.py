@@ -89,23 +89,23 @@ WARN_LINE = re.compile(r"(?i)(^\s*warnings?\s*:|:\s*warnings?\s*:)|"
 WARN_TEXT = re.compile(r"(?i)(?<!no )(?<!'s )(?<!\b0 )(?<!\bzero )warnings?\b")
 
 
-# A transport failure the run may have SURVIVED — the worker retried and the card
-# finished. Only the card's own log records it, so this is the one check that can
-# see a provider storm the driver's own record says nothing about. Forms matched
-# are the ones the transport prints (an HTTP status line) and the goal loop's own
-# error sentence; a card body quoting an error's TEXT is not one of these.
-UPSTREAM_ERROR = re.compile(r"(?i)(\bHTTP\s*[45]\d\d\b|\bstatus\s*[45]\d\d\b|"
-                            r"goal judge: API call failed)")
-
-
-def _driver_alive():
-    """Is a driver still running? Distinguishes "audited too early" from a run
-    that ended without its banner."""
+def _driver_alive(root):
+    """(alive, pid) for the driver runs/driver.lock names — the board's own lock, the
+    one start-board.sh and acquire_lock check. It tells "audited too early" from a
+    driver that died without a halt; a pgrep for the command line matched any board's
+    driver, and missed a serve driver started without --timeout-min."""
+    pid = None
     try:
-        return subprocess.run(["pgrep", "-f", "run.py --timeout-min"],
-                              capture_output=True, text=True).returncode == 0
-    except Exception:
-        return False
+        with open(os.path.join(root, "driver.lock")) as f:
+            pid = f.read().strip()
+        if int(pid) <= 0:
+            return False, pid
+        os.kill(int(pid), 0)
+    except PermissionError:
+        return True, pid
+    except (OSError, ValueError, OverflowError):
+        return False, pid
+    return True, pid
 
 
 def read(path):
@@ -197,11 +197,15 @@ def result_findings(rows):
     return out
 
 
-def card_log_findings(slug, started):
+def card_log_findings(slug, started, offsets=None):
     """Scan the cards' own session logs for warnings, from this run only.
 
     The board keeps one log per card across runs, so a log older than the run's
-    first chain record belongs to somebody else's run.
+    first chain record belongs to somebody else's run. A newer one still holds the
+    attempts before this run, so the upstream count (E18) starts at the first attempt
+    offset this run recorded for the card (`offsets`, from its verdicts.jsonl). A card
+    with none was filed during the run (a rework round starts ready, with no driver
+    unblock), so its whole log is this run's.
     """
     out = []
     for home in (os.environ.get("HERMES_HOME"), os.path.expanduser("~/.hermes")):
@@ -218,13 +222,12 @@ def card_log_findings(slug, started):
                 text = open(path, errors="replace").read()
             except OSError:
                 continue
-            upstream = []
             for line in text.splitlines():
                 if WARN_LINE.search(line):
                     out.append(("WARNING", "E13", f"{name}: {line.strip()[:90]}"))
-                if UPSTREAM_ERROR.search(line):
-                    upstream.append(line.strip()[:90])
-            if upstream:
+            marks = (offsets or {}).get(name[:-len(".log")]) or [0]
+            count, first = runs_util.upstream_hits_since(path, marks[0])
+            if count:
                 # A run can SURVIVE a transport storm, and then nothing else here
                 # sees it: the worker retried, the card finished, the driver logged
                 # nothing, and the card's own log is the only record. That is
@@ -232,8 +235,8 @@ def card_log_findings(slug, started):
                 # same 400 storm cost a whole run an hour earlier, and the run that
                 # rode one out audited clean).
                 out.append(("WARNING", "E18",
-                            f"{name}: {len(upstream)} upstream error line(s) — the "
-                            f"run survived a provider storm: {upstream[0]}"))
+                            f"{name}: {count} upstream error line(s) — the "
+                            f"run survived a provider storm: {first[:90]}"))
         break
     return out
 
@@ -350,10 +353,12 @@ def audit(runs_dir, board_dir=None):
         # Mid-flight: one line beats a cascade of E4/E7/E12 that all mean the
         # same thing (the auditor was run too early), and the cause is a person
         # reading a board that is still working.
-        alive = _driver_alive()
+        alive, pid = _driver_alive(runs_root(runs_dir))
         wording = ("the run is still in flight (a driver is alive) — audit after "
                    "the finish banner" if alive
-                   else "the run ended without the finish banner")
+                   else f"the driver died without a halt or the finish banner — no live "
+                        f"process holds runs/driver.lock (pid {pid or 'none'}); restart "
+                        f"it with start-board.sh")
         findings = [(s, c, wording if c == "E1" else t) for s, c, t in findings]
         return findings, [], {}
     s_findings, s_stats = summary_findings(
@@ -377,7 +382,7 @@ def audit(runs_dir, board_dir=None):
                               __import__("datetime").datetime.fromisoformat(ts).timestamp())
             except ValueError:
                 pass
-    findings += card_log_findings(slug, started)
+    findings += card_log_findings(slug, started, runs_util.ledger_log_offsets(runs_dir))
     findings += repo_findings(runs_dir)
     findings += work_noise_findings(runs_dir, cfg.get("default-workdir"))
     findings += board_findings(slug, runs_dir)

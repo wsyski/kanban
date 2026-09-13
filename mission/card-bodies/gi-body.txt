@@ -12,6 +12,6 @@ If this lane runs with human gates (the default), the driver pauses here and log
 
 VERDICT (result field, first word decides):
 - ACCEPT: --result "ACCEPT: <what you decided>". The normal case — anything that does not start with REWORK also opens the lane.
-- REWORK: --result "REWORK: <what is missing or wrong, with your answers>". The driver files a researcher revision and a re-gate, and the plan card waits for the re-gate (max 2 rounds, then the lane escalates to a human).
+- REWORK: --result "REWORK: <what is missing or wrong, with your answers>". The driver files a researcher revision and a re-gate, and the plan card waits for the re-gate (up to the board's rework cap, then the lane escalates to a human).
 
 Completing this card is what unblocks the lane's plan card, and the plan card treats <REFINED> as the contract. Do not open the gate on a refinement you do not believe: fix it first, or send it back with REWORK.

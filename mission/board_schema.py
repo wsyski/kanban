@@ -7,7 +7,7 @@ still describe a board that cannot exist:
     "integration-tests": ["yes", "no"]   right length, both entries pass, resolve
                                          to the STRING "yes" — truthy — so BOTH
                                          lanes get integration cards
-    "goal": "false"                      bool("false") is True: the judge runs on
+    "goal": "false"                      bool("false") is True: the goal judge runs on
                                          a board whose manifest says it must not,
                                          which is the wedge-every-card failure
     "max-runtime": "banana"              handed to --max-runtime; the auditor's
@@ -69,7 +69,7 @@ OPTIONS = {
     "unit-tests":        ("bool",     True,  True,  None),
     "integration-tests": ("bool",     True,  True,  None),
     "auto-gates":        ("bool",     False, True,  None),
-    "goal":              ("bool",     True,  False, "--goal"),
+    "goal":              ("bool",     False, False, "--goal"),
     "max-runtime":       ("duration", "60m", False, "--max-runtime"),
     "max-retries":       ("count",    1,     False, "--max-retries"),
     "goal-max-turns":    ("count",    40,    False, "--goal-max-turns"),
@@ -84,8 +84,8 @@ OPTIONS = {
     # The model a REVIEW runs on, named exactly as the engine names the task
     # property it becomes (`model_override`, with its provider beside it). Board
     # level, NOT per-lane: the header door is for options a lane's own idea may
-    # decide, and how strong a judge the board buys is a property of the board.
-    # `lanes.model_args` sends them, on the judge cards only.
+    # decide, and how strong a review model the board buys is a property of the board.
+    # `lanes.model_args` sends them, on the review cards only.
     "model_override":    ("text",     None,  False, None),
     "provider_override": ("text",     None,  False, None),
 }
