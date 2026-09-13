@@ -84,13 +84,6 @@ REFINED_SECTIONS = ("Problem", "Scope", "Open questions", "Assumptions", "Findin
 # tester AND the final review, because RVc reviews nothing else.
 IT_CODES = ("TI", "RVc")
 
-# The profile that works a role whose own profile was RETIRED. EMPTY by construction:
-# `manager`, `tester` and `reviewer` are gone and their cards name the coder directly,
-# so every role the graph fills has a profile of its own. Kept as the ONE place that
-# would say otherwise — the next retirement is a line here, not a hunt through filing,
-# the rework paths and the schema. A board's own `assignees` still wins.
-ROLE_FALLBACK = {}
-
 # Roles that never spawn a worker: a gate is completed by a person, or by the
 # driver when `auto-gates` is on, so no profile has to exist for it. The dispatcher
 # buckets a card whose assignee is not a profile as unspawnable — correct for a
@@ -170,12 +163,12 @@ def skill_for(code):
 
 def assignee_for(role, assignees=None):
     """The hermes profile that works a role — the board's `assignees` remapping if
-    it names this role, else the role's fallback profile, else the role's own name.
+    it names this role, else the role's own name.
 
     One lookup, so a board that remaps a role remaps it everywhere: filing, revision
     cards and the rework-owner rule all come through here.
     """
-    return (assignees or {}).get(role, ROLE_FALLBACK.get(role, role))
+    return (assignees or {}).get(role, role)
 
 
 def any_lane(value, default=True):

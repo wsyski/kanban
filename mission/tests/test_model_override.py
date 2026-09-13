@@ -35,7 +35,6 @@ def test_the_retired_roles_are_gone_and_every_card_is_the_coders():
     roles = {r[2] for r in lanes.LANE_CARDS}
     assert roles == {"researcher", "coder", "human-gate"}, sorted(roles)
     assert board_schema.ROLES == roles          # the schema declares the same set
-    assert lanes.ROLE_FALLBACK == {}            # nothing left to fall back from
     assert lanes.assignee_for("coder") == "coder"
     assert lanes.assignee_for("researcher") == "researcher"
 

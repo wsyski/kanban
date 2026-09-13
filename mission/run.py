@@ -339,10 +339,6 @@ def parents_done(state, prefixes):
             return False
     return True
 
-def result_of(state, prefix):
-    t, card = title_of_prefix(state, prefix)
-    return (card or {}).get("result") or ""
-
 def git(*args):
     r = subprocess.run(["git", "-C", WORKDIR, *args], capture_output=True, text=True)
     if r.returncode != 0:

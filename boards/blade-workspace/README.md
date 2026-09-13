@@ -76,6 +76,6 @@ business, decided with its own git.
 ## Timing
 
 `max-runtime` is 10 minutes per card, not the 4 that `minimal-development` uses.
-The deliverable is small but the researcher and the manager have a real tree to
+The deliverable is small but the coder has a real tree to
 read first, and a survey that runs out of budget produces a plan about an empty
 directory.

@@ -22,8 +22,8 @@ bad `rm` or one silent omission from mattering.
 | `trader` | `~/.hermes/profiles/trader/SOUL.md` | no card of its own — domain authority and expected values |
 
 The `manager`, `tester` and `reviewer` roles were retired (2026-09-13, 2026-09-12, 2026-09-12) and
-their cards are the coder's: there is no `ROLE_FALLBACK` entry left, because there is no separate
-role to fall back FROM — the card graph names `coder` directly.
+their cards are the coder's: the card graph names `coder` directly, so there is no role to fall
+back from.
 
 ## What is inside them, and who owns which part
 
@@ -178,6 +178,5 @@ done
 
 Nothing in here is read at runtime — a worker reads its own profile's `SOUL.md`, and the card graph
 reads roles, not souls. What changes when every role has a profile of its own is the compensating
-machinery: `lanes.ROLE_FALLBACK` (`{"tester": "coder", "reviewer": "coder"}`) becomes redundant, a
-board's `assignees` map becomes unnecessary, and `model_override`/`provider_override` in a manifest
+machinery: a board's `assignees` map becomes unnecessary, and `model_override`/`provider_override` in a manifest
 has to be cleared — it would otherwise silently beat the model the role's own profile pins.

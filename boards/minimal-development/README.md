@@ -29,10 +29,8 @@ this board the one that exercises the judge's model: its review cards — `RVp`,
 and any rework round of theirs — are filed with `--model`/`--provider`, while every
 worker card runs the coder profile's default. Everything else here is deliberately
 cheap, so a lane that shows the pin working costs about what the plain smoke lane
-costs. It carries no `"assignees"` map: the two roles that have no profile of their
-own (`tester`, `reviewer`) resolve to `coder` through `lanes.ROLE_FALLBACK`, exactly
-as they do on every other board, and a board only needs that key when it wants a role
-worked somewhere else.
+costs. It carries no `"assignees"` map: every role the graph fills names its profile
+directly, and a board only needs that key when it wants a role worked somewhere else.
 
 `"goal": false` — this board files no card under the goal judge. The judge
 is a worker self-check that needs a REACHABLE auxiliary model, and this machine's
