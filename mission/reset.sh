@@ -161,8 +161,12 @@ if git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1; then
   # runs/ wholesale: nothing under it should ever be staged, and per-run
   # directories make a narrower pathspec both wrong and fragile (a glob that
   # matches no tracked path fails the WHOLE restore, silently, under `|| true`).
+  # A board outside the repo (REL stays absolute) makes git refuse the pathspec —
+  # "outside repository" — and under `set -e` that failure took the whole reset
+  # down AFTER the report and BEFORE it archived anything, with no message. No
+  # readable staged entries means none to unstage.
   staged=$(git -C "$REPO" diff --cached --name-only \
-             -- "$REL/work" "$REL/runs" 2>/dev/null)
+             -- "$REL/work" "$REL/runs" 2>/dev/null || true)
   if [ -n "$staged" ]; then
     printf '%s\n' "$staged" | xargs -r -d '\n' git -C "$REPO" restore --staged --
     echo "unstaged $(printf '%s\n' "$staged" | wc -l) generated path(s) under $REL"
