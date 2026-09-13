@@ -1,3 +1,3 @@
-# Hermes Kanban Improvment 
+# Hermes Kanban Improvments 
 
 
