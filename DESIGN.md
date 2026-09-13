@@ -264,11 +264,14 @@ Each is current behaviour, with what to do about it.
   documents — but it burns a slot and a budget on an archived card and can re-stage
   stale content. `reset.sh` stops this board's workers before archiving;
   `run-audit.py` warns on a worker that outlived the run (E8).
-- **The goal judge can wedge every worker card.** It needs a REACHABLE auxiliary model,
-  and a reachable-but-failing one reports its transport error as the verdict
-  `continue` ("not done yet"), which no evidence satisfies. `"goal": false` turns it
-  off; the switch is read at filing (`file_lanes.file_board`), so it takes a re-create,
-  not a driver restart. `boards/minimal-goal-mode` is the probe. Goal flags go on worker
+- **The goal judge can wedge every worker card.** It needs a REACHABLE auxiliary model —
+  and one the relay ACCEPTS. The judge runs *outside* a turn, so an OpenCode relay
+  answered it `400 MissingSessionID` until the loop held the conversation it judges
+  (`hermes-kanban-goal-judge-affinity.patch`). A judge that fails, however it fails,
+  reports its transport error as the verdict `continue` ("not done yet"), which no
+  evidence satisfies. `"goal": false` turns it off; the switch is read at filing
+  (`file_lanes.file_board`), so it takes a re-create, not a driver restart.
+  `boards/minimal-goal-mode` is the probe. Goal flags go on worker
   cards only (`lanes.goal_args`), never on reviews or gates: a goal judge can push a
   card whose success case is *blocking* into completing, silently opening the gate it
   guards.
