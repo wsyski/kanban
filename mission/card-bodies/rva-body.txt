@@ -19,4 +19,6 @@ VERDICT — the result field's first word is the verdict:
 - REJECT: `hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "REJECT: <numbered findings, each with reproduction steps> OWNER: <C|TW|TI>"` — the driver files ONE revision round (max 2 rounds, then a human) for the card that OWNS the fix, so name it: `OWNER: C` when the implementation is wrong, `OWNER: TW` when a unit test is wrong, `OWNER: TI` when an integration test is wrong. The C card may not edit the TW card's files (check (e)), so a test defect sent to the C card cannot be fixed: the round goes to the card you name, and a verdict with no usable owner line goes to the C card.
 Write the full review to `<RUNS>/scratch/<YOUR-CARD-ID>/review.md` and attach it: `hermes kanban --board <BOARD> attach <YOUR-CARD-ID> <RUNS>/scratch/<YOUR-CARD-ID>/review.md`. If you cannot complete every check, the verdict is `REJECT: incomplete review — <what is unchecked>`, never a PASS with caveats.
 
+<RESULT_FIELD>
+
 <WORKER_CONTRACT>

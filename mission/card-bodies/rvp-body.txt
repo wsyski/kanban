@@ -13,4 +13,6 @@ VERDICT — the result field's first word is the verdict:
 - REJECT: `hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "REJECT: <numbered findings — item, plan line, fix>"` — the driver files a plan revision (max 3 rounds, then a human).
 Write the full review to `<RUNS>/scratch/<YOUR-CARD-ID>/review.md` and attach it: `hermes kanban --board <BOARD> attach <YOUR-CARD-ID> <RUNS>/scratch/<YOUR-CARD-ID>/review.md`. If you cannot complete every check, the verdict is `REJECT: incomplete review — <what is unchecked>`, never a PASS with caveats.
 
+<RESULT_FIELD>
+
 <WORKER_CONTRACT>

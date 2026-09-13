@@ -9,7 +9,8 @@ refined idea, or a leftover?" is a command, not a transcript dig:
   - F2 a document the card READS was written AFTER it started (it cannot have read it yet);
   - F3 it predates the run's first card (a previous run's leftover);
   - F4 the filed body still carried an unresolved <PLACEHOLDER>;
-  - F5 a worker card finished having attached nothing and staged nothing.
+  - F5 a worker card finished leaving NO trace: nothing attached, nothing staged, no
+    result to report either;
 
 Usage: mission/doc-chain.py --runs <board-runs-dir> [--json]
 Exit: 0 clean, 1 any FAIL, 2 usage/no log.
@@ -143,10 +144,17 @@ def analyze(recs, runs_dir=None):
             findings.append(f"F4 {code} lane {lane}: filed body still names {ph}")
         done = dones.get(r["card_id"], {})
         produced = {"attached": done.get("attached", []), "staged": done.get("staged", [])}
+        # F5 is about a card that left NO trace at all. Nothing attached and nothing
+        # staged is a verified NO CHANGE when the card says so in its result — the worker
+        # contract calls that a valid ending, and the result is the evidence the reviews
+        # judge. (2026-09-13: C1 concluded exactly that; the empty `patch.diff` this used
+        # to require was ceremony, not evidence, and a worker that skipped it failed the
+        # audit for having done the right thing.)
         if base_code(code) in WORKER_CODES and done \
-                and not produced["attached"] and not produced["staged"]:
-            findings.append(f"F5 {code} lane {lane}: finished with nothing attached "
-                            f"and nothing staged")
+                and not produced["attached"] and not produced["staged"] \
+                and not str(done.get("result") or "").strip():
+            findings.append(f"F5 {code} lane {lane}: finished with nothing attached, "
+                            f"nothing staged and no result")
         verdict = done.get("verdict", "")
         if verdict == "REJECT" and not [w for w in reworks if w.get("lane") == lane]:
             # A verdict that returned the work must have a round behind it: a

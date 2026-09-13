@@ -220,7 +220,8 @@ promised to survive. Outside those roots the board touches nothing.
   filesystem and exits 1 on: a named document that is missing (F1); one a card reads
   but that was written after it started (F2); one written before the run began — a
   previous run's leftover (F3); an unresolved placeholder in a filed body (F4); a
-  worker that attached and staged nothing (F5); a REJECT with no round filed (F6 — what
+  worker that left no trace at all — nothing attached, nothing staged, no result (F5);
+  a REJECT with no round filed (F6 — what
   an invisible stall looks like). `--history` counts reviews and reworks.
 
 ## Known traps

@@ -1442,7 +1442,21 @@ def record_chain_done(state):
         result = (card.get("result") or "").strip()
         attached = [a for a in attached if a]
         # What a review DECIDED belongs in the chain next to what it was given:
-        # a verdict is the one hand-off that can send work backwards.
+        # a verdict is the one hand-off that can send work backwards. A reviewer that
+        # completes through the tool's `summary` (its schema prefers it over the legacy
+        # `result`) leaves `result` empty, and the prose then lives in the CLOSING RUN's
+        # summary — the same fallback the gate reads, so the ledger and the gate never
+        # disagree about what was decided. Only a completed run counts: the parking block
+        # is a run here too.
+        if code.lower().startswith(VERDICT_CODES) and not result:
+            try:
+                closed = [r for r in runs_util.board_runs(BOARD, card["id"])
+                          if r.get("outcome") == "completed"]
+            except Exception:
+                closed = []
+            if closed:
+                last = max(closed, key=lambda r: r.get("ended_at") or 0)
+                result = (last.get("summary") or "").strip()
         verdict = ""
         if code.lower().startswith(VERDICT_CODES):
             verdict = "REWORK" if is_rework(result) else verdict_token(result)
@@ -2022,10 +2036,16 @@ def block_reason(card):
 
 
 def is_parked(card):
-    """Parked, not stuck: the driver's own 'awaiting lane activation' block,
-    which is the parking brake on lanes not yet open — never human attention."""
+    """Parked, not stuck: the board's own parking brake on lanes not yet open.
+
+    `file_board` files every card blocked at birth (`create --initial-status
+    blocked`, whose block event carries reason `initial_status`); a board filed by
+    the older two-call path carries 'parked: awaiting lane activation'. Both are the
+    board's own doing and neither wants a human, so both are excluded from the
+    stuck-card counts."""
     p = _blocked_event_payload(card["id"])
-    return bool(p) and "awaiting lane activation" in str(p.get("reason") or "")
+    reason = str((p or {}).get("reason") or "")
+    return bool(p) and ("awaiting lane activation" in reason or reason == "initial_status")
 
 def notify_deadman(state):
     stuck = [f"{t.split(':')[0]}" for t, c in state.items()
@@ -2587,9 +2607,9 @@ _DEADMAN_STUCK = [frozenset()]   # the stuck set last notified, so one stall is 
 def deadman_check():
     """Notify instead of a silent stall: two or more cards blocked on needs_input.
 
-    'parked: awaiting lane activation' is filed with kind needs_input on every
-    NOT-yet-open lane card — the parking brake, not human attention — so parked cards
-    are excluded, or the deadman fires on a healthy parked board every tick. Notified
+    Every not-yet-open lane card is filed blocked (`create --initial-status
+    blocked`) — the parking brake, not human attention — so parked cards are
+    excluded, or the deadman fires on a healthy parked board every tick. Notified
     once per distinct stuck set, and a failed board read is logged, never raised: the
     loop's own try does not cover this call.
     """

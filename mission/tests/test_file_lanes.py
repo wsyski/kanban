@@ -48,9 +48,6 @@ class FakeKb:
     def created(self):
         return [a for a in self.calls if a[0] == "create"]
 
-    def blocked_ids(self):
-        return [a[3] for a in self.calls if a[0] == "block"]
-
     def parent_of(self, title):
         for a in self.created():
             if a[1] == title and "--parent" in a:
@@ -112,34 +109,44 @@ def test_the_goal_judge_is_the_default_for_a_worker_card(monkeypatch, tmp_path):
             assert not a[1].startswith(("RV", "Gi", "Gp", "Gc")), a
 
 
-def test_every_card_is_blocked(monkeypatch, tmp_path):
-    """The whole board sits parked: nothing is `todo`, so the dispatcher can
-    never claim a card the driver has not activated."""
+def test_every_card_is_filed_parked(monkeypatch, tmp_path):
+    """The whole board sits parked, and it is parked BY THE CREATE CALL: nothing is
+    `ready` for even an instant, so a live dispatcher can never claim a card the
+    driver has not activated. The second call this used to make — create `ready`,
+    then block — left a window: on 2026-09-13 the dispatcher claimed P1 through it
+    and spawned its worker 28 s before the lane opened (F2)."""
     fake, made = file_two_lanes(monkeypatch, tmp_path)
-    assert sorted(fake.blocked_ids()) == sorted(made.values())
+    created = fake.created()
+    assert len(created) == len(made)
+    for a in created:
+        assert a[a.index("--initial-status") + 1] == "blocked", a
+    assert not [a for a in fake.calls if a[0] == "block"], \
+        "the parking is part of the create call; a separate block reopens the window"
 
 
 def test_no_card_is_created_with_a_parent(monkeypatch, tmp_path):
     """block_task only transitions ready/running cards, so a card created with a
-    parent is `todo` and its block silently no-ops. Edges are added afterwards."""
+    parent is `todo` and its parking silently no-ops. Edges are added afterwards."""
     import lanes
     fake, _ = file_two_lanes(monkeypatch, tmp_path)
     assert all("--parent" not in a for a in fake.created())
 
 
-def test_each_card_is_blocked_before_it_is_linked(monkeypatch, tmp_path):
-    """Ordering is the whole point: linking a card before blocking it makes it
-    `todo`, the block no-ops, and the dispatcher can claim it."""
+def test_each_card_is_parked_before_it_is_linked(monkeypatch, tmp_path):
+    """Ordering is the whole point: linking a card before it is parked makes it
+    `todo`, and a `todo` card is not sticky — recompute_ready releases it. The
+    parking rides inside the create call, so the invariant reads "no edge before
+    every card is filed"."""
     fake, _ = file_two_lanes(monkeypatch, tmp_path)
-    blocked_at = {}
+    filed_at, n = {}, 0
     for i, a in enumerate(fake.calls):
-        if a[0] == "block":
-            blocked_at[a[3]] = i
+        if a[0] == "create":
+            n += 1
+            filed_at["t_%03d" % n] = i      # FakeKb hands back ids in create order
     for i, a in enumerate(fake.calls):
         if a[0] == "link":
-            parent, child = a[1], a[2]
-            assert blocked_at.get(child, 10**9) < i, f"{child} linked before blocked"
-            assert blocked_at.get(parent, 10**9) < i, f"{parent} linked before blocked"
+            for cid in (a[1], a[2]):
+                assert filed_at[cid] < i, f"{cid} linked before it was parked"
 
 
 def test_intra_lane_edges_are_linked(monkeypatch, tmp_path):

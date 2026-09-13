@@ -263,11 +263,14 @@ def test_plan_review_stays_inside_this_lane():
     assert "not this lane's to judge" in text
 
 
-def test_worker_bodies_send_their_report_to_the_result_field():
-    """The `kanban_complete` tool's schema prefers `summary`, and every worker
-    card on the 2026-09-11 run reported there — its result stayed empty while the
-    body asked for `--result`. One fragment states the field for all five."""
-    for body in ("i-body.txt", "p-body.txt", "tw-body.txt", "c-body.txt", "ti-body.txt"):
+def test_every_report_body_sends_its_report_to_the_result_field():
+    """The `kanban_complete` tool's schema prefers `summary`, and every worker card
+    on the 2026-09-11 run reported there — its result stayed empty while the body
+    asked for `--result`. One fragment states the field for all of them, reviews
+    included: a review whose verdict landed in the summary leaves the gate it guards
+    holding forever, with nothing readable to act on (RVa1, 2026-09-13)."""
+    for body in ("i-body.txt", "p-body.txt", "tw-body.txt", "c-body.txt", "ti-body.txt",
+                 "rvp-body.txt", "rva-body.txt", "rvc-body.txt"):
         assert "<RESULT_FIELD>" in read(body), body
 
 

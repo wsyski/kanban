@@ -206,14 +206,23 @@ def file_board(board, repo, workdir, lane_count, key_prefix, max_runtime=None,
     Every lane is filed IT-complete; pruning happens at unblock time, when the
     lane's idea is known (spec D8).
 
-    Cards are created parentless, blocked, and only THEN linked. That order is
-    forced by hermes: block_task transitions only `running`/`ready` cards
-    (kanban_db.py), so a card created with --parent is `todo` and silently
-    refuses to block. A card left unblocked is not merely untidy — recompute_ready
-    promotes any non-sticky card once its parents finish, so a worker could claim
-    it before the driver ever resolved that lane. Parentless cards are `ready` at
-    creation, the block takes, and it is sticky: only an explicit unblock releases
-    it, and the driver's promotion loop is the only thing that issues one.
+    Cards are filed ALREADY BLOCKED (`create --initial-status blocked`), parentless,
+    and only THEN linked. Both halves are forced by hermes:
+
+    - The block must be part of the create call. Creating a card `ready` and
+      blocking it with a second call leaves a window a live dispatcher can claim
+      through — 2026-09-13 it claimed P1 and spawned its worker 28 s BEFORE the lane
+      opened, so the card started with no IDEA snapshot on disk (the chain reports
+      it as F2). `--initial-status blocked` records the same sticky block in the same
+      write, and the card never passes through `ready` at all.
+    - Edges come after. block_task transitions only `running`/`ready` cards
+      (kanban_db.py), so a card created with --parent is `todo` and silently refuses
+      to block.
+
+    A parked card stays parked: recompute_ready promotes any non-sticky card once
+    its parents finish, so an unblocked card could be claimed before the driver ever
+    resolved that lane. Only an explicit unblock releases a parked card, and the
+    driver's promotion loop is the only thing that issues one.
 
     So the whole board sits parked until the driver activates a lane, and every
     hand-off is the driver's decision rather than the dispatcher's.
@@ -249,6 +258,7 @@ def file_board(board, repo, workdir, lane_count, key_prefix, max_runtime=None,
             args = ["create", card["title"], "--body", body,
                     "--assignee", card["assignee"], "--workspace", f"dir:{workdir}",
                     "--max-runtime", runtime, "--max-retries", str(retries),
+                    "--initial-status", "blocked",
                     "--idempotency-key", f"{key_prefix}-{card['id']}",
                     "--created-by", "coder", "--json"]
             if card["skill"]:
@@ -260,11 +270,10 @@ def file_board(board, repo, workdir, lane_count, key_prefix, max_runtime=None,
                                     max_turns=goal_max_turns)
             cid = json.loads(kb(board, *args))["id"]
             made[card["id"]] = cid
-            kb(board, "block", "--kind", "needs_input", cid,
-               "parked: awaiting lane activation")
-        # edges last, so every card was `ready` when it was blocked. A card may wait
-        # on more than one parent (the fork: RVa waits for TW and C), so this loops
-        # rather than taking a single edge.
+        # edges last, so every card was parked when it was linked — a card that is
+        # `todo` because of a parent is not sticky. A card may wait on more than one
+        # parent (the fork: RVa waits for TW and C), so this loops rather than taking
+        # a single edge.
         for card in cards:
             for parent in card["parents"]:
                 kb(board, "link", made[parent], made[card["id"]])

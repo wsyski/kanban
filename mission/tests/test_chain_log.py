@@ -96,6 +96,28 @@ def test_a_review_verdict_reaches_the_chain_and_the_ledger(monkeypatch, tmp_path
     assert "no plan-named file" in led[0]["text"]
 
 
+def test_a_review_whose_result_is_empty_takes_its_verdict_from_the_run_summary(monkeypatch, tmp_path):
+    """A reviewer can complete through the tool's `summary` — its schema prefers it over
+    the legacy `result` — and the verdict then lives in the CLOSING RUN's summary. The
+    gate already reads it there (`latest_verdict_card`); the chain and the ledger must not
+    disagree with the gate about what was decided. Only a completed run counts: the
+    parking block is a run too, and its summary once masqueraded as a verdict.
+    (RVp1, 2026-09-13.)"""
+    path = _ledger_env(monkeypatch, tmp_path)
+    st = {lanes.card_title("RVp", 1): {
+        "id": "t_rvp", "status": "done", "title": lanes.card_title("RVp", 1), "result": ""}}
+    monkeypatch.setattr(run, "kb", lambda *a, **k: '{"events": []}')
+    monkeypatch.setattr(run.runs_util, "board_runs", lambda board, cid: [
+        {"outcome": "blocked", "summary": "parked: awaiting lane activation", "ended_at": 100},
+        {"outcome": "completed", "summary": "PASS: checklist 1-8 hold.", "ended_at": 200},
+    ])
+    run.record_chain_done(st)
+    done = [r for r in _recs(tmp_path) if r["event"] == "done"]
+    assert done and done[0]["verdict"] == "PASS", done
+    led = _lines(path)
+    assert led and led[0]["verdict"] == "PASS" and "checklist 1-8" in led[0]["text"], led
+
+
 def test_a_worker_card_carries_no_verdict(monkeypatch, tmp_path):
     """'4/4 GREEN' is not a verdict, and a coder's result is not a review."""
     path = _ledger_env(monkeypatch, tmp_path)

@@ -26,7 +26,7 @@ def touch(path, seconds):
 
 
 def chain(tmp_path, refined_at=60, plan_at=240, unresolved=None, attached=("t_i1.patch",),
-          done=True, staged=("boards/b/work/is_even.py",)):
+          done=True, staged=("boards/b/work/is_even.py",), result="a plan"):
     docs = {"REFINED": str(tmp_path / "refined.md"), "PLAN": str(tmp_path / "plan.md")}
     touch(docs["REFINED"], refined_at)
     touch(docs["PLAN"], plan_at)
@@ -46,7 +46,7 @@ def chain(tmp_path, refined_at=60, plan_at=240, unresolved=None, attached=("t_i1
     if done:
         recs.append({"ts": at(380), "event": "done", "lane": 1, "code": "P1", "card_id": "t_p",
                      "title": "P1: implementation plan - lane 1", "status": "done",
-                     "attached": list(attached), "staged": list(staged), "result": "a plan"})
+                     "attached": list(attached), "staged": list(staged), "result": result})
     (tmp_path / "chain.jsonl").write_text("\n".join(json.dumps(r) for r in recs) + "\n")
     return recs
 
@@ -158,9 +158,21 @@ def test_an_unresolved_placeholder_in_the_filed_body_is_caught(tmp_path):
     assert any(f.startswith("F4") and "<REFINED>" in f for f in findings_for(tmp_path))
 
 
-def test_a_worker_that_produced_nothing_is_caught(tmp_path):
-    chain(tmp_path, attached=(), staged=())
+def test_a_worker_that_left_no_trace_is_caught(tmp_path):
+    """Nothing attached, nothing staged, and no result either: the card left no
+    evidence anywhere."""
+    chain(tmp_path, attached=(), staged=(), result="")
     assert any(f.startswith("F5") for f in findings_for(tmp_path))
+
+
+def test_a_verified_no_change_report_is_not_a_missing_artifact(tmp_path):
+    """A card whose REPORT is its evidence: nothing attached and nothing staged
+    because the right answer was that what is already there satisfies the idea — an
+    ending the worker contract names as valid. (2026-09-13's C1 concluded exactly
+    that and was flagged for having done the right thing.)"""
+    chain(tmp_path, attached=(), staged=(),
+          result="NO CHANGE: verified is_even.py already holds the exact function")
+    assert not [f for f in findings_for(tmp_path) if f.startswith("F5")]
 
 
 def test_the_cli_exits_nonzero_on_a_broken_chain(tmp_path, capsys):
