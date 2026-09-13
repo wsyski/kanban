@@ -428,6 +428,16 @@ and is one more thing to drift — so the readers read the runs themselves:
     mission/timing-report.py --board <slug>
     mission/runs-report.py --board <slug>                      # what runs/ holds, newest first
 
+The workers' own sessions are not in `runs/`. Each card's worker runs in its assignee
+profile's session store, tagged `source=kanban` and titled `Work kanban task <task-id>`.
+Hermes Desktop hides them from every session list, the Bots tab included, so read them
+with the CLI:
+
+    hermes -p coder sessions list --source kanban --limit 20
+    hermes -p coder sessions export --session-id <id> --format html <file>.html
+    hermes -p coder sessions export --session-id <id> --format md [<dir>]   # default <hermes home>/session-exports
+    hermes kanban --board <slug> show <task-id>                             # which card a task id is
+
 **Audit every run; that is the loop's stopping rule.** `run-audit.py` exits 0 only
 when a finished run has no errors and no warnings — it reads the driver log
 (terminal state, error vocabulary, held gates), `run-summary.json` (gate wording,
