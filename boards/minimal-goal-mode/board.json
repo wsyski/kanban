@@ -7,5 +7,7 @@
   "auto-gates": true,
   "goal": true,
   "max-runtime": "6m",
-  "max-reworks": 2
+  "max-reworks": 2,
+  "model_override": "glm-5.3-flash",
+  "provider_override": "opencode-go"
 }

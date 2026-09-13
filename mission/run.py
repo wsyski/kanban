@@ -1058,12 +1058,14 @@ def open_lane(state, lane):
             card = live_card(state, code, lane)
             if card and card["status"] != "done":
                 kb("archive", card["id"])
+                card["status"] = "archived"  # later steps of this open read the same state
                 log(f"LANE {lane}: refinement=no — archived {code}{lane}")
     if not opts["integration-tests"]:
         for code in lanes.IT_CODES:
             card = live_card(state, code, lane)
             if card and card["status"] != "done":
                 kb("archive", card["id"])
+                card["status"] = "archived"
                 log(f"LANE {lane}: integration-tests=no — archived {code}{lane}")
         gc = live_card(state, "Gc", lane)
         rva = live_card(state, "RVa", lane)
@@ -1095,6 +1097,7 @@ def open_lane(state, lane):
         rva = live_card(state, "RVa", lane)
         if tw and tw["status"] != "done":
             kb("archive", tw["id"])
+            tw["status"] = "archived"
             log(f"LANE {lane}: unit-tests=no — archived TW{lane}")
         if tw and rva:
             try:

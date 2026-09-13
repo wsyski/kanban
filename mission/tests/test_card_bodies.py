@@ -294,5 +294,5 @@ def test_every_worker_and_verdict_body_carries_the_worker_contract():
         assert "<WORKER_CONTRACT>" in read(body), body
     text = read("_worker-contract.txt")
     for rule in ("kanban.db", "tool_search", "request-review", "block", "memories", "skills",
-                 "/opt/backup/agents/", "full sentences"):
+                 "/opt/backup/agents/", "full sentences", "-p no:cacheprovider"):
         assert rule in text, rule

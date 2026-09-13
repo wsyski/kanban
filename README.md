@@ -26,12 +26,17 @@ lane shape and its ceilings — is the table; how its runs went is not kept here
 
 | board | idea | lanes | gates |
 |---|---|---|---|
-| `minimal-development` | one Python function (`is_even`) and its tests — the cheap smoke board, no build tool, no dependencies. Also the board that exercises the **judge's model** (`"model_override": "glm-5.3-flash"`) | 1 | auto, **4 min/card** |
+| `minimal-development` | one Python function (`is_even`) and its tests — the cheap smoke board, no build tool, no dependencies | 1 | auto, **4 min/card** |
 | `roman-evaluator-js` | a browser page: `roman-evaluator.html`, a DOM-free parsing module with unit tests, `run.sh`, two launch modes | 1 | auto, **10 min/card** |
 | `roman-evaluator-java` | the same problem twice: a roman CLI (`roman-cli/`) then a spec-first Spring Boot service (`roman-service/`) consuming lane 1's rule; needs JDK 17, Maven, a warm `~/.m2` | 2 | auto, **10 min/card** |
 | `portfolio-engineering` | a GPW small-cap research pipeline installed into the Hermes `trader` profile | 1 | auto, 60 min/card (default) |
 | `minimal-goal-mode` | the same shape as `minimal-development` (one Python function, `sign`) with **`goal: true`** — the cheap probe for whether this machine's goal judge works at all | 1 | auto, 6 min/card |
 | `blade-workspace` | a documentation pass on an **external** project: `default-workdir` points at a repository this repo does not contain. Built without refinement, unit or integration tests (`"refinement": false`, `"unit-tests": false`, `"integration-tests": false`), so its lane is just `P RVp Gp C RVa Gc` | 1 | auto, 10 min/card |
+
+Every shipped board pins its review cards (`RVp`, `RVa`, `RVc` and their rework rounds) to a
+different model from the one that did the work: `"model_override": "glm-5.3-flash"` with
+`"provider_override": "opencode-go"`. Every other card runs its profile's default. A new board
+must set the pin itself; the schema has no default for it.
 
 The output of a finished run lives beside the board: `boards/<slug>/work/` — the
 deliverable, **tracked**, so the human's commit at a gate puts it in history and
