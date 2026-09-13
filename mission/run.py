@@ -2066,6 +2066,8 @@ def notify_deadman(state):
              if c["status"] == "blocked"
              and block_reason(c) == "needs_input"
              and not is_parked(c)]
+    if not stuck:
+        return          # the halt path calls this too; nothing waits on a human
     msg = f"kanban-smoke DEADMAN: {len(stuck)} cards awaiting human input: {', '.join(stuck[:6])}"
     log(msg)
     try:

@@ -554,3 +554,15 @@ def test_a_halt_stops_the_loop_before_it_can_refile(monkeypatch):
     import inspect
     src = inspect.getsource(run.main)
     assert src.index('if _HALTED["reason"]:') < src.index("adopt_and_refile(")
+
+
+def test_a_halt_with_nothing_stuck_sends_no_deadman(monkeypatch, tmp_path):
+    """The halt path calls the deadman too; with no card waiting on a human it must
+    stay quiet rather than announce '0 cards awaiting human input'."""
+    logged = []
+    monkeypatch.setattr(run, "RUN_DIR", str(tmp_path))
+    monkeypatch.setattr(run, "log", logged.append)
+    monkeypatch.setattr(run, "block_reason", lambda c: "")
+    monkeypatch.setattr(run, "is_parked", lambda c: False)
+    run.notify_deadman({"a": {"id": "a", "status": "blocked"}})
+    assert logged == [] and not (tmp_path / "deadman.txt").exists()
