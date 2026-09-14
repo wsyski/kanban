@@ -1,37 +1,42 @@
 <!-- unit-tests: false -->
-## Idea 1: README.md Improvment
+## Idea 1: Implement the `arena-site` endpoint plan
 
-The README at the root of the work directory is the stock Liferay Workspace
-template text. It describes a folder tree called `my-project` that this project
-does not have, and it says nothing about what this project actually contains.
-Replace that boilerplate with a README that describes THIS workspace.
+The workspace has a committed implementation plan with every task still open:
 
-Survey the work directory first, and write only what you found. The work
-directory here is not something a run built: it is a real project with its own
-history, and every file in it is the current version of somebody's work. The
-survey is this idea's input, not a formality, and anything the README claims has
-to be a thing you can point at in the directory.
+    docs/superpowers/plans/2026-09-14-headless-delivery-ext-arena-site.md
 
-So nothing here is ever cleared or rebuilt. On a second run the README you are
-improving is **the previous version of this deliverable** — read it, keep what is
-still true, and change what is not. A rewrite from scratch throws away the last
-run's judgement for no reason.
+Implement it, task by task, exactly as written. The plan is the deliverable's
+specification — this card adds nothing to it and changes nothing in it. Read the
+plan first, including its Global Constraints, File Structure and consumer-plan
+reference, and treat each checkbox step as: write the failing test, run it, make
+it pass, stage.
 
-Keep the parts of the stock README that are still true (the upstream Liferay
-Workspace documentation link, the local-run instructions if they match this
-project's setup) and drop the parts that are not.
+Ground rules this card enforces beyond the plan:
 
-Do not build. No Gradle, no Docker, no bundle, no test run — this idea is a
-documentation pass on an existing tree, and the toolchain is deliberately out of
-scope. Do not touch any file other than the root README.
+- Work on the current branch (`feature/PLCB-25380`). The plan and the workspace
+  `AGENTS.md` both say stage only — the driver never commits and never moves a
+  branch; the human commits at a gate.
+- Do not edit, reflow or re-copy the plan file. Checkboxes in it may be ticked
+  as tasks complete — that tracking is the plan's own convention — but its
+  prose, code blocks and constraints stay byte-identical.
+- The plan's pre-flights are real: `git status --short` clean before starting
+  (this card is the only pending edit), `LIFERAY_BASE_URL`/Tomcat state before
+  any `testIntegration` run. If a pre-flight fails, stop and park the card with
+  what you found, do not work around it.
+- If a verification step in the plan cannot pass for an environmental reason
+  (portal not buildable, Elasticsearch sidecar port taken), stop at that step,
+  report exactly which step and why, and leave the index holding only the tasks
+  that genuinely finished. Partial staging that the plan did not sanction is a
+  rework, not progress.
 
 ### Done means
 
-- The root `README.md` describes this workspace's real contents: the module it
-  actually ships and that module's sub-projects, the configuration environments
-  under `configs/`, and the other top-level directories that carry content.
-- The stock `my-project` folder-tree diagram is gone, or replaced by one that
-  matches the directory it sits in.
-- Every path the README names exists in the work directory.
-- The README is the only file this idea changes. Nothing else is staged, and
-  nothing is committed.
+- Every checkbox in the plan file is ticked, in the plan file itself.
+- Unit tests, integration tests and the Postman collection run all pass as the
+  plan's steps demand, and the testable Tomcat is stopped afterwards.
+- The files the plan's File Structure table names are staged in the workspace
+  git index (plus only the generated, tracked files the plan expects, e.g.
+  `arena-site.properties`) — nothing else, nothing committed.
+- No generated path is hand-edited and no file outside the plan's table was
+  touched; `git status --short` in the workspace shows exactly the intended
+  staged set and nothing unstaged-or-untracked that the plan did not predict.
