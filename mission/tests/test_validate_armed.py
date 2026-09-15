@@ -27,6 +27,41 @@ def _fixture(monkeypatch, tmp_path, manifest=None):
     return comments
 
 
+RAW = ("RAW IDEA for lane 1 — human input, not a work card.\n---\n"
+       "## Idea 1: x\n\ntext\n")
+
+
+def _idea_state(status, body, assignee=None):
+    return {"Idea 1: x": {"id": "t_idea", "status": status,
+                          "assignee": assignee, "body": body}}
+
+
+def test_a_blocked_arm_card_is_read_as_an_idea(monkeypatch, tmp_path):
+    """`mission/arm.sh` files its card blocked, because a `ready` card carrying no
+    assignee is claimed by the dispatcher (`kanban.default_assignee`) and WORKED while the
+    driver is reading the same card as the idea — on 2026-09-15 a coder worker built the
+    whole is-even deliverable off the arm card within the minute."""
+    _fixture(monkeypatch, tmp_path)
+    armed = run.armed_ideas(_idea_state("blocked", RAW))
+    assert [a[0] for a in armed] == [1], armed
+    assert "## Idea 1" in armed[0][1]
+
+
+def test_a_blocked_card_without_the_marker_is_left_alone(monkeypatch, tmp_path):
+    """`blocked` is also the human brake and where a worker parks a card: only a card
+    that says RAW IDEA is an idea."""
+    _fixture(monkeypatch, tmp_path)
+    assert run.armed_ideas(_idea_state("blocked", "parked by hand")) == []
+    assert run.armed_ideas(_idea_state("blocked", RAW, assignee="coder")) == []
+
+
+def test_the_two_dashboard_gestures_are_both_read(monkeypatch, tmp_path):
+    """The drag leaves the card in `todo` and the panel's `→ ready` button in `ready`."""
+    _fixture(monkeypatch, tmp_path)
+    assert [a[0] for a in run.armed_ideas(_idea_state("todo", RAW))] == [1]
+    assert [a[0] for a in run.armed_ideas(_idea_state("ready", RAW))] == [1]
+
+
 def test_a_clean_idea_passes(monkeypatch, tmp_path):
     _fixture(monkeypatch, tmp_path)
     armed = [(1, "<!-- auto-gates: true -->\n## Idea\n\nbody\n\n"

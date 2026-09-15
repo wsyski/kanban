@@ -88,8 +88,14 @@ def test_a_board_can_turn_a_test_level_off_for_every_lane():
     `\"goal\": true` and a cloud model, which also set this level false. It was removed as
     redundant: it is the SAME idea, so a probe changes `is-even`'s own parameters before
     the run (DESIGN.md, *Probing it*) instead of carrying a second board for it.
+
+    `arena-federated-search` sets the same level false for the opposite reason: its idea
+    is a committed plan whose every `Run:` step is `mvn … test`, so an integration card
+    would have nothing the plan demands to run — while this project's integration tests
+    are `newman` collections needing a running service. Two boards, one door: the level
+    follows the plan, not the project's opinions about testing.
     """
-    for slug in ("is-even",):          # every shipped board with a board-level false
+    for slug in ("is-even", "arena-federated-search"):   # every board with a level false
         cfg = json.load(open(os.path.join(BOARDS, slug, "board.json")))
         assert cfg["integration-tests"] is False, (slug, cfg)
         for lane, path in ideas(slug):

@@ -75,6 +75,20 @@ def flat_leftovers(runs):
     return out
 
 
+def never_opened_a_lane(path):
+    """A run the driver only re-joined, before a later filing minted the one that ran.
+
+    `open_lane` writes the lane's snapshot before it unblocks anything, and the
+    researcher's `artifacts/` follows; a directory with neither never held a lane.
+    blade-workspace left one on 2026-09-15 — `…094225`, 12 archived cards and no lane,
+    superseded when the arm minted `…094418`. Reported here, never removed.
+    """
+    snaps = os.path.join(path, "snapshots")
+    if os.path.isdir(snaps) and any(f.startswith("lane-") for f in os.listdir(snaps)):
+        return False
+    return not os.path.isdir(os.path.join(path, "artifacts"))
+
+
 def runs_in(runs):
     """Every run directory, newest first, with what it costs and what it holds."""
     live = current_run(runs)
@@ -93,6 +107,7 @@ def runs_in(runs):
             "scratch_bytes": dir_size(scratch) if os.path.isdir(scratch) else 0,
             "modified": datetime.datetime.fromtimestamp(
                 os.path.getmtime(path)).isoformat(timespec="seconds"),
+            "superseded": never_opened_a_lane(path),
             "path": path,
         })
     if not out and os.path.isdir(runs) and os.listdir(runs):
@@ -150,6 +165,9 @@ def main(argv=None):
         mark = " *" if r["current"] else "  "
         print(f"{mark}{r['run']:32} {_size(r['bytes']):>7} "
               f"{_size(r['scratch_bytes']):>8}  {r['modified']}")
+        if r.get("superseded"):
+            print("                        no lane ever opened — a filing a later arm "
+                  "superseded")
     if any(r["current"] for r in rows):
         print("\n* the current run — the driver is writing here.")
     # Never offer to delete a flat layout: runs/ itself holds the driver's log and

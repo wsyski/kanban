@@ -26,6 +26,7 @@ how its runs went is not kept here — the runs describe themselves (§4).
 | `roman-evaluator-java` | the same problem twice: a roman CLI (`roman-cli/`) then a spec-first Spring Boot service (`roman-service/`) consuming lane 1's rule; needs JDK 17, Maven, a warm `~/.m2` | 2 | auto, 20 min |
 | `portfolio-engineering` | a GPW small-cap research pipeline built into the Hermes `trader` profile (external `default-workdir`) | 1 | human, 60 min (default) |
 | `blade-workspace` | implements a committed plan, task by task, in an **external** repository (`default-workdir`): refinement, unit and integration tests on, the goal judge off, human gates | 1 | human, 60 min |
+| `arena-federated-search` | the same shape against a second **external** repository: a Maven/Spring Boot multi-module service whose plan is all `mvn … test`, so unit tests are on and integration tests off (no `TI`/`RVc`); the goal judge off, human gates | 1 | human, 60 min |
 
 Every shipped board pins its review cards (`RVp`, `RVa`, `RVc` and their rework rounds)
 to a different model from the one that did the work — `"model_override":
@@ -126,6 +127,7 @@ Create and serve:
     $EDITOR boards/<s>/lane-1.md              # optional: prefill the idea
     mission/create-board.sh --board boards/<s>
     mission/start-board.sh --slug <s>         # serves; releases nothing yet
+    mission/arm.sh <s> [lane]                 # or drag the Triage card — same go signal
 
 `mission/create-board.sh --help` is authoritative (including the empty board you get
 with `--slug`/`--title` instead of `--board`). There is no import step and no second
@@ -143,7 +145,10 @@ driver has written into is never reused: paste its id into `start-board.sh` inst
 board from `http://127.0.0.1:9119/kanban`:
 
 1. Write the idea into the board's Triage card — edit it right there.
-2. **Drag it from Triage to Todo.** That is the go signal, and the only one.
+2. **Drag it from Triage to Todo.** That is the go signal, and the only gesture — a shell
+   makes the same one with `mission/arm.sh <slug> [lane]`, which creates an unassigned card
+   in `todo` carrying the idea (`armed_ideas` reads either, because what it tests is that an
+   unassigned card has left Triage).
 3. The driver validates the card's headers and the board's manifest, adopts the text
    into `lane-<k>.md`, mints `runs/<run-id>/`, archives the previous run's cards, files
    a fresh lane set, and drives it. If validation fails it files nothing and comments
@@ -468,4 +473,4 @@ by every board — nothing scenario-specific to write per idea. To run new work:
 
 Only touch `mission/card-bodies/` or `mission/lanes.py` when the card graph itself must
 change (a new role, a new gate) — that changes every board, not just one idea. See
-`boards/` for five worked examples.
+`boards/` for six worked examples.

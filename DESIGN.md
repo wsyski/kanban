@@ -258,8 +258,10 @@ polling would hide the stall.
 ### The goal judge
 
 - **Two different models.** The *goal judge* is the auxiliary task `auxiliary.goal_judge`.
-  With no `auxiliary:` override in the profile's `config.yaml` it runs on the worker's
-  profile model — and so, transitively, on the board's `model` when the worker runs one.
+  It runs on the worker's profile model only where nothing pins it: a managed pin decides
+  for every profile and a per-profile `auxiliary.goal_judge` cannot override it — the
+  managed layer here (`/etc/hermes/config.yaml`) sets `provider: opencode-go`, `model:
+  glm-5.3-flash`, so that is what judges, whatever the profile or the board's `model` say.
   The *review model* is `model_override`/`provider_override`, set on the review cards
   only (`lanes.JUDGE_CODES`, `lanes.model_args`). Pinning the review model does not move
   the goal judge.
@@ -522,6 +524,25 @@ later failure and label every later halt.
 
 Each is current behaviour, with what to do about it.
 
+- **The dashboard cannot complete a card from the desktop app.** `Complete` asks for the
+  completion summary with `window.prompt` (a documented carve-out in the kanban plugin bundle,
+  `dist/index.js`, because the host's `ConfirmDialog` cannot stay open across a validation
+  failure), and `window.prompt` is not implemented in Electron — it returns `null`, which the
+  flow reads as *cancel*, so the click produces no dialog, no error and no request. Use a
+  browser on `http://127.0.0.1:9119/kanban`, or the CLI: `hermes kanban --board <b> complete
+  <id> --result "…"` needs no summary at all.
+- **Arming a board has no CLI subcommand.** The driver reads a Triage card as armed
+  once it is out of `triage` and unassigned (`armed_ideas`), which the dashboard offers
+  as the panel's `→ ready` button or a drag to Todo — but `hermes kanban promote` refuses
+  a `triage` card, and so do `block` and `schedule`, so no subcommand can make that
+  gesture. `mission/arm.sh <slug> [lane]` reaches the state the other way round: it
+  archives the board's seeded Triage card and creates an unassigned card in `blocked`
+  whose body is the lane's idea in the shape `file_ideas` writes — `blocked` because a
+  `ready` card is claimed by the dispatcher (`kanban.default_assignee`) and WORKED while
+  the driver reads it as an idea, which is what happened on the first arm attempt
+  (2026-09-15). `armed_ideas` accepts a blocked card only with the marker, so a card a
+  person parked by hand is still ignored.
+
 - **A worker that cannot complete is told the wrong reason.** `kanban_complete`
   refuses an unsatisfied-parent card with *"unknown id or already terminal"*, neither
   of which is true, and a worker hunts for `--force` flags that do not exist. Check
@@ -594,7 +615,8 @@ Each is current behaviour, with what to do about it.
   `runs/<run-id>/timing-report-lane-<k>.txt`: the gate is where you decide whether to
   commit, so the lane's cost must be readable while it can still change the decision.
 - On completion it writes `runs/<run-id>/run-summary.json`: per-card agent minutes,
-  wall and overhead totals, gate results. Because a lane forks (`TW ∥ C`),
+  wall and overhead totals, gate results (the driver's evidence for opening each
+  gate, then the gate-holder's own result). Because a lane forks (`TW ∥ C`),
   `agent_work_min` is the SUM (what a per-card ceiling is measured against),
   `agent_union_min` is the minutes work was in flight (sum minus `overlap_min`), and
   `overhead_min` is wall time nobody worked, measured against the union so two cards

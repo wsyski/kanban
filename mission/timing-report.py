@@ -23,7 +23,10 @@ import lanes  # noqa: E402  — card code -> role, so roles are never hardcoded 
 import runs_util  # noqa: E402  — runs parsing shared with the driver
 
 ROLE = {row[0]: row[2] for row in lanes.LANE_CARDS}
-_CODE_RE = re.compile(r"^([A-Za-z]+)\d+:")
+# A rework round's title carries a round suffix — "TI1-rev-1: …", "RVa1-r2: …" — and the
+# old pattern failed on it, so the role table bucketed those cards as "?" (20.2 of the
+# blade-workspace run's 94 min on 2026-09-15). The suffix is not part of the code.
+_CODE_RE = re.compile(r"^([A-Za-z]+)\d+(?:-(?:rev|r)\d+)?:")
 _LANE_RE = re.compile(r"- lane (\d+)$")
 
 

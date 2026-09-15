@@ -258,6 +258,38 @@ def test_the_driving_process_still_writes_the_summary(monkeypatch, tmp_path):
     assert json.load(open(path))["wall_min"] != 28.4
 
 
+def test_a_human_gate_records_the_drivers_evidence_beside_the_holders_words(monkeypatch, tmp_path):
+    """E4 reads the summary's gate text for "verdict PASS" (Gp, Gc) and "refined
+    idea present" (Gi). With `auto-gates` on the driver writes the result and both
+    are already inside it; a human gate-holder writes "Accepted" instead — their
+    decision, not the evidence that opening the gate was legal. Recording only that
+    made blade-workspace's 2026-09-15 run audit two E4 errors, and that summary is
+    written once and never rewritten, so no later process could repair it."""
+    _env(monkeypatch, tmp_path)
+    (tmp_path / "runs").mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(run, "_PROCESS_RECORDED", [True])
+    monkeypatch.setattr(run, "_GATE_EVIDENCE", {"Gc1": "12 file(s) staged, verdict PASS"})
+    run.write_summary({lanes.card_title("Gc", 1):
+                       {"id": "t_gc", "status": "done", "result": "Accepted"}})
+    gates = json.load(open(tmp_path / "runs" / "run-summary.json"))["gates"]
+    assert "PASS" in gates["Gc1"] and "Accepted" in gates["Gc1"], gates
+
+
+def test_an_auto_gate_result_is_kept_verbatim(monkeypatch, tmp_path):
+    """The driver's own result already carries the evidence, so the summary keeps it
+    as it stands instead of prefixing the same evidence to it again."""
+    _env(monkeypatch, tmp_path)
+    (tmp_path / "runs").mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(run, "_PROCESS_RECORDED", [True])
+    evidence = "12 file(s) staged, verdict PASS; workdir at gate: x"
+    monkeypatch.setattr(run, "_GATE_EVIDENCE", {"Gc1": evidence})
+    result = f"auto-gate (lane 1): {evidence}. NOTHING COMMITTED."
+    run.write_summary({lanes.card_title("Gc", 1):
+                       {"id": "t_gc", "status": "done", "result": result}})
+    gates = json.load(open(tmp_path / "runs" / "run-summary.json"))["gates"]
+    assert gates["Gc1"] == result[:200], gates
+
+
 def test_a_forked_pair_counts_its_overlap_once(monkeypatch, tmp_path):
     """TW and C run together, so their minutes overlap. Summing them made the agent
     total exceed the wall and the overhead go negative — which used to read as "a

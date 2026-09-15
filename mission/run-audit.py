@@ -158,9 +158,15 @@ def summary_findings(summary, ceiling):
     for name, text in gates.items():
         code = name.rstrip("0123456789")
         if code in ("Gc", "Gp") and "PASS" not in text:
-            out.append(("ERROR", "E4", f"{name} completed without a PASS verdict: {text[:60]}"))
+            out.append(("ERROR", "E4",
+                        f"{name} completed without a PASS verdict: {text[:60]} — "
+                        "run-summary.json is written once, so this is fixed at the "
+                        "gate, not after"))
         if code == "Gi" and "refined idea present" not in text:
-            out.append(("ERROR", "E4", f"{name} completed without the refined idea: {text[:60]}"))
+            out.append(("ERROR", "E4",
+                        f"{name} completed without the refined idea: {text[:60]} — "
+                        "run-summary.json is written once, so this is fixed at the "
+                        "gate, not after"))
         if "waiting" in text:
             out.append(("ERROR", "E4", f"{name} recorded as waiting: {text[:60]}"))
     if summary.get("restarts_observed"):
@@ -309,9 +315,47 @@ def work_noise_findings(runs_dir, workdir=None):
     return out
 
 
+def _proc_state(pid):
+    """The state letter from /proc ('Z' = exited, not yet reaped), or None if unreadable."""
+    try:
+        with open(f"/proc/{pid}/status") as f:
+            for line in f:
+                if line.startswith("State:"):
+                    return line.split()[1]
+    except OSError:
+        pass
+    return None
+
+
+def worker_outlived_run(line, cards):
+    """One `pgrep` hit -> the E8 text, or None when the hit is not this run's business.
+
+    Three filters, each from a false positive the is-even run of 2026-09-15 produced — it
+    warned about a worker that had completed its card minutes earlier and left a ZOMBIE
+    behind, and a run summary is written once, so the warning could never be corrected:
+      * a zombie has exited and holds nothing; its parent has yet to reap it;
+      * a worker whose card is DONE is finishing its turn, not stranded;
+      * a worker whose card is not on this board says nothing about this run.
+    """
+    pid = (line.split() or [""])[0]
+    if pid.isdigit() and _proc_state(pid) == "Z":
+        return None
+    m = re.search(r"work kanban task (t_\w+)", line)
+    if m and cards:
+        card = next((c for c in cards if c.get("id") == m.group(1)), None)
+        if card is None:
+            return None
+        if card.get("status") in DONE_STATES:
+            return None
+        return (f"a worker outlived the run: {m.group(1)} is still "
+                f"{card.get('status')}")
+    return f"a worker outlived the run: {line[:70]}"
+
+
 def board_findings(slug, runs_dir):
     """The board's end state: a card the run did not finish, a live worker."""
     out = []
+    cards = []
     if slug:
         try:
             raw = subprocess.run(["hermes", "kanban", "--board", slug, "list", "--json"],
@@ -332,7 +376,9 @@ def board_findings(slug, runs_dir):
                                capture_output=True, text=True)
         for line in procs.stdout.splitlines():
             if line.strip():
-                out.append(("WARNING", "E8", f"a worker outlived the run: {line[:70]}"))
+                text = worker_outlived_run(line, cards)
+                if text:
+                    out.append(("WARNING", "E8", text))
     except Exception:
         pass
     return out
@@ -395,6 +441,10 @@ def report(findings, rows, stats, ceiling):
     notes = [f for f in findings if f[0] == "INFO"]
     print(f"{len(errors)} error(s), {len(warns)} warning(s)"
           + (f", {len(notes)} note(s)" if notes else ""))
+    # TIMELINE cites the doc chain per run, so the audit prints it too rather than making
+    # the operator run doc-chain.py by hand (E3 is the chain's only code).
+    print(f"doc chain: {sum(1 for f in findings if f[1] == 'E3')} finding(s) "
+          f"over {len(rows)} card(s)")
     for sev, code, text in findings:
         print(f"  {sev} {code}: {text}")
     verdicts = [r for r in rows if r.get("verdict")]

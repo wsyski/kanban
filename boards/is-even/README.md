@@ -18,9 +18,10 @@ researcher's to find — a worker's `python3` may not.
 - `"auto-gates": true` — the run is unattended: the driver completes the three gates,
   records the same evidence, and commits nothing. Set it to `false` to see what a human
   is asked at each gate.
-- `"max-runtime": "10m"` — a ceiling, not a target, and still well above the 4m a cloud run
+- `"max-runtime": "20m"` — a ceiling, not a target, and still well above the 4m a cloud run
   needs because a local model loads cold (~48 s on the 24 GB rig) and decodes at ~27 t/s. It
-  was `"20m"` until 2026-09-14, when the work model changed to `qwen38-27b` below. On an idea
+  was `"10m"` from 2026-09-14, when the work model changed to `qwen38-27b` below, and back to
+  `"20m"` on 2026-09-15. On an idea
   this small a card that needs longer is doing work the
   idea does not ask for, so the ceiling also checks the card bodies. A timed-out card is a
   hard failure: the driver halts the board, and only a review that REJECTS sends work
@@ -36,6 +37,15 @@ researcher's to find — a worker's `python3` may not.
   delete these two keys (nothing is then filed and every card runs its profile's own model)
   and put `"max-runtime"` back to `"4m"`. `"provider"` is not optional: a bare model is
   resolved against the profile's provider, which does not serve it.
+- **The 2026-09-15 local run halted on the ceiling.** `qwen38-27b` on `llama-swap`,
+  `"max-runtime": "20m"`: lane 1 opened 08:03:18, `I1` was unblocked a second later, and at
+  08:23:34 the driver halted the board — `I1: idea refinement - lane 1: elapsed 1201s > limit
+  1200s`, state left at `runs/is-even-20260915-080245`. A timed-out card is a hard failure and
+  the driver exits; this is the second measurement of the same thing, and it says 20 minutes is
+  still short of what the local model needs on the heaviest card. For contrast, `I1` cost 3.93
+  min on a cloud model in the same week (`TIMELINE.md` §8). The ceiling that keeps this board
+  cheap is therefore a ceiling a local `I1` does not reach — the cloud-only route below is what
+  a *completed* run on this board needs.
 - **The 2026-09-13 local run halted. That is the measurement, not an engine fault.** With
   `ornith-35b` on `llama-swap` the board filed and dispatched correctly — the worker
   really ran `hermes -p researcher --cli … -m ornith-35b --provider llama-swap` — and

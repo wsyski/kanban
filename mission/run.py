@@ -959,6 +959,10 @@ def gate_action(state, title, kind, lane):
                 f"staged: {', '.join(staged[:8])}")
         write_timing_report(lane)
         preserve_artifacts()
+    # What opened this gate, kept for the run summary. Recorded here and not in the
+    # branches above because a gate whose review verdict is not yet PASS returns
+    # "waiting: …" there, and a waiting string must never reach the summary (E4).
+    _GATE_EVIDENCE[title.split(":")[0]] = evidence
     if auto:
         cid = card_id(state, title)
         if state[title]["status"] == "blocked":
@@ -2790,6 +2794,32 @@ def finish_run():
     log("ALL GATES COMPLETE — scenario finished")
 
 
+def gate_summary_text(title, card):
+    """The text the run summary records for one gate: the driver's own evidence for
+    opening it, then the card's result.
+
+    Evidence first, because `run-audit.py` reads this text for "verdict PASS"
+    (Gp, Gc) and "refined idea present" (Gi). With `auto-gates` on, the driver
+    writes the result and the evidence is already inside it, so that path is
+    unchanged. A human gate-holder writes their own words instead ("Accepted") —
+    a decision, not the evidence that opening the gate was legal — and recording
+    only those words made a correctly human-gated run audit two E4 errors for
+    ever: this summary is written once per run and never rewritten (the guard in
+    write_summary), so no later process could repair it.
+    """
+    evidence = _GATE_EVIDENCE.get(title.split(":")[0]) or ""
+    result = (card.get("result") or "").strip()
+    if not evidence:
+        return result[:200]
+    if not result or evidence in result:
+        return (result or evidence)[:200]
+    # The evidence goes first (E4 reads the front of this string) but it is CAPPED, so a
+    # long evidence line cannot push the gate-holder's own verdict out of the field —
+    # which is what happened to Gc1 on is-even, 2026-09-15, where the text ended mid-
+    # sentence and "— result: Accepted" never appeared.
+    return f"{evidence[:130]} — result: {result}"[:200]
+
+
 def write_summary(state):
     """One-shot per-run summary: gate verdicts, per-card agent minutes, budget
     events, overhead ratio — one jq-able file per completed run.
@@ -2854,7 +2884,7 @@ def write_summary(state):
         "overhead_min": round(overhead, 1),
         "cards": rows,
         "restarts_observed": union > wall,
-        "gates": {t.split(":")[0]: (c.get("result") or "")[:200]
+        "gates": {t.split(":")[0]: gate_summary_text(t, c)
                   for t, c in state.items() if re.match(r"^G[ipc]\d+:", t)},
         "lanes_with_ideas": [l for l in range(1, board_lane_count(state) + 1)
                              if lane_options(l) is not None],
@@ -2874,6 +2904,10 @@ def write_summary(state):
 _TIMED = set()
 # Gates already announced this run — see gate_action.
 _ANNOUNCED = set()
+# gate code -> what opened it. E4 reads the summary's gate text for "verdict PASS"
+# (Gp/Gc) and "refined idea present" (Gi), and a human gate-holder's result is their
+# decision, not that evidence — see gate_summary_text.
+_GATE_EVIDENCE = {}
 _WAITING = {}
 
 # The triage card body file_ideas writes always opens with this line, so a card
@@ -2914,11 +2948,14 @@ def armed_ideas(state):
     is the discoverable one (there is no `→ todo` button) and the drag is what
     a kanban habit reaches for.
 
-    Being unassigned is what makes that safe. Every lane card carries an
-    assignee and passes through `ready` on its way to a worker; an idea card
-    has none, which is also why the dispatcher cannot claim one however it is
-    moved. Without that test a lane card sitting in `ready` would be misread as
-    a new idea and would refile the board out from under its own run.
+    Being unassigned is what makes that safe — with ONE exception, measured on
+    2026-09-15: a card the dispatcher CLAIMS. `ready` cards carrying no assignee are
+    assigned by `kanban.default_assignee` and worked, so an arm card filed `ready` was
+    built by a coder worker while this function read it as the idea. That is why a
+    `blocked` card counts here (with the marker, see below): `blocked` is never
+    dispatched, and `mission/arm.sh` files its card that way. Without the unassigned
+    test a lane card sitting in `ready` would be misread as a new idea and would refile
+    the board out from under its own run.
 
     NB: the panel's `✨ Specify` and `⚗ Decompose` buttons also move a triage
     card on, but both rewrite it with an auxiliary LLM first. Never use them
@@ -2929,7 +2966,16 @@ def armed_ideas(state):
     """
     out, unnumbered = [], []
     for title, c in state.items():
-        if c.get("status") not in ("todo", "ready") or not c.get("id"):
+        status = c.get("status")
+        # `blocked` is read as well, and only with the RAW IDEA marker: that is how
+        # `mission/arm.sh` files an idea, because a `ready` card is ASSIGNED by
+        # `kanban.default_assignee` and worked by a worker within the minute while the
+        # driver is still reading the same card as an idea — on 2026-09-15 the arm card
+        # for is-even was built by a coder worker (`is_even.py`, `test_is_even.py`) and
+        # the driver adopted it at the same time. `blocked` is not dispatched. The
+        # marker test keeps the human brake out of this: a card someone parked by hand
+        # carries no marker and is left alone.
+        if status not in ("todo", "ready", "blocked") or not c.get("id"):
             continue
         if c.get("assignee"):
             continue
@@ -2937,6 +2983,8 @@ def armed_ideas(state):
         if not body.strip():
             continue
         m = _RAW_RE.match(body.strip())
+        if status == "blocked" and not m:
+            continue
         text = body.split("\n---\n", 1)[-1].strip() if m else body.strip()
         if not text:
             continue

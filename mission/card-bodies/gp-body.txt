@@ -8,4 +8,6 @@ If this lane runs with human gates (the default), the driver pauses here and log
 3. Commit the plan if you want it in history — entirely at your discretion, with an explicit pathspec. The flow does not require it.
 4. Complete this card: hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "<what you decided>"
 
+Complete it from the CLI (the command above), or from a browser on the dashboard: the desktop app cannot complete a card at all — its `Complete` collects the summary with `window.prompt`, which Electron does not implement, so the click does nothing (DESIGN.md, *Known traps*).
+
 Completing this card is what unblocks the lane's TW card. Never open the gate without a PASS verdict on record.

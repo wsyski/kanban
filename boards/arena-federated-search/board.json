@@ -1,0 +1,18 @@
+{
+  "$schema": "../../mission/board.schema.json",
+  "slug": "arena-federated-search",
+  "name": "Arena Federated Search (external project)",
+  "lanes": 1,
+  "default-workdir": "/opt/projects/arena-federated-search/main/arena-federated-search",
+  "unit-tests": true,
+  "integration-tests": false,
+  "auto-gates": false,
+  "goal": false,
+  "max-runtime": "60m",
+  "max-reworks": 4,
+  "model": "deepseek-v4.1-flash",
+  "provider": "opencode-go",
+  "model_override": "glm-5.3-flash",
+  "provider_override": "opencode-go",
+  "refinement": true
+}

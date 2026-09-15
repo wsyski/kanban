@@ -169,3 +169,95 @@ example of `model`/`provider`, with `"max-runtime": "20m"`, and its README says 
 back to a cloud-only run. Re-run it when the 44 GB card lands, or on a lighter card than
 `I1`.
 
+## 7. Two patches retired, and the one-run mint — 2026-09-15
+
+**What retired the two patches.** The judge is an out-of-turn auxiliary call: it runs after
+its turn has ended, so it has no conversation to key the relay's `x-opencode-session` on.
+The generic `hermes-opencode-affinity-fallback.patch` answers *every* such call with a
+per-process key, which is strictly wider than the goal loop holding the conversation it
+judges. Measured by removing one patch at a time and calling the judge exactly as the loop
+does: with the kanban patch gone the call carried `hermes-proc-<pid>-<hex>` and answered
+`{"verdict": "done"}`; with both gone the same call returned `400 MissingSessionID`. The
+summary→result patch is covered by this project's own contract instead —
+`card-bodies/_result-field.txt` requires `result` and repeats the evidence in `summary`,
+which the judge reads as `summary or result` — so a worker that ignores the contract is now
+**visible** as E7 (`finished with an empty result`) rather than silently repaired. This
+run's 0 warnings are that trade working.
+
+**What changed in the template the same day.** `create-board.sh` no longer mints a second
+run when the previous filing left one unstarted: `file_lanes.next_run_key` reuses the run
+`runs/current` names while no driver has written into it. `is-even` had carried two
+abandoned mints since 2026-09-13 (the newer one named by `current`), and the board's own
+definition of done failed for a run that never existed — E1 "no driver.log — the run never
+started", E4. A directory any driver has written into is never reused. Both halves are
+pinned by `mission/tests/test_unstarted_mint.py` (26 tests, including `create-board.sh` run
+twice against a stubbed engine). Suite: 576 passed.
+
+The board that measured both was `goal-smoke` — `is-even`'s idea on the profile's own
+(cloud) model, `"goal": true`, `"auto-gates": true`, driven with
+`start-board.sh --slug goal-smoke --once` on a checkout reset to `upstream/main`
+(`f9ea3a53`) and rebuilt from the four vault assets that remain. It was **removed the same
+day as redundant**: it is the same idea as `is-even`, so a probe changes `is-even`'s own
+parameters before the run (DESIGN.md, *Probing it*) instead of carrying a second board for
+it. Its record — run `runs/goal-smoke-20260915-071024`: 9 cards / 11.3 min of a 4.0 min
+per-card ceiling, `RVp1`/`Gp1`/`RVa1`/`Gc1` PASS, audit 0 errors 0 warnings, doc chain 0
+findings, and the out-of-turn judge call answering `{"verdict": "done"}` on `I1` and `P1`
+with zero `continue` and zero `MissingSessionID` — and the archived board home are kept at
+`/opt/backup/agents/20260915-093729-goal-smoke-removed/`.
+
+## 8. The first lane against an external repository — `blade-workspace`, 2026-09-15
+
+The board's idea is a *committed plan to implement* — 5 tasks and 26 steps, all open, in a
+Liferay workspace this repo does not contain
+(`/home/playground/liferay/workspaces/blade-workspace`, `feature/PLCB-25380` at `c332a33`).
+Its subject is the guest-accessible `GET /o/headless-delivery-ext/v1.0/arena-site` that the
+`arena-federated-search` board's plan calls. Driven with
+`start-board.sh --slug blade-workspace` (serve), armed by dragging the Triage card to Todo.
+
+| | |
+|---|---|
+| run | `runs/blade-workspace-20260915-094418` |
+| cards | 11 filed + one rework round (`TI1-rev-1`, `RVa1-r2`) |
+| wall / agent | 147.0 min / 94.0 min — 90.4 min in flight, 3.5 min with two cards at once, 56.6 min overhead — against a 60 min per-card ceiling |
+| per card, agent min | I1 3.93, P1 2.58, RVp1 1.30, TW1 3.53, C1 17.72, RVa1 7.90, TI1 18.58, RVc1 18.18, TI1-rev-1 10.80, RVa1-r2 9.42; a gate is completed in a tick, not by a worker |
+| verdicts | RVp1 PASS, RVa1 PASS, RVc1 **REJECT**, RVa1-r2 PASS |
+| gates | Gi ACCEPT, Gp ACCEPT, Gc accepted — all three by a person: `"auto-gates": false` |
+| goal judge | not filed: `"goal": false` |
+| audit | 2 errors, 0 warnings — both E4, both gate *wording*; see below |
+| doc chain | 0 findings over 13 cards |
+| staged | 12 paths in the external repo: the plan's 10 File Structure files, `PostmanCollectionRunner.java` (declared by TI, judged justified under RVc's check (e)), and the plan file's tick delta. HEAD still `c332a33`; nothing committed |
+
+**The reviewers re-derived everything rather than reading the claim.** TW1's and C1's evidence
+was re-run by RVa1 and again by RVc1/TI1-rev-1: unit 37/0/0 over 8 classes, integration 5/0/0 in
+one invocation (`ArenaSiteResourceTest` 4 including the guest case, `PostmanCollectionIntegrationTest`
+1 including the new request) `BUILD SUCCESSFUL in 2m44s`, `buildREST` green with no tracked diff,
+testable Tomcat stopped, SAP entry count still 2.
+
+**The rework round is the lane shape talking.** RVc1 rejected on SC1: the plan file held 20 ticks
+where this lane's done criterion wants 26. The six unticked steps are exactly the ones the fork
+makes unwitnessable — the plan gate releases `TW` and `C` together, so C's tree was already
+staged when TW went to write its failing test and the RED could not be observed — plus two verify
+steps whose first red was gone the same way. The driver filed a tick-only revision (26 insertions
+/ 26 deletions, 0 non-tick diff lines, prose and code blocks byte-identical) and re-reviewed it;
+`RVa1-r2` passed on its own fresh runs. Recorded because a plan that wants every box ticked from
+evidence has to say *who* ticks a step whose RED the fork removes: the plan's step syntax
+(*write the failing test, run it*) assumes a sequence this lane deliberately does not have.
+
+**Both audit errors were the summary's gate text, and that is now fixed.** `run-summary.json`
+took each gate's text from the gate card's `result`. With `auto-gates` on, the driver writes that
+result and its own evidence is inside it — which is why earlier auto-gated runs audited 0/0. A
+human gate-holder writes their own words instead (`Accepted`): their decision, not the evidence
+that opening the gate was legal — and this summary is written once and never rewritten (the guard
+in `write_summary`), so those two errors could never be repaired on that run. `run.py` now records
+the driver's own gate evidence first and the holder's result after it (`gate_summary_text`,
+`_GATE_EVIDENCE`), pinned by two tests in `test_chain_log.py`; the two gate card results were
+backfilled with the same evidence through `hermes kanban edit`.
+
+**Two operator traps this run exposed** (documented in DESIGN.md, *Known traps*): the dashboard's
+`Complete` collects its summary with `window.prompt`, which the desktop app does not implement —
+it returns null, the flow reads that as *cancel*, and no card can be completed from the app at
+all (a browser on `127.0.0.1:9119` works, and the CLI needs no summary at all). And arming has no
+CLI path: `promote` and `block` both refuse a `triage` card, while `armed_ideas` accepts any
+unassigned card that has left Triage — so the panel's `→ ready` button or a Todo drag is the only
+gesture, and a board cannot be started headlessly.
+

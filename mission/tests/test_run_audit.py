@@ -186,6 +186,37 @@ def test_a_worker_outliving_the_run_is_a_warning(monkeypatch):
     assert "E8" in codes(findings, "WARNING")
 
 
+def test_a_zombie_worker_is_not_an_e8(monkeypatch):
+    """A worker that has EXITED but not been reaped still shows up in `pgrep`, so it reads
+    as a live worker. is-even's run on 2026-09-15 warned E8 about one whose card had
+    completed minutes earlier — and a run summary is written once, so the warning can
+    never be corrected afterwards."""
+    class R:
+        stdout = "471154 hermes kanban work kanban task t_x\n"
+        returncode = 0
+
+    monkeypatch.setattr(ra.subprocess, "run", lambda cmd, **kw: R())
+    monkeypatch.setattr(ra, "_proc_state", lambda pid: "Z")
+    assert "E8" not in codes(ra.board_findings("b", "unused"), "WARNING")
+
+
+def test_a_worker_whose_card_is_done_is_not_an_e8(monkeypatch):
+    """A worker that has completed its card is finishing its turn, not stranded — the
+    card's status is where the run's state lives."""
+    class R:
+        stdout = "471154 hermes kanban work kanban task t_done\n"
+        returncode = 0
+
+    class RJ:
+        stdout = json.dumps([{"id": "t_done", "title": "RVa1", "status": "done"}])
+        returncode = 0
+
+    monkeypatch.setattr(ra.subprocess, "run",
+                        lambda cmd, **kw: R() if cmd[:2] == ["pgrep", "-af"] else RJ())
+    monkeypatch.setattr(ra, "_proc_state", lambda pid: "S")
+    assert "E8" not in codes(ra.board_findings("b", "unused"), "WARNING")
+
+
 def test_warnings_alone_fail_the_loop(tmp_path, monkeypatch, capsys):
     clean_probe(monkeypatch)
     runs = fixture(tmp_path, restarts=True)
