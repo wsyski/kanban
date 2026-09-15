@@ -37,15 +37,18 @@ researcher's to find — a worker's `python3` may not.
   delete these two keys (nothing is then filed and every card runs its profile's own model)
   and put `"max-runtime"` back to `"4m"`. `"provider"` is not optional: a bare model is
   resolved against the profile's provider, which does not serve it.
-- **The 2026-09-15 local run halted on the ceiling.** `qwen38-27b` on `llama-swap`,
-  `"max-runtime": "20m"`: lane 1 opened 08:03:18, `I1` was unblocked a second later, and at
-  08:23:34 the driver halted the board — `I1: idea refinement - lane 1: elapsed 1201s > limit
-  1200s`, state left at `runs/is-even-20260915-080245`. A timed-out card is a hard failure and
-  the driver exits; this is the second measurement of the same thing, and it says 20 minutes is
-  still short of what the local model needs on the heaviest card. For contrast, `I1` cost 3.93
-  min on a cloud model in the same week (`TIMELINE.md` §8). The ceiling that keeps this board
-  cheap is therefore a ceiling a local `I1` does not reach — the cloud-only route below is what
-  a *completed* run on this board needs.
+- **The 2026-09-15 local run: the model did the work and failed the hand-off.** `qwen38-27b` on
+  `llama-swap`, `"max-runtime": "20m"`: lane 1 opened 08:03:18, `I1` was unblocked a second later, and
+  `refined.md` was on disk by **08:06** — 6383 B and all eight sections, the work the 2026-09-13 probe
+  could not do at all. It then attached a **truncated** copy of it (3192 B, five of the eight sections,
+  byte-identical for its first 20 lines and cut there), produced no further tool call for eleven minutes,
+  and at 08:23:34 the driver halted the board — `elapsed 1201s > limit 1200s`, state left at
+  `runs/is-even-20260915-080245`. **The ceiling was not the constraint**: three of those twenty minutes
+  were the work, and the rest went on re-emitting a 6.4 KB artifact as a tool argument — a hand-off this
+  card's contract asks for and the harness does not need, since it reads the artifact by path. A worker
+  that writes the file and then truncates the attachment is a tooling problem, not a model-quality one;
+  the measured analysis is in the KnowledgeBase note
+  `docs/large-language-models/llama-server-configuration.md`.
 - **The 2026-09-13 local run halted. That is the measurement, not an engine fault.** With
   `ornith-35b` on `llama-swap` the board filed and dispatched correctly — the worker
   really ran `hermes -p researcher --cli … -m ornith-35b --provider llama-swap` — and
