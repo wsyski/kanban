@@ -125,7 +125,7 @@ def card_title(code, lane):
     return f"{code}{lane}: {LABELS[code]} - lane {lane}"
 
 
-def goal_args(code, enabled=True, max_turns=None):
+def goal_args(code, enabled=True, max_turns=None, cards=None):
     """`--goal` flags for a WORKER card at filing time; [] for gates/reviewers.
 
     ``enabled=False`` — a board whose manifest sets ``"goal": false`` —
@@ -147,9 +147,14 @@ def goal_args(code, enabled=True, max_turns=None):
     attempt died at 20/20 healthy, then finished in 51s with a fresh attempt).
     agent.max_turns (80) is untouched — goal-mode workers measure against the
     goal ceiling, not the agent one.
+
+    ``cards`` (the board's `goal-cards`) narrows it to those worker codes; None is
+    every worker card. The gate/review refusal comes first, so a list cannot arm one.
     """
     c = code.lower()
     if not enabled or c.startswith("g") or c.startswith("rv"):
+        return []
+    if cards is not None and code not in cards:
         return []
     turns = max_turns or board_schema.OPTIONS["goal-max-turns"][1]
     return ["--goal", "--goal-max-turns", str(turns)]

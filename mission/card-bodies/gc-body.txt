@@ -1,24 +1,20 @@
-CODE GATE — lane <N>. The driver never commits. Nothing is committed unless a human chooses to commit it.
+CODE GATE — lane <N>. A person holds this card: no worker runs it, and the driver never commits. Nothing is committed unless you choose to commit it.
 
-The driver completes this card only when the newest review verdict is PASS, and records the staged path list in the result. It runs no build of its own — the review cards ran the plan's Run commands, and at a manual gate you run whatever verification you want.
+The gate becomes ready only when the newest implementation-review verdict is PASS; the driver records the staged path list in the result. It runs no build of its own: the review cards ran the plan's Run commands, and here you run whatever verification you want.
 
-If this lane runs with human gates (the default), the driver pauses here. Your options as the gate-holder:
-1. Read the plan at <PLAN> and the newest review verdict — RVa, RVc, or their latest re-review round — with the run evidence in the driver log.
-2. Check by hand every success criterion <REFINED> marks `manual at Gc`; no card could automate those.
-3. Inspect the staged index: git diff --cached --stat
-4. Commit and push if you want this work in history — entirely at your discretion, with an explicit pathspec. The flow does not require it.
-5. Complete this card. Write PASS — the driver adds its own evidence line and the staged
-   path list beside it, so nothing else needs to be written:
-       hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "PASS: accepted"
-   PASS is the first word and the only one that releases the lane; your own words may
-   follow the colon ("PASS: reviewed the diff, committing it").
+WHAT YOU DO (from this card, in the dashboard or the CLI):
+1. Wait for the driver's comment starting "GATE READY" on this card. Until it appears the review has not passed, and a verdict you write is not applied (the driver answers "NOT APPLIED" and says why).
+2. Read the plan at <PLAN> and the newest review verdict (RVa, RVc, or their latest re-review round), with the run evidence in the driver log.
+3. Check by hand every success criterion <REFINED> marks `manual at Gc`; no card could automate those.
+4. Inspect the staged index (git diff --cached --stat) and commit and push it if you want this work in history, with an explicit pathspec. Committing is never required, before or after PASS.
+5. Answer with a COMMENT on this card whose first word is PASS (or PASS: <your words>). The driver applies it within a minute and completes this card; the next lane starts.
+   There is no REWORK at this gate: nothing files a code revision from here. To change the code, edit the files yourself, then comment PASS. To reject the lane, do not comment: stop the driver and reset the board.
 
-Complete it from the CLI (the command above), or from a browser on the dashboard — in a
-browser the Complete dialog asks for a summary: type PASS (or PASS: <your words>) into it.
-The desktop app cannot complete a card at all: its `Complete` collects the summary with
-`window.prompt`, which Electron does not implement, so the click does nothing
-(DESIGN.md, *Known traps*).
+DO NOT — each of these stops the board or skips your decision:
+- block this card: a gate blocked by hand can halt the board;
+- move it to another column (Done included) or archive it: use the comment, which records your verdict;
+- put the verdict anywhere but the first word of a comment: other comments are ignored.
 
-OPTIONAL: the board does not need it — the driver records the evidence line. MANDATORY in the dashboard's Complete dialog, so type PASS there.
+With auto-gates on, the driver completes this card itself on the evidence and you do nothing.
 
-Completing this card is what releases the next lane's root card.
+CLI alternative: hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "PASS: accepted"

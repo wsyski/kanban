@@ -15,9 +15,10 @@ researcher's to find — a worker's `python3` may not.
 
 ## Options, and why
 
-- `"auto-gates": true` — the run is unattended: the driver completes the three gates,
-  records the same evidence, and commits nothing. Set it to `false` to see what a human
-  is asked at each gate.
+- `"auto-gates": false` — each of the three gates waits for a person, who answers with a
+  `PASS` comment on the gate card (README, "Answering a gate from the card"). Set it to
+  `true` for an unattended run: the driver completes the gates on the same evidence and
+  commits nothing.
 - `"max-runtime": "20m"` — a ceiling, not a target, and still well above the 4m a cloud run
   needs because a local model loads cold (~48 s on the 24 GB rig) and decodes at ~27 t/s. It
   was `"10m"` from 2026-09-14, when the work model changed to `qwen38-27b` below, and back to

@@ -440,3 +440,34 @@ def test_an_unknown_role_or_empty_profile_is_refused():
     assert "unknown role" in problems(slug="b", assignees={"nope": "x"})[0]
     assert "non-empty string" in problems(slug="b", assignees={"coder": ""})[0]
     assert "mapping" in problems(slug="b", assignees="notadict")[0]
+
+
+# ---- goal-cards: the goal judge on some worker cards only --------------------
+
+def test_goal_cards_is_a_board_level_list_of_worker_codes():
+    """A list here names cards, not lanes: it must not be read as the per-lane form."""
+    assert problems(slug="b", lanes=2, goal=True, **{"goal-cards": ["C", "TI"]}) == []
+    assert "goal-cards" not in board_schema.PER_LANE
+
+
+def test_goal_cards_without_goal_on_is_refused_not_ignored():
+    assert problems(slug="b", **{"goal-cards": ["C"]})
+    assert problems(slug="b", goal=False, **{"goal-cards": ["C"]})
+
+
+def test_goal_cards_refuses_a_code_that_is_not_a_worker_card():
+    for bad in (["Gc"], ["RVa"], ["X"], [], "C"):
+        assert problems(slug="b", **{"goal-cards": bad}), bad
+
+
+def test_goal_cards_narrows_which_cards_get_the_goal_flag():
+    import lanes
+    flags = ["--goal", "--goal-max-turns", "40"]
+    assert lanes.goal_args("C", cards=["C", "TI"]) == flags
+    assert lanes.goal_args("P", cards=["C", "TI"]) == []
+    # unset means every worker card, as before
+    assert lanes.goal_args("P", cards=None) == flags
+    # a gate or review never gets it, whatever the list says
+    assert lanes.goal_args("Gc", cards=["Gc"]) == []
+    # off is off
+    assert lanes.goal_args("C", enabled=False, cards=["C"]) == []

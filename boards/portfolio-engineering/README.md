@@ -15,6 +15,11 @@ different repository.
 **Gates are human** (`"auto-gates": false`): each gate waits for a person, who decides
 what the profile's history receives.
 
+**The goal judge runs on the implementation card only** (`"goal": true`,
+`"goal-cards": ["C"]`, `"goal-max-turns": 80`): `C` is the long card most likely to end a
+turn without calling `kanban_complete`, and the ceiling equals `agent.max_turns`, so it
+loses no turns to the judge. `I`, `P` and `TW` complete on their own evidence.
+
 ## Two human preconditions
 
 **Pause the profiles autocommit cron for the board's lifetime.** `~/.hermes/profiles`

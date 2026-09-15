@@ -51,6 +51,7 @@ same set:
       "integration-tests": [false, true],
       "auto-gates": false,
       "goal": false,
+      "goal-cards": ["C", "TI"],                 # optional: goal only on these worker cards
       "max-runtime": "60m",
       # no retry key: every card — first filing and revision alike — gets ONE attempt
       "goal-max-turns": 40,

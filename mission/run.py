@@ -431,7 +431,8 @@ def _goal_args(assignee, code):
     """
     cfg = board_defaults()
     return lanes.goal_args(code, enabled=bool(cfg.get("goal", board_schema.OPTIONS["goal"][1])),
-                           max_turns=cfg.get("goal-max-turns"))
+                           max_turns=cfg.get("goal-max-turns"),
+                           cards=cfg.get("goal-cards"))
 
 
 def latest_verdict_card(state, lane, reviewer_prefix, final_code=None):
@@ -904,7 +905,130 @@ def md_section(text, name):
     return m.group(1) if m else ""
 
 
+# A person answers a held gate with a COMMENT, because a comment is the one write
+# every surface offers (CLI, browser dashboard, desktop app); the driver turns it into
+# the gate's `--result`, so every verdict reader downstream is unchanged. The driver's
+# own comments carry this author and are never read as a verdict.
+DRIVER_AUTHOR = "kanban-driver"
+GATE_READY_MARK = "GATE READY"
+# The word alone, or the word and a delimiter: "Pass it to Anna" is a note, not a PASS.
+_VERDICT_RE = re.compile(r"\s*(PASS|ACCEPT|REWORK)\s*(?:[:—–-]\s*(.*?))?\s*$",
+                         re.IGNORECASE | re.DOTALL)
+GATE_NAMES = {"gi": "idea gate", "gp": "plan gate", "gc": "code gate"}
+
+
+def driver_comment(card_id, body):
+    kb("comment", "--author", DRIVER_AUTHOR, card_id, body)
+
+
+def _comment_verdict(comment):
+    """(WORD, words) when a human comment starts with a gate verdict, else None."""
+    if comment.get("author") == DRIVER_AUTHOR:
+        return None
+    m = _VERDICT_RE.match(comment.get("body") or "")
+    return (m.group(1).upper(), (m.group(2) or "").strip()) if m else None
+
+
+def _replied(comments, comment_id):
+    tag = f"(comment #{comment_id})"
+    return any(c.get("author") == DRIVER_AUTHOR and tag in (c.get("body") or "")
+               for c in comments)
+
+
+def _card_comments(card_id):
+    """The thread in posting order, each comment numbered by its position: `show --json`
+    gives no comment id, and `created_at` is whole seconds, so ties are common."""
+    return [{**c, "n": i} for i, c in enumerate(card_show(card_id).get("comments") or [], 1)]
+
+
+def gate_ready_text(title, kind, lane, evidence, cid):
+    code = title.split(":")[0]
+    rework = ("  REWORK: <what is wrong>   send the idea back to the researcher; the "
+              "plan waits for the re-gate\n" if kind == "gi" else
+              "  (no REWORK here: to change the plan or code, edit the files "
+              "yourself, then PASS)\n")
+    return (f"{GATE_READY_MARK} — {code} ({GATE_NAMES[kind]}, lane {lane}).\n"
+            f"Evidence: {evidence}\n\n"
+            f"YOUR MOVE: read what this card's description lists, then add a COMMENT "
+            f"on this card starting with one word. The driver applies it on its next "
+            f"tick (under a minute):\n"
+            f"  PASS  (or PASS: <your words>)   accept and release the lane\n"
+            f"{rework}"
+            f"Nothing is committed for you: commit staged files yourself, before or "
+            f"after PASS, if you want them in history.\n\n"
+            f"DO NOT block this card, move it to another column, or archive it — a "
+            f"blocked or moved gate stops the board. Other comments are ignored.\n"
+            f"CLI alternative: hermes kanban --board {BOARD} complete "
+            f"{cid} --result \"PASS: accepted\"")
+
+
+def apply_comment_verdict(state, title, kind, lane):
+    """Complete a held human gate from the newest verdict comment after GATE READY,
+    posting GATE READY first if the card does not carry it yet (restart-safe: the
+    thread, not memory, says whether it was posted)."""
+    cid = card_id(state, title)
+    comments = _card_comments(cid)
+    ready = next((c for c in comments if c.get("author") == DRIVER_AUTHOR
+                  and (c.get("body") or "").startswith(GATE_READY_MARK)), None)
+    if ready is None:
+        driver_comment(cid, gate_ready_text(title, kind, lane, _GATE_EVIDENCE[title.split(":")[0]], cid))
+        send_notice(f"{BOARD}: {title.split(':')[0]} ({GATE_NAMES[kind]}, lane {lane}) "
+                    f"is ready — answer it with a PASS comment on the card",
+                    filename="gate-ready.txt")
+        return
+    for c in reversed(comments):
+        if c["n"] <= ready["n"]:
+            return
+        found = _comment_verdict(c)
+        if not found:
+            continue
+        word, words = found
+        refusal = None
+        if word == "REWORK" and kind != "gi":
+            refusal = (f"REWORK is not a verdict at the {GATE_NAMES[kind]}: nothing "
+                       f"files a revision from here. To change the work, edit the files "
+                       f"yourself and then comment PASS; to stop, leave the card and "
+                       f"stop the driver.")
+        elif word == "REWORK" and not words:
+            refusal = ("REWORK needs a reason — the researcher's revision card is "
+                       "built from it. Comment again: REWORK: <what is wrong>.")
+        if refusal:
+            if not _replied(comments, c["n"]):
+                driver_comment(cid, f"NOT APPLIED (comment #{c['n']}): {refusal}")
+            return
+        result = f"REWORK: {words}" if word == "REWORK" else f"PASS: {words or 'accepted'}"
+        if state[title]["status"] == "blocked":
+            kb("unblock", cid)
+        # Attribution in the summary only: a REWORK result becomes the revision card's
+        # instructions (rework_answers).
+        kb("complete", cid, "--result", result,
+           "--summary", f"{title.split(':')[0]} {word.lower()} by comment #{c['n']} "
+                        f"({c.get('author')})")
+        log(f"GATE {title.split(':')[0]}: {word} by comment #{c['n']} "
+            f"({c.get('author')}) — nothing committed by the driver")
+        return
+
+
+def answer_early_verdicts(state, title, waiting):
+    """A verdict comment on a gate that is still waiting is not applied; say so once
+    on the card, so a person is not left thinking the click worked."""
+    cid = card_id(state, title)
+    comments = _card_comments(cid)
+    for c in comments:
+        if _comment_verdict(c) and not _replied(comments, c["n"]):
+            driver_comment(cid, f"NOT APPLIED (comment #{c['n']}): the gate is "
+                                f"not ready — {waiting}. The driver posts "
+                                f"{GATE_READY_MARK} here when it is; comment again then.")
+
+
 def gate_action(state, title, kind, lane):
+    msg = _gate_action(state, title, kind, lane)
+    if msg.startswith("waiting:") and not (lane_options(lane) or {}).get("auto-gates"):
+        answer_early_verdicts(state, title, msg)
+    return msg
+
+
+def _gate_action(state, title, kind, lane):
     opts = lane_options(lane) or {}
     auto = bool(opts.get("auto-gates"))
     if kind == "gi":
@@ -971,14 +1095,16 @@ def gate_action(state, title, kind, lane):
            "--result", f"auto-gate (lane {lane}): {evidence}. NOTHING COMMITTED.",
            "--summary", f"auto-gate {title.split(':')[0]} — no commit")
         log(f"GATE {title.split(':')[0]}: auto-completed — nothing committed")
-    elif title not in _ANNOUNCED:
-        # Once per gate, not once per tick. gate_action runs every pass while a
-        # gate is held, so announcing unconditionally produced one identical
-        # line every 21 seconds for as long as a human took to look — which is
-        # exactly long enough to bury anything real in the log.
-        log(f"HUMAN GATE READY: {title} — {evidence}. "
-            f"Commit at your discretion, then: hermes kanban --board {BOARD} "
-            f"complete {card_id(state, title)}")
+    else:
+        if title not in _ANNOUNCED:
+            # Once per gate, not once per tick. gate_action runs every pass while a
+            # gate is held, so announcing unconditionally produced one identical
+            # line every 21 seconds for as long as a human took to look — which is
+            # exactly long enough to bury anything real in the log.
+            log(f"HUMAN GATE READY: {title} — {evidence}. "
+                f"Answer with a PASS comment on the card, or: hermes kanban --board "
+                f"{BOARD} complete {card_id(state, title)}")
+        apply_comment_verdict(state, title, kind, lane)
     _ANNOUNCED.add(title)
     return "gate-held"
 
@@ -2048,7 +2174,7 @@ def escalate(card_id, code, reason, key=None):
     key = key or code        # a halt that shares a gate's code keeps its own once
     if key not in _ESCALATED:
         _ESCALATED.add(key)
-        kb("comment", card_id, f"ESCALATION: {reason}")
+        kb("comment", card_id, f"ESCALATION: {reason}{halt_guidance()}")
         ledger({"event": "escalation", "code": code, "card_id": card_id,
                 **({"key": key} if key != code else {}),
                 "findings": " ".join((reason or "").split())[:600]})
@@ -2075,6 +2201,17 @@ def record_halt(reason, where=None):
     # halt.txt and a card comment wait to be looked at; the driver is exiting, so the
     # notice is the only push a human gets.
     send_notice(f"{BOARD} HALTED: {reason}", where)
+
+
+def halt_guidance():
+    """What a person does about a halt, appended wherever the driver says it halted."""
+    return (f"\n\nWHAT TO DO: the board is halted — the driver has exited and nothing "
+            f"on this board moves by itself. 1) Read the reason above (full log: "
+            f"boards/{BOARD}/runs/<run>/driver.log; DESIGN.md, \"Stops\"). 2) Fix the "
+            f"cause. 3) Restart the driver: mission/start-board.sh --slug {BOARD} — or, "
+            f"if this run cannot continue, reset it: {RESET_STEPS.format(b=BOARD)}. "
+            f"Do NOT drag this card to Done, block it or archive it: that releases the "
+            f"lane without the work, or stops it again.")
 
 
 # The documented way back from a board whose run cannot be driven (README "Resetting").
@@ -2301,7 +2438,7 @@ def halt_if_exhausted(st):
     # The reason must be readable where the human looks first: on the card
     # itself, not only in runs/halt.txt or the driver log.
     try:
-        kb("comment", c["id"], f"BOARD HALTED: {reason}")
+        kb("comment", c["id"], f"BOARD HALTED: {reason}{halt_guidance()}")
     except RuntimeError as e:
         log(f"WARNING: halt comment failed ({e})")
     record_halt(reason)
@@ -2727,13 +2864,13 @@ def notify_deadman(state):
     send_notice(msg)
 
 
-def send_notice(msg, where=None):
-    """deadman.txt, and Telegram when the gateway's tokens are set."""
+def send_notice(msg, where=None, filename="deadman.txt"):
+    """`filename` in the run directory, and Telegram when the gateway's tokens are set."""
     try:
-        with open(os.path.join(where or RUN_DIR, "deadman.txt"), "w") as f:
+        with open(os.path.join(where or RUN_DIR, filename), "w") as f:
             f.write(msg + "\n")
     except OSError as e:
-        log(f"DEADMAN: cannot write deadman.txt ({e})")
+        log(f"NOTICE: cannot write {filename} ({e})")
     # Telegram if the coder gateway is configured; else the file suffices
     try:
         import urllib.request, urllib.parse

@@ -91,6 +91,19 @@ def test_escalate_comments_once_per_code(monkeypatch):
     run._ESCALATED.clear()
 
 
+def test_a_halt_comment_tells_the_person_what_to_do(monkeypatch):
+    """The card is where a person looks first; the reason alone does not say that the
+    driver is gone, how to restart it, or that dragging the card makes it worse."""
+    calls = []
+    monkeypatch.setattr(run, "kb", lambda *a: calls.append(a))
+    run._ESCALATED.clear()
+    run.escalate("t1", "Gp1", "rounds exhausted")
+    body = calls[0][2]
+    assert body.startswith("ESCALATION: rounds exhausted")
+    assert "WHAT TO DO" in body and "start-board.sh --slug" in body and "Done" in body
+    run._ESCALATED.clear()
+
+
 # --- _goal_args: workers only, never reviewers or gates ----------------------
 
 def test_a_board_can_turn_the_goal_judge_off(monkeypatch):
@@ -608,3 +621,11 @@ def test_a_round_already_on_the_board_is_not_filed_again(monkeypatch):
     run.file_revision(st, 1, 1, "1. fix", base="P")
     run.file_code_revision(st, 1, 1, "1. fix", owner="C")
     assert calls == [], calls
+
+
+def test_a_revision_round_follows_goal_cards(monkeypatch):
+    """Revision cards are filed with their base code, so `goal-cards` covers the rounds."""
+    monkeypatch.setattr(run, "board_defaults", lambda: {"goal": True, "goal-cards": ["C"]})
+    assert run._goal_args("coder", "C") == ["--goal", "--goal-max-turns", "40"]
+    assert run._goal_args("coder", "TW") == []
+    assert run._goal_args("researcher", "I") == []

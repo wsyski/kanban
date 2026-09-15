@@ -70,6 +70,9 @@ OPTIONS = {
     "integration-tests": ("bool",     True,  True,  None),
     "auto-gates":        ("bool",     False, True,  None),
     "goal":              ("bool",     False, False, "--goal"),
+    # Which worker cards `goal` arms, by code. Unset = all of GOAL_CODES. A list of
+    # CARDS, not the per-lane form: `validate` treats this kind as one value.
+    "goal-cards":        ("cards",    None,  False, None),
     "max-runtime":       ("duration", "60m", False, "--max-runtime"),
     "max-retries":       ("count",    1,     False, "--max-retries"),
     "goal-max-turns":    ("count",    40,    False, "--goal-max-turns"),
@@ -114,6 +117,10 @@ DRIVER_OPTIONS = frozenset({"timeout-min"})
 # from the graph should fail this module's own test, not silently accept a key
 # nothing reads.
 ROLES = frozenset({"researcher", "coder", "human-gate"})
+
+# The worker cards a goal judge may run on. Declared here for the same reason as
+# ROLES; `lanes.goal_args` still refuses gates and reviews whatever a list says.
+GOAL_CODES = ("I", "P", "TW", "C", "TI")
 
 # Options whose VALUE the board's contract fixes, whatever their type allows. A
 # failed card is FINAL (user rule, 2026-09-12): the dispatcher's breaker blocks it
@@ -160,6 +167,14 @@ def _kind_error(kind, value):
         if not isinstance(value, list) or not all(
                 isinstance(p, str) and p.strip() for p in value):
             return f"expected a list of non-empty paths, got {value!r}"
+    elif kind == "cards":
+        if not isinstance(value, list) or not value or not all(
+                isinstance(c, str) for c in value):
+            return f"expected a non-empty list of card codes, got {value!r}"
+        unknown = sorted(set(value) - set(GOAL_CODES))
+        if unknown:
+            return (f"unknown card code(s) {unknown} — the goal judge runs on "
+                    f"worker cards only: {list(GOAL_CODES)}")
     elif kind == "duration":
         if not isinstance(value, str) or not _DURATION_RE.match(value.strip()):
             return (f"expected a duration like '90s', '10m', '2h' or '1h30m', "
@@ -225,12 +240,12 @@ def validate(cfg, *, where="board.json", only=None, lists=True):
         if key not in allowed:
             continue                            # already reported above
         kind, _default, per_lane, _flag = OPTIONS[key]
-        if isinstance(value, list) and kind not in ("paths", "roles") and not lists:
+        if isinstance(value, list) and kind not in ("paths", "roles", "cards") and not lists:
             problems.append(f"{where}: {key!r} takes a single value here — an "
                             f"idea file is one lane, so a list has nothing to "
                             f"index")
             continue
-        if not isinstance(value, list) or kind in ("paths", "roles"):
+        if not isinstance(value, list) or kind in ("paths", "roles", "cards"):
             err = _kind_error(kind, value)
             if err:
                 problems.append(f"{where}: {key!r} {err}")
@@ -264,6 +279,9 @@ def validate(cfg, *, where="board.json", only=None, lists=True):
         if provider_key in allowed and cfg.get(provider_key) and not cfg.get(model_key):
             problems.append(f"{where}: {provider_key!r} requires {model_key!r} "
                             f"— a provider alone does not say which model to run")
+    if "goal-cards" in allowed and cfg.get("goal-cards") is not None and cfg.get("goal") is not True:
+        problems.append(f"{where}: 'goal-cards' requires \"goal\": true — without it no "
+                        f"card runs the goal judge and the list does nothing")
     return problems
 
 
@@ -542,6 +560,8 @@ _KIND_SCHEMA = {
     "duration": {"type": "string", "pattern": "^(?:\\d+(?:\\.\\d+)?[hms])+$"},
     "abspath":  {"type": "string", "pattern": "^/"},
     "paths":    {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "cards":    {"type": "array", "minItems": 1, "uniqueItems": True,
+                 "items": {"enum": list(GOAL_CODES)}},
     "roles":    {"type": "object",
                  "propertyNames": {"enum": sorted(ROLES)},
                  "additionalProperties": {"type": "string", "minLength": 1}},

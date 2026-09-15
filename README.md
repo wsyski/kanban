@@ -21,12 +21,12 @@ how its runs went is not kept here — the runs describe themselves (§4).
 
 | board | idea | lanes | gates, per-card ceiling |
 |---|---|---|---|
-| `is-even` | one Python function (`is_even`) and its tests — the cheap smoke board, no build tool, no dependencies. Was `minimal-development` until 2026-09-13, and is **the worked example of the work model**: it ships with `"model": "qwen38-27b"` / `"provider": "llama-swap"`, so its work cards run on the local rig while its reviews and its goal judge stay on the cloud pin. Its README records the 2026-09-13 probe, where the local model could not finish the refinement card | 1 | auto, 20 min |
+| `is-even` | one Python function (`is_even`) and its tests — the cheap smoke board, no build tool, no dependencies. Was `minimal-development` until 2026-09-13, and is **the worked example of the work model**: it ships with `"model": "qwen38-27b"` / `"provider": "llama-swap"`, so its work cards run on the local rig while its reviews and its goal judge stay on the cloud pin. Its README records the 2026-09-13 probe, where the local model could not finish the refinement card | 1 | human, 20 min |
 | `roman-evaluator-js` | a browser page: `roman-evaluator.html`, a DOM-free parsing module with unit tests, `run.sh`, two launch modes | 1 | auto, 10 min |
 | `roman-evaluator-java` | the same problem twice: a roman CLI (`roman-cli/`) then a spec-first Spring Boot service (`roman-service/`) consuming lane 1's rule; needs JDK 17, Maven, a warm `~/.m2` | 2 | auto, 20 min |
 | `portfolio-engineering` | a GPW small-cap research pipeline built into the Hermes `trader` profile (external `default-workdir`) | 1 | human, 60 min (default) |
-| `blade-workspace` | implements a committed plan, task by task, in an **external** repository (`default-workdir`): refinement, unit and integration tests on, the goal judge off, human gates | 1 | human, 60 min |
-| `arena-federated-search` | the same shape against a second **external** repository: a Maven/Spring Boot multi-module service whose plan is all `mvn … test`, so unit tests are on and integration tests off (no `TI`/`RVc`); the goal judge off, human gates | 1 | human, 60 min |
+| `blade-workspace` | implements a committed plan, task by task, in an **external** repository (`default-workdir`): refinement, unit and integration tests on, the goal judge on `C` and `TI` only, human gates | 1 | human, 60 min |
+| `arena-federated-search` | the same shape against a second **external** repository: a Maven/Spring Boot multi-module service whose plan is all `mvn … test`, so unit tests are on and integration tests off (no `TI`/`RVc`); the goal judge on `C` only, human gates | 1 | human, 60 min |
 
 Every shipped board pins its review cards (`RVp`, `RVa`, `RVc` and their rework rounds)
 to a different model from the one that did the work — `"model_override":
@@ -416,6 +416,9 @@ with the CLI:
   judge that checks the body's `DONE WHEN:` line. A goal judge on a review or gate could
   complete a card whose success case is blocking. Goal mode is off unless `board.json`
   sets `"goal": true`; see [the goal judge](DESIGN.md#the-goal-judge) before turning it on.
+  `"goal-cards"` narrows it to some worker cards, e.g. `["C", "TI"]` for the long
+  implementation cards; its rounds follow their base card. Unset means all of `I`, `P`,
+  `TW`, `C`, `TI`. Both keys are read at filing, so changing them means re-creating the board.
 - **The review model is a different model.** `model_override`/`provider_override`
   (board-level only, so no lane can buy itself a different review model) go on the
   review cards and their rounds. The goal judge is not affected: it runs on the worker's
@@ -446,11 +449,11 @@ workers stage (git add own paths) + attach per-card patch
         ↓
 reviewer verifies the STAGED diff (not the worktree)
         ↓
-driver completes the gate card: "HUMAN COMMIT REQUIRED"
+driver posts GATE READY on the gate card
         ↓
 human runs the suite, commits with explicit pathspec, pushes
         ↓
-board sees gate done → next lane's root unblocks
+human comments PASS (or completes the card) → next lane's root unblocks
 ```
 
 **The driver never commits and never moves a branch.** Nothing the idea builds enters
@@ -466,7 +469,29 @@ completes the gate — and still commits nothing; the files stand staged for you
 to smoke-test the machinery and for lanes whose human check is recorded outside the
 chain, not for work whose authorization must be a commit.
 
-**Completing a gate is one CLI call** — the gate card is how the lane is released:
+**Answering a gate from the card.** When a gate's input is valid the driver posts a
+comment starting `GATE READY` on the gate card, with its evidence and the reply options.
+You answer with a comment of your own whose first word is the verdict — `PASS` (or
+`PASS: <your words>`; `ACCEPT` reads the same), or at the idea gate only
+`REWORK: <what is wrong>`. On its next tick the driver completes the gate with those
+words as the `--result` (`comment #<n> (<author>)` goes in the summary), so the verdict
+path is the same as the CLI's. The word must stand alone or be followed by `:` or a dash:
+`Pass it to Anna` is a note, not a verdict. This works from the CLI (`hermes kanban comment <id> "PASS"`),
+the browser dashboard and the desktop app alike. The driver answers on the card with
+`NOT APPLIED (comment #<id>): …` instead when:
+
+- the verdict was written before `GATE READY` (the gate was still waiting) — write it again;
+- it is `REWORK` at the plan or code gate, where nothing files a revision — edit the
+  files yourself, then `PASS`;
+- it is `REWORK` with no reason.
+
+Other comments, and the driver's own (author `kanban-driver`), are ignored. Every gate
+card's body says the same, together with what stops the board: blocking a gate by hand,
+or moving or archiving it. With `auto-gates` on no comment is read. A `GATE READY` notice
+also goes to `runs/<run>/gate-ready.txt`, and to Telegram when `TELEGRAM_BOT_TOKEN` and
+`TELEGRAM_ALLOWED_USERS` are set in the driver's environment.
+
+**Completing a gate is also one CLI call** — the gate card is how the lane is released:
 
     env -u HERMES_HOME hermes kanban --board <slug> complete <CARD-ID> --result "PASS: <what you decided>"
 
@@ -485,9 +510,8 @@ The **dashboard** completes the same card (the plugin's `PATCH /api/plugins/kanb
 calls the same `complete_task`, and *Mark done* stores your summary as both `result` and
 `summary`), with two traps: in the **Electron desktop app** the summary dialog is
 `window.prompt`, which Electron does not implement, so pressing Complete returns `null` and the
-move is silently dropped — use a browser tab (`http://127.0.0.1:9119/kanban`) or the CLI; and a
-**comment is not the completion field**, so a verdict typed into the comment box leaves the
-card's status untouched.
+move is silently dropped — answer with a comment instead (above), or use a browser tab
+(`http://127.0.0.1:9119/kanban`) or the CLI.
 
 ## 7. Filing a new idea (genericity)
 

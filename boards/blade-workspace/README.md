@@ -62,14 +62,16 @@ a reviewer has to re-run. The unit-tests level is on deliberately: the plan's ow
 *write the failing test, run it, make it pass*, and `c-body.txt` treats tests as the TW
 card's — *never edit the TW card's tests* — so archiving `TW` would leave the plan's
 unit-test steps with no owner and demand a green suite from a card whose `DONE WHEN` line
-says a green suite is not part of its finish. `"goal": false`, written out rather than
-omitted, so no worker card carries the goal judge or its `--goal-max-turns 40` ceiling:
-the judge reads only the card's text (title + body cut at 2000 characters, plus the claim)
-and has never vouched for a deliverable, while either of its halt paths — a spent turn
-budget, or a `blocked` verdict that makes a worker self-block instead of completing — costs
-this board's biggest card its single attempt. Without it every worker card measures against
-`agent.max_turns` (80) instead of 40. The judge's out-of-turn transport is still exercised
-where that is the point: `boards/is-even` is the post-`hermes update` canary.
+says a green suite is not part of its finish. `"goal": true` with `"goal-cards": ["C", "TI"]`
+and `"goal-max-turns": 80`: the goal judge runs on the implementation and integration cards
+only, where a long attempt is most likely to end a turn without calling `kanban_complete`,
+and nudges the worker to finish instead of losing the card. `I`, `P` and `TW` complete on
+their own evidence. The ceiling is 80, the same as `agent.max_turns`, so a goal card gets
+no fewer turns than a card without the judge. The cost stays: the judge reads only the
+card's text (title + body cut at 2000 characters, plus the claim), and a spent turn budget
+or a `blocked` verdict still ends that card's single attempt — if it does, set `"goal":
+false` and re-create the board. `boards/is-even` remains the post-`hermes update` canary
+for the judge's transport.
 
 The plan is the specification and the card adds nothing to it: it names
 `docs/superpowers/plans/2026-09-14-headless-delivery-ext-arena-site.md`, says to work each

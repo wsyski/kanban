@@ -63,11 +63,12 @@ gate receives, and it waits on `TW` and `C` together.
 The plan gate releases `TW` and `C` together: `TW` writes the plan's tests (the spike test
 that stays in `LiferaySiteResolverTest`, `TestConfig`'s pinned `RestClient`,
 `LiferayEntityHandlerTest`) while `C` writes the handlers beside them, each staging its own
-files. `"goal": false`, written out rather than omitted, so no worker card carries the goal
-judge or its `--goal-max-turns 40` ceiling: the judge reads only the card's text and has
-never vouched for a deliverable, while either of its halt paths — a spent turn budget, or a
-`blocked` verdict that makes a worker self-block instead of completing — costs a card its
-single attempt.
+files. `"goal": true` with `"goal-cards": ["C"]` and `"goal-max-turns": 80`: the goal judge
+runs on the implementation card only (there is no `TI` here), where a long attempt is most
+likely to end a turn without calling `kanban_complete`. The ceiling equals
+`agent.max_turns`, so the card loses no turns to it. The judge reads only the card's text,
+and a spent turn budget or a `blocked` verdict still ends the card's single attempt — if it
+does, set `"goal": false` and re-create the board.
 
 The plan is the specification and the card adds nothing to it. `### Done means` is what the
 code gate judges — every checkbox ticked in the plan file itself, every `mvn … test` the

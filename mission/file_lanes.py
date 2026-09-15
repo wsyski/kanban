@@ -326,7 +326,8 @@ def file_board(board, repo, workdir, lane_count, key_prefix, max_runtime=None,
             # review cards over it. Which cards get which is lanes.model_args.
             args += lanes.model_args(card["code"], board_cfg)
             args += lanes.goal_args(card["code"], enabled=goal_mode,
-                                    max_turns=goal_max_turns)
+                                    max_turns=goal_max_turns,
+                                    cards=board_cfg.get("goal-cards"))
             cid = json.loads(kb(board, *args))["id"]
             made[card["id"]] = cid
         # edges last, so every card was parked when it was linked — a card that is

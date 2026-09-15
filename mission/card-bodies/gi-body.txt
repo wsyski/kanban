@@ -1,21 +1,22 @@
-IDEA GATE — lane <N>. The driver never commits. Nothing is committed unless a human chooses to commit it.
+IDEA GATE — lane <N>. A person holds this card: no worker runs it, and the driver never commits. Nothing is committed unless you choose to commit it.
 
-This gate exists so a raw idea reaches the plan card only after a person agreed it is the right idea, refined the right way. Everything downstream — plan, tests, code — is built on what you accept here, and an idea is far cheaper to fix now than a plan later.
+Why it exists: the plan, tests and code are all built on the idea you accept here, and an idea is far cheaper to fix now than a plan later.
 
-If this lane runs with human gates (the default), the driver pauses here and logs HUMAN GATE READY. Your options as the gate-holder:
-1. Read <REFINED> against the raw idea at <IDEA> — start with Open questions, then Success criteria and the Verification recipe (a line marked `manual at Gc` is one you will check yourself at the code gate).
-2. Answer the open questions, or edit <REFINED> yourself. Editing it here is legitimate: you are the author of the idea; the researcher only sharpened it.
-3. Inspect what is staged: git diff --cached --stat
-4. Commit the refined idea if you want it in history — entirely at your discretion, with an explicit pathspec. The flow does not require it.
-5. Complete this card with a verdict in the result:
-   hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "PASS: accepted"
+WHAT YOU DO (from this card, in the dashboard or the CLI):
+1. Wait for the driver's comment starting "GATE READY" on this card. Until it appears the gate is still waiting for its input, and a verdict you write is not applied (the driver answers "NOT APPLIED" and says why).
+2. Read <REFINED> against the raw idea at <IDEA>: Open questions first, then Success criteria and the Verification recipe. A line marked `manual at Gc` is one you check yourself at the code gate.
+3. Answer with a COMMENT on this card whose first word is the verdict:
+   PASS   (or PASS: <your words>) — accept; the plan card starts.
+   REWORK: <what is wrong, with your answers> — the researcher revises and you get a re-gate card (up to the board's rework cap, then the lane escalates). The reason is required: the revision is built from it.
+   The driver applies it within a minute and completes this card with your words.
+4. Optional, before PASS: edit <REFINED> yourself (you are the idea's author; the researcher only sharpened it), or inspect and commit what is staged (git diff --cached --stat). Committing is never required.
 
-VERDICT (result field, first word decides):
-- PASS: --result "PASS: accepted" — write PASS; your own words may follow the colon. The normal case — anything that does not start with REWORK also opens the lane.
-- REWORK: --result "REWORK: <what is missing or wrong, with your answers>". The driver files a researcher revision and a re-gate, and the plan card waits for the re-gate (up to the board's rework cap, then the lane escalates to a human).
+DO NOT — each of these stops the board or skips your decision:
+- block this card: a gate blocked by hand can halt the board;
+- move it to another column (Done included) or archive it: use the comment, which records your verdict;
+- put the verdict anywhere but the first word of a comment: other comments are ignored.
 
-Complete it from the CLI (the command above), or from a browser on the dashboard — in a browser the Complete dialog asks for a summary: type PASS (or PASS: <your words>) into it. The desktop app cannot complete a card at all: its `Complete` collects the summary with `window.prompt`, which Electron does not implement, so the click does nothing (DESIGN.md, *Known traps*).
+With auto-gates on, the driver completes this card itself on the evidence and you do nothing.
 
-OPTIONAL: the board does not need it — the driver records the evidence line. MANDATORY in the dashboard's Complete dialog, so type PASS there. (`REWORK:` is the one gate word that must be written exactly.)
-
-Completing this card is what unblocks the lane's plan card, and the plan card treats <REFINED> as the contract. Do not open the gate on a refinement you do not believe: fix it first, or send it back with REWORK.
+CLI alternative: hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "PASS: accepted"   (or --result "REWORK: <why>")
+Do not open the gate on a refinement you do not believe: fix it first, or send it back with REWORK.

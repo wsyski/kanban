@@ -47,6 +47,20 @@
       "default": false,
       "type": "boolean"
     },
+    "goal-cards": {
+      "items": {
+        "enum": [
+          "I",
+          "P",
+          "TW",
+          "C",
+          "TI"
+        ]
+      },
+      "minItems": 1,
+      "type": "array",
+      "uniqueItems": true
+    },
     "goal-max-turns": {
       "default": 40,
       "minimum": 1,

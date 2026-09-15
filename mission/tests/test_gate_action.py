@@ -18,8 +18,41 @@ def refined(findings_bullet="- F1: python3 present — `python3 --version` → 3
     return "\n".join(parts)
 
 
+class FakeCard:
+    """One gate card's comment thread and the driver's writes to it."""
+
+    def __init__(self):
+        self.comments, self.calls = [], []
+
+    def human(self, body, author="desktop"):
+        # `show --json` carries no comment id — only author, body, created_at
+        self.comments.append({"author": author, "body": body, "created_at": 1789504951})
+
+    def kb(self, *args, capture=True):
+        self.calls.append(args)
+        if args[0] == "comment":
+            author = args[args.index("--author") + 1] if "--author" in args else "user"
+            self.human(args[-1], author=author)
+        return ""
+
+    def driver_comments(self):
+        return [c["body"] for c in self.comments if c["author"] == run.DRIVER_AUTHOR]
+
+    def completed(self):
+        return [a for a in self.calls if a[0] == "complete"]
+
+
 @pytest.fixture
-def refined_file(monkeypatch, tmp_path):
+def card(monkeypatch):
+    fake = FakeCard()
+    monkeypatch.setattr(run, "kb", fake.kb)
+    monkeypatch.setattr(run, "card_show", lambda cid: {"comments": list(fake.comments)})
+    monkeypatch.setattr(run, "send_notice", lambda *a, **k: None)
+    return fake
+
+
+@pytest.fixture
+def refined_file(monkeypatch, tmp_path, card):
     monkeypatch.setattr(run, "RUN_DIR", str(tmp_path))
     monkeypatch.setattr(run, "lane_options", lambda lane: {"auto-gates": False})
     monkeypatch.setattr(run, "log", lambda msg: None)
@@ -143,3 +176,108 @@ def test_the_gate_records_the_tree_it_judged_not_the_one_the_lane_opened_on(monk
     assert gate_path.endswith("lane-1-workdir-at-gate.md")
     assert "empty" in open(open_path).read()          # the open reading is kept
     assert "NOT empty" in open(gate_path).read()
+
+
+# ---- answering a gate with a comment (the dashboard's gesture) ----------------
+
+def test_a_ready_gate_says_on_the_card_what_the_human_does(refined_file, card):
+    refined_file.write_text(refined())
+    run.gate_action(STATE, GI, "gi", 1)
+    run.gate_action(STATE, GI, "gi", 1)
+    [ready] = card.driver_comments()
+    assert ready.startswith(run.GATE_READY_MARK)
+    assert "PASS" in ready and "REWORK:" in ready and "finding(s)" in ready
+    assert not card.completed()
+
+
+def test_a_pass_comment_completes_the_gate_with_that_verdict(refined_file, card):
+    refined_file.write_text(refined())
+    run.gate_action(STATE, GI, "gi", 1)
+    card.human("pass: read it, looks right")
+    run.gate_action(STATE, GI, "gi", 1)
+    [done] = card.completed()
+    result = done[done.index("--result") + 1]
+    assert result.startswith("PASS: read it, looks right")
+    assert ("unblock", "t_gi") in card.calls
+
+
+def test_accept_is_read_as_pass(refined_file, card):
+    refined_file.write_text(refined())
+    run.gate_action(STATE, GI, "gi", 1)
+    card.human("ACCEPT")
+    run.gate_action(STATE, GI, "gi", 1)
+    [done] = card.completed()
+    assert done[done.index("--result") + 1].startswith("PASS: accepted")
+
+
+def test_a_rework_comment_at_the_idea_gate_becomes_the_rework_result(refined_file, card):
+    refined_file.write_text(refined())
+    run.gate_action(STATE, GI, "gi", 1)
+    card.human("REWORK: the idea needs Java 17, not 21")
+    run.gate_action(STATE, GI, "gi", 1)
+    [done] = card.completed()
+    result = done[done.index("--result") + 1]
+    assert run.is_rework(result)
+    assert run.rework_answers(result) == "the idea needs Java 17, not 21"
+
+
+def test_a_rework_without_a_reason_is_not_applied_and_the_card_says_why(refined_file, card):
+    refined_file.write_text(refined())
+    run.gate_action(STATE, GI, "gi", 1)
+    card.human("REWORK")
+    run.gate_action(STATE, GI, "gi", 1)
+    run.gate_action(STATE, GI, "gi", 1)
+    assert not card.completed()
+    replies = [c for c in card.driver_comments() if c.startswith("NOT APPLIED")]
+    assert len(replies) == 1 and "reason" in replies[0]
+
+
+def test_ordinary_notes_and_the_drivers_own_comments_never_open_a_gate(refined_file, card):
+    refined_file.write_text(refined())
+    run.gate_action(STATE, GI, "gi", 1)
+    card.human("I will look at this tomorrow, passing it to Anna")
+    card.human("Pass it to the reviewer")
+    card.human("accept whatever RVa said")
+    card.human("PASS", author=run.DRIVER_AUTHOR)
+    run.gate_action(STATE, GI, "gi", 1)
+    assert not card.completed()
+
+
+def test_a_verdict_written_before_the_gate_was_ready_is_answered_not_applied(refined_file, card):
+    refined_file.write_text(refined().replace("## Verification recipe", "## Checks"))
+    card.human("PASS")
+    assert run.gate_action(STATE, GI, "gi", 1).startswith("waiting:")
+    run.gate_action(STATE, GI, "gi", 1)
+    [reply] = card.driver_comments()
+    assert reply.startswith("NOT APPLIED") and "waiting" in reply
+    refined_file.write_text(refined())
+    run.gate_action(STATE, GI, "gi", 1)
+    run.gate_action(STATE, GI, "gi", 1)
+    assert not card.completed(), "an early PASS must be written again once the gate is ready"
+
+
+GP = lanes.card_title("Gp", 1)
+
+
+def test_rework_at_the_plan_gate_is_refused_with_what_to_do_instead(monkeypatch, card):
+    monkeypatch.setattr(run, "lane_options", lambda lane: {"auto-gates": False})
+    monkeypatch.setattr(run, "log", lambda msg: None)
+    monkeypatch.setattr(run, "latest_verdict", lambda *a, **k: "PASS: fine")
+    monkeypatch.setattr(run, "staged_files", lambda: [])
+    run._ANNOUNCED.clear()
+    state = {GP: {"id": "t_gp", "status": "blocked"}}
+    run.gate_action(state, GP, "gp", 1)
+    card.human("REWORK: split step 3")
+    run.gate_action(state, GP, "gp", 1)
+    assert not card.completed()
+    [reply] = [c for c in card.driver_comments() if c.startswith("NOT APPLIED")]
+    assert "edit" in reply and "PASS" in reply
+    run._ANNOUNCED.clear()
+
+
+def test_auto_gates_ignore_comments_and_complete_on_evidence(monkeypatch, refined_file, card):
+    monkeypatch.setattr(run, "lane_options", lambda lane: {"auto-gates": True})
+    refined_file.write_text(refined())
+    run.gate_action(STATE, GI, "gi", 1)
+    [done] = card.completed()
+    assert "auto-gate" in done[done.index("--result") + 1]

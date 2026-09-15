@@ -9,5 +9,9 @@
   "max-reworks": 2,
   "model_override": "glm-5.3-flash",
   "provider_override": "opencode-go",
-  "goal": true
+  "goal": true,
+  "goal-cards": [
+    "C"
+  ],
+  "goal-max-turns": 80
 }

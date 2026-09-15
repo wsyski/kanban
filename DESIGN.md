@@ -119,7 +119,7 @@ distinct as the profile behind it:
 | `researcher` | `I` and its revision rounds |
 | `coder` | every other work card: `P`, `TW`, `C`, `TI`, `RVp`, `RVa`, `RVc` and their rounds |
 | `trader` | no card — the domain authority `portfolio-engineering` builds into |
-| — | gates: a person completes them, or the driver when `auto-gates` is on |
+| — | gates: a person answers them with a `PASS` comment (or completes them), or the driver when `auto-gates` is on |
 
 One work profile is what you maintain; each job is kept apart by the CARD that names
 it — a review runs in its own session, from the plan alone, with its own patch —
@@ -245,6 +245,8 @@ polling would hide the stall.
 |---|---|---|
 | Goal mode is opt-in: `"goal"` is a board-level key, default `false`, read at filing | `board_schema.OPTIONS`, `file_lanes.file_board` → `lanes.goal_args` | a goal judge that cannot answer wedges every worker card ([the goal judge](#the-goal-judge)). Changing the key means re-creating the board. Restarting the driver does not change it |
 | Goal flags go on worker cards only (I, P, TW, C, TI and their rounds), never on reviews or gates | `lanes.goal_args` | a goal judge can push a card whose success case is *blocking* into completing, which silently opens the gate it guards |
+| `goal-cards` narrows goal mode to listed worker codes; the gate/review refusal is checked before the list | `lanes.goal_args`, `board_schema` kind `cards` | a list is a per-board choice of *which* workers need the judge (long `C`/`TI` cards end turns without calling `kanban_complete`; short `I`/`P` cards rarely do), and a typo in it must not arm a gate |
+| A human gate reads a verdict only from a non-driver comment whose first word is `PASS`/`ACCEPT`/`REWORK`, posted after the driver's `GATE READY` comment on that card, and turns it into the card's `--result` | `run.apply_comment_verdict`, `answer_early_verdicts` | a comment is the one write every surface offers (the desktop app cannot complete a card). Reading only after `GATE READY` keeps an early `PASS` from opening a gate on input nobody judged; the driver answers `NOT APPLIED (comment #n)` once per comment, keyed in the thread so a restart does not repeat it; the `--result` path keeps `latest_verdict`, the rework loop and the audit unchanged |
 | Every card is bounded: the per-card `max-runtime` (default 60m), the global `agent.max_turns` (80), and under goal mode `goal-max-turns` (default 40). `max-retries` is pinned to 1 | `board_schema.OPTIONS`, `file_lanes.file_board` | nothing else bounds a worker. A card that reaches its ceiling has failed for good, and nothing retries it |
 | Each worker body's FINISH paragraph sits in the first 2000 characters of title + body | card bodies; `test_card_bodies.test_the_goal_judge_sees_that_a_failing_test_is_a_finish` | the goal judge reads the card cut at 2000 characters (`goals.judge_goal`), so a rule past the cut does not exist for it |
 | `result` is the report. A `summary`, if written, repeats every failing-test, TEST FIX and TEST DEFECT line | `_result-field.txt` | the completion gate judges `summary or result` (`tools/kanban_tools._goal_gate`), so a short summary hides the evidence that the card is finished |
@@ -528,9 +530,10 @@ Each is current behaviour, with what to do about it.
   completion summary with `window.prompt` (a documented carve-out in the kanban plugin bundle,
   `dist/index.js`, because the host's `ConfirmDialog` cannot stay open across a validation
   failure), and `window.prompt` is not implemented in Electron — it returns `null`, which the
-  flow reads as *cancel*, so the click produces no dialog, no error and no request. Use a
-  browser on `http://127.0.0.1:9119/kanban`, or the CLI: `hermes kanban --board <b> complete
-  <id> --result "…"` needs no summary at all.
+  flow reads as *cancel*, so the click produces no dialog, no error and no request. Answer
+  a gate with a `PASS` comment instead (the driver completes it), use a browser on
+  `http://127.0.0.1:9119/kanban`, or the CLI: `hermes kanban --board <b> complete <id>
+  --result "…"` needs no summary at all.
 - **Arming a board has no CLI subcommand.** The driver reads a Triage card as armed
   once it is out of `triage` and unassigned (`armed_ideas`), which the dashboard offers
   as the panel's `→ ready` button or a drag to Todo — but `hermes kanban promote` refuses

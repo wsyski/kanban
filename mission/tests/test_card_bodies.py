@@ -445,3 +445,16 @@ def test_attach_takes_its_bytes_from_the_file_and_an_empty_diff_attaches_nothing
     assert "bytes inline" in text
     assert "EMPTY" in text and "attach nothing" in text and "NO CHANGE:" in text
     assert "never put prose inside a `.diff` file" in text
+
+
+def test_every_gate_body_tells_a_person_how_to_answer_from_the_card():
+    """The drawer shows the body: a person who clicks the gate must learn the comment
+    protocol and the gestures that stop the board, without opening the README."""
+    for body in ("gi-body.txt", "gp-body.txt", "gc-body.txt"):
+        text = read(body)
+        assert run.GATE_READY_MARK in text, body
+        assert "COMMENT" in text and "PASS" in text, body
+        assert "DO NOT" in text and "block this card" in text, body
+    assert "REWORK: <" in read("gi-body.txt")
+    for body in ("gp-body.txt", "gc-body.txt"):
+        assert "There is no REWORK at this gate" in read(body), body

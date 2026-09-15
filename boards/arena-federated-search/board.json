@@ -7,7 +7,11 @@
   "unit-tests": true,
   "integration-tests": false,
   "auto-gates": false,
-  "goal": false,
+  "goal": true,
+  "goal-cards": [
+    "C"
+  ],
+  "goal-max-turns": 80,
   "max-runtime": "60m",
   "max-reworks": 4,
   "model": "deepseek-v4.1-flash",
