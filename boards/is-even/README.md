@@ -18,9 +18,10 @@ researcher's to find — a worker's `python3` may not.
 - `"auto-gates": true` — the run is unattended: the driver completes the three gates,
   records the same evidence, and commits nothing. Set it to `false` to see what a human
   is asked at each gate.
-- `"max-runtime": "20m"` — a ceiling, not a target, and raised from the 4m a cloud run
-  needs because a local model loads cold (~48 s for `ornith-35b` on the 24 GB rig) and
-  decodes at ~27 t/s. On an idea this small a card that needs longer is doing work the
+- `"max-runtime": "10m"` — a ceiling, not a target, and still well above the 4m a cloud run
+  needs because a local model loads cold (~48 s on the 24 GB rig) and decodes at ~27 t/s. It
+  was `"20m"` until 2026-09-14, when the work model changed to `qwen38-27b` below. On an idea
+  this small a card that needs longer is doing work the
   idea does not ask for, so the ceiling also checks the card bodies. A timed-out card is a
   hard failure: the driver halts the board, and only a review that REJECTS sends work
   back.
@@ -28,7 +29,7 @@ researcher's to find — a worker's `python3` may not.
 - `"model_override": "glm-5.3-flash"`, `"provider_override": "opencode-go"` — as on
   every shipped board, the review cards (`RVp`, `RVa` and their rounds) run on a
   different model from the coder's default, so the review model is independent of the author. This is the cheap place to see the pin working.
-- `"model": "ornith-35b"`, `"provider": "llama-swap"` — the WORK model: every card the
+- `"model": "qwen38-27b"`, `"provider": "llama-swap"` — the WORK model: every card the
   board files runs on it, the reviews excepted (they carry the pin above). **This board is
   the worked example of the option, and it is kept pointing at the local rig on purpose** —
   it is what "run a lane on a local model" looks like in a manifest. For a cloud-only run,

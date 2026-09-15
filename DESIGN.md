@@ -285,10 +285,15 @@ polling would hide the stall.
 - **It can wedge every worker card.** When the judge's API call fails inside
   `judge_goal`, the failure is logged as `goal judge: API call failed` and returned as
   the verdict `continue`. No evidence satisfies that verdict, so every completion is
-  rejected and every goal loop spends its budget. The judge runs *outside* a turn, and
-  an OpenCode relay answered it `400 MissingSessionID` until the loop held the
-  conversation it judges (`hermes-kanban-goal-judge-affinity.patch`). This is why goal
-  mode is opt-in.
+  rejected and every goal loop spends its budget. The judge runs *outside* a turn, so it
+  has no conversation to key on — and an OpenCode relay refuses a request whose
+  `x-opencode-session` is missing with `400 MissingSessionID`. Something has to supply
+  that key: the Hermes checkout's out-of-turn affinity fallback does it for every
+  out-of-turn call (a per-process key; see *Hermes Local State and Recovery* in the
+  KnowledgeBase vault), and with no such fallback the judge must be pinned to a provider
+  that is not the relay (`auxiliary.goal_judge.provider`). Measured 2026-09-15: the
+  judge's call carried `hermes-proc-<pid>-<hex>` and answered `{"verdict": "done"}`; with
+  the fallback removed, the same call returned the 400. This is why goal mode is opt-in.
 - **Probing it.** There is no probe board, because goal mode is a manifest key. Before
   arming a real board with `"goal": true`, set it on `boards/is-even` (it ships with it
   on; turn it off to run that board without the judge),
@@ -302,7 +307,7 @@ polling would hide the stall.
 
   | Symptom | Cause | Lever |
   |---|---|---|
-  | every judge call fails `400 MissingSessionID` | the auxiliary request carries no `x-opencode-session` | `hermes-kanban-goal-judge-affinity.patch` |
+  | every judge call fails `400 MissingSessionID` | the auxiliary request carries no `x-opencode-session` — the judge runs outside a turn, so nothing keys one | the checkout's out-of-turn affinity fallback, or a judge provider that is not the OpenCode relay (`auxiliary.goal_judge.provider`) |
   | the judge answers but never `done` | the model cannot follow the strict JSON verdict contract | `auxiliary.goal_judge.provider` / `.model` in the profile's `config.yaml` |
 
   If the judge cannot be made to answer, the board keeps `"goal": false`.
