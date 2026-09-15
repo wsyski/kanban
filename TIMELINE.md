@@ -261,3 +261,37 @@ CLI path: `promote` and `block` both refuse a `triage` card, while `armed_ideas`
 unassigned card that has left Triage — so the panel's `→ ready` button or a Todo drag is the only
 gesture, and a board cannot be started headlessly.
 
+## 9. Verifying the gate-text fix — `is-even`, 2026-09-15
+
+§8's fix is a claim until a human-gated run finishes under it, so the cheap board was
+re-armed for exactly that and its three gates were completed with the barest possible
+result: the word `Accepted`, which is what a gate-holder actually types. Filed with
+`mission/arm.sh` (the new CLI arm), the board's own model pair deleted so the cards run on
+the profile's cloud model, and `"auto-gates": false` so the gates wait for a person.
+
+| | |
+|---|---|
+| run | `runs/is-even-20260915-123048` |
+| cards | 9 — `TI1`/`RVc1` archived at lane open (`integration-tests: false`), so the lane is `I Gi P RVp Gp TW C RVa Gc` |
+| wall / agent | 26.7 min / 22.6 min |
+| gates | Gi, Gp and Gc completed with `--result "Accepted"` and nothing else |
+| gate texts in `run-summary.json` | Gi `refined idea present, all sections, 12 finding(s) with evidence (7519 bytes) — result: Accepted`; Gp `plan verdict PASS (0 file(s) staged) — result: Accepted`; Gc `no staged change — the lane ends with the tree as it found it, verdict PASS; …` |
+| audit | 0 errors, 0 warnings, 6 notes (E16: the pytest caches in `work/`) |
+| doc chain | 0 findings over 9 cards |
+| staged | nothing: the lane found the deliverable already committed and left it, which Gc's evidence says in words rather than as "0 files staged" |
+
+**Two things the run proved by breaking.** Filing the arm card `ready` had a coder worker
+build the whole deliverable off it (`is_even.py`, `test_is_even.py`, a 24-second run) while
+the driver was reading the same card as the idea: a `ready` card carrying no assignee is
+assigned by `kanban.default_assignee`, so the driver's *"the dispatcher cannot claim one
+however it is moved"* was wrong. `mission/arm.sh` now files `blocked`, and `armed_ideas`
+reads that state when the body carries the RAW IDEA marker. And the audit warned E8 about a
+worker that had completed its card two minutes earlier and left a **zombie** behind —
+`pgrep` lists it, `/proc` says `Z` — so E8 now ignores a zombie, a worker whose card is
+`done`, and a worker whose card belongs to another board.
+
+The same run showed the harness's own trap, which is worth knowing before scripting a
+board: `runs/driver.log` at the *board* level is append-only across every run the board
+ever had, so a stop condition that greps it for `ALL GATES COMPLETE` matches a banner from
+hours earlier. A run's own end state is in `runs/<run-id>/driver.log`.
+

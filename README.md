@@ -195,7 +195,9 @@ never corrects — a switch, a commit or a foreign staged path (E17); see
 worker leaves in `work/` (reported as note E16). There is no flag that clears either
 tree; `rm` them yourself. `scratch/<card-id>/` is the part that grows without bound;
 `mission/runs-report.py --board <slug>` prints each run's size and age and the `rm` for
-the finished ones, without running it.
+the finished ones, without running it — and names a run that never opened a lane, which is
+what a filing the arm superseded leaves behind (only `runs/<run-id>/driver.log` is written,
+so nothing ever reads it as a stalled run).
 
 ### Lanes and per-lane options
 
@@ -340,7 +342,9 @@ run — so read the runs themselves:
 **Audit every run; that is the loop's stopping rule.** `run-audit.py` exits 0 only when a
 finished run has no errors and no warnings. It reads the driver log (terminal state,
 including a driver that died: no halt, no finish banner and no live process holding
-`runs/driver.lock`; error vocabulary; held gates), `run-summary.json` (gate wording, restarts, per-card
+`runs/driver.lock`; error vocabulary; held gates) — `runs/driver.log` for the board's log,
+which is append-only across every run the board ever had, or `runs/<run-id>/driver.log` for
+one run's, which is what a script wants — `run-summary.json` (gate wording, restarts, per-card
 budget against the board's ceiling), the document chain, the workers that outlived the
 run and the board's end state, then prints the per-card table and wall/agent/overhead.
 It also reads the cards' own logs, which is the only place a **provider storm the run

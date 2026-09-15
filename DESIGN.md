@@ -582,7 +582,11 @@ Each is current behaviour, with what to do about it.
   their own bodies, which name their own run, so an orphan cannot reach a later run's
   documents — but it burns a slot and a budget on an archived card and can re-stage
   stale content. `reset.sh` stops this board's workers before archiving;
-  `run-audit.py` warns on a worker that outlived the run (E8).
+  `run-audit.py` warns on a worker that outlived the run (E8) — and only on one that is
+  really still running: a zombie (`pgrep` lists it, `/proc` says `Z`), a worker whose card
+  is already `done`, and a worker whose card is not on this board are all ignored. Each of
+  those three produced a false warning on the is-even run of 2026-09-15, and a run summary
+  is written once, so a false one can never be withdrawn.
 - **The goal judge can wedge every worker card** when it cannot answer, and a working
   probe proves only that it answers. Mechanism, probe and levers:
   [the goal judge](#the-goal-judge).
