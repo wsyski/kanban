@@ -22,7 +22,7 @@ create and run a board, run records, operational rules, gate discipline — is
 | Lane N+1's root is parented to lane N's code gate | `mission/lanes.py` — the board itself is the sequencer, no orchestrator |
 | The plan card never sees an unreviewed idea | `lanes.py` — `I` is the lane root and `Gi` stands between it and `P`. With `refinement: false` the plan card is the root and plans from the raw idea (see [refinement](#refinement-off)) |
 | Every hand-off is a file, never a card comment | `runs/<run-id>/artifacts/lane-<k>/refined.md`, `…/plan.md`, patches — attached to their card, never staged; the only thing a card stages is the lane's own work |
-| Every card's evidence is its `git diff --cached` patch, attached to the card | card bodies |
+| Every card's evidence is its `git diff --cached` patch, attached to the card — and on a lane the plan proves was already satisfied there is nothing to attach: `NO CHANGE:` in the result is the evidence, and the empty-patch ceremony is retired (doc chain F5) | card bodies; `mission/doc-chain.py` |
 | Verdicts go in the result field | review card bodies (`_result-field.txt`) |
 | The plan is judged on what it was told | `mission/card-bodies/_plan-checklist.txt` — the plan card's self-check and the plan review's only REJECT grounds |
 | Rules every worker shares exist once | `mission/card-bodies/_worker-contract.txt`, included as `<WORKER_CONTRACT>` (see [profiles](#profiles-and-the-worker-contract)) |

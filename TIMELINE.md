@@ -295,3 +295,50 @@ board: `runs/driver.log` at the *board* level is append-only across every run th
 ever had, so a stop condition that greps it for `ALL GATES COMPLETE` matches a banner from
 hours earlier. A run's own end state is in `runs/<run-id>/driver.log`.
 
+## 10. Two attachment habits the card bodies now forbid — `is-even`, 2026-09-15
+
+A second human-gated run the same day, on the cloud route (`model`/`provider` deleted,
+`"auto-gates": false` kept, armed with `mission/arm.sh` after the first attempt was killed
+for a stalled local model).
+
+| | |
+|---|---|
+| run | `runs/is-even-20260915-183835` |
+| cards | 9 — `TI1`/`RVc1` archived at lane open |
+| wall / agent | 13.3 min / 7.2 min (union 6.6, overhead 6.7, overlap 0.5) |
+| gates | Gi, Gp and Gc completed with `--result "PASS"` and nothing else |
+| gate texts | the driver's evidence first, `— result: PASS` after it; `verdicts.jsonl` records `Gi1 PASS`, so a human-gated `Gi` writes a real verdict token rather than prose |
+| audit | 0 errors, 0 warnings, **0 notes**; doc chain 0 findings over 9 cards |
+| staged | nothing — the lane found `work/` already holding `is_even.py` and `test_is_even.py` byte-for-byte as the plan requires: a NO CHANGE lane whose product is already at HEAD |
+
+**What two workers did instead of what their bodies said.**
+
+- `RVp1` attached a **fabricated** `review.md`: `kanban_attach` with
+  `content_base64: PD9waHAg` — six bytes of `<?php `, memorised filler — and only then read
+  the real file through `base64 -w0` and attached it again as `review (1).md`. The body
+  named the CLI form (`hermes kanban --board is-even attach <card> <path>`) the whole time;
+  the TOOL is what a worker with `kanban_attach` in its schema reaches for, and the tool
+  takes the bytes inline — which is the exact step where a model that has not read the file
+  invents content.
+- `TW1`, on that NO CHANGE lane, redirected an empty `git diff --cached` into `patch.diff`
+  and then wrote **1789 bytes of prose** into it — the file the reviews read as a diff.
+  `C1` hit the same empty diff and attached nothing, which is the ending `doc-chain.py`'s
+  F5 already calls valid. Two cards, one gap: the bodies demanded a patch without saying
+  what a lane that changed nothing attaches.
+
+So the shared fragment `mission/card-bodies/_worker-contract.txt` gains one rule — attach
+**the file, not its text** (`attach <YOUR-CARD-ID> <path>`, then `attachments <YOUR-CARD-ID>`
+to see the size), and a diff the card asks for is EMPTY on a lane the plan proves was
+already satisfied: attach nothing, say `NO CHANGE:` in the result, and never put prose
+inside a `.diff` file. `DESIGN.md`'s enforcement row carries the same exception, and
+`test_card_bodies.test_attach_takes_its_bytes_from_the_file_and_an_empty_diff_attaches_nothing`
+pins it (red without the rule). The six E16 notes the 12:30 run's pytest caches had been
+generating are gone with the caches: `work/` holds the idea's two files and nothing else.
+
+**The local rig, on the same card.** `I1` on `qwen38-27b`/`llama-swap` wrote `refined.md`
+(5331 B) at 18:30 and then produced no tool call for the rest of the attempt — no provider
+error, one generation in flight — the 2026-09-14 shape again, so the run was killed at
+13 minutes rather than left to the 20-minute ceiling; the cloud route did the same card in
+2 min 33 s. The board's shipped parameters (`auto-gates: true`, the local-rig pair) are
+restored, so the harness flips are not left behind on the cheap board.
+
