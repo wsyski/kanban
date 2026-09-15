@@ -7,9 +7,11 @@
   "unit-tests": true,
   "integration-tests": true,
   "auto-gates": false,
-  "goal": true,
-  "max-runtime": "30m",
+  "goal": false,
+  "max-runtime": "60m",
   "max-reworks": 4,
+  "model": "deepseek-v4.1-flash",
+  "provider": "opencode-go",
   "model_override": "glm-5.3-flash",
   "provider_override": "opencode-go",
   "refinement": true

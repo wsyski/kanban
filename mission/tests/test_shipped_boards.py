@@ -39,32 +39,41 @@ def test_every_shipped_manifest_validates():
     assert not bad, "\n".join(f"{b}: {p}" for b, ps in bad.items() for p in ps)
 
 
-def test_a_lane_can_turn_unit_tests_off_in_its_own_header():
-    """THE PER-LANE DOOR, on the lane that uses it. `unit-tests` is a board option
-    exactly like `integration-tests` (same table, same door — board_schema.OPTIONS
-    marks both as per-lane), and blade-workspace's lane repeats `unit-tests: false`
-    in its idea header while the manifest says otherwise: the header wins for that
-    lane. The door leaves the lane without a unit-test card and the review waiting on
-    the coder alone — and the cards are still FILED, which is what makes the level
-    reversible per lane. (The BOARD-level door on the same parameter is
-    `integration-tests` on is-even and goal-smoke, asserted below.)"""
-    cfg = json.load(open(os.path.join(BOARDS, "blade-workspace", "board.json")))
-    for lane, path in ideas("blade-workspace"):
-        parsed = lanes.read_idea(path)
-        assert parsed is not None, path
-        headers, _body = parsed
-        opts = lanes.resolve_lane_options(cfg, headers, lane)
-        assert opts["unit-tests"] is False, (path, opts)
-        cards = lanes.lane_cards(lane, integration_tests=opts["integration-tests"],
-                                 unit_tests=opts["unit-tests"])
-        codes = [c["code"] for c in cards]
-        assert "TW" not in codes, codes
-        assert "C" in codes and "RVa" in codes, codes
-        rva = [c for c in cards if c["code"] == "RVa"][0]
-        assert rva["parents"] == [f"C{lane}"], rva
-        # filed complete, pruned at lane open: that is what makes the header reversible
-        assert [c["code"] for c in lanes.lane_cards(lane)] == [
-            "I", "Gi", "P", "RVp", "Gp", "TW", "C", "RVa", "TI", "RVc", "Gc"]
+def test_a_lane_can_turn_unit_tests_off_in_its_own_header(tmp_path):
+    """THE PER-LANE DOOR. `unit-tests` is a board option exactly like
+    `integration-tests` (same table, same door — board_schema.OPTIONS marks both as
+    per-lane), and an idea header repeating `unit-tests: false` while the manifest
+    says otherwise wins for that lane. The door leaves the lane without a unit-test
+    card and the review waiting on the coder alone — and the cards are still FILED,
+    which is what makes the level reversible per lane. (The BOARD-level door on the
+    same parameter is `integration-tests` on is-even and goal-smoke, asserted below.)
+
+    On a FIXTURE lane, because no shipped lane carries a header any more.
+    `blade-workspace` was the only one, and it dropped `<!-- unit-tests: false -->`
+    on 2026-09-15: archiving `TW` there left the committed plan's own unit-test
+    steps with no owner — every card body treats tests as the TW card's, and
+    `c-body.txt` stages a green suite as explicitly NOT part of the coder's finish —
+    so the header fought the idea it was filed with. The door itself is a property
+    of `lanes.py`, so it is pinned here on the shape that lane used."""
+    cfg = {"unit-tests": True, "integration-tests": True}
+    idea_file = tmp_path / "lane-1.md"
+    idea_file.write_text("<!-- unit-tests: false -->\n# Idea 1: a fixture\n")
+    parsed = lanes.read_idea(str(idea_file))
+    assert parsed is not None, idea_file
+    headers, _body = parsed
+    opts = lanes.resolve_lane_options(cfg, headers, 1)
+    assert opts["unit-tests"] is False, opts
+    assert opts["integration-tests"] is True, opts
+    cards = lanes.lane_cards(1, integration_tests=opts["integration-tests"],
+                             unit_tests=opts["unit-tests"])
+    codes = [c["code"] for c in cards]
+    assert "TW" not in codes, codes
+    assert "C" in codes and "RVa" in codes, codes
+    rva = [c for c in cards if c["code"] == "RVa"][0]
+    assert rva["parents"] == ["C1"], rva
+    # filed complete, pruned at lane open: that is what makes the header reversible
+    assert [c["code"] for c in lanes.lane_cards(1)] == [
+        "I", "Gi", "P", "RVp", "Gp", "TW", "C", "RVa", "TI", "RVc", "Gc"]
 
 
 def test_a_board_can_turn_a_test_level_off_for_every_lane():

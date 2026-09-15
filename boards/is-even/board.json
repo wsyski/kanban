@@ -7,7 +7,7 @@
   "integration-tests": false,
   "auto-gates": true,
   "goal": true,
-  "max-runtime": "10m",
+  "max-runtime": "20m",
   "max-reworks": 2,
   "model": "qwen38-27b",
   "provider": "llama-swap",

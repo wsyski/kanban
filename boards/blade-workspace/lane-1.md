@@ -1,4 +1,3 @@
-<!-- unit-tests: false -->
 ## Idea 1: Implement the `arena-site` endpoint plan
 
 The workspace has a committed implementation plan with every task still open:
@@ -28,6 +27,13 @@ Ground rules this card enforces beyond the plan:
   report exactly which step and why, and leave the index holding only the tasks
   that genuinely finished. Partial staging that the plan did not sanction is a
   rework, not progress.
+
+- The committed plan is the lane's specification, not merely an input. The refined idea
+  must record its path and carry its task steps in as the criteria to be met, and the
+  plan card that follows must cover exactly those steps, one for one, however they are
+  tagged — so the lane implements the plan rather than a paraphrase of it. A plan card
+  that invents work the committed plan does not contain, or drops steps it does, is a
+  defect for the plan review and gate to catch, not to discover after the code is written.
 
 ### Done means
 

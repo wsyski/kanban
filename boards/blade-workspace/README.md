@@ -53,13 +53,23 @@ it with what you found rather than work around it.
 
 ## Lane shape
 
-`"refinement": true` and `"integration-tests": true` in the manifest, with `"unit-tests"`
-turned off by the idea's own header (`<!-- unit-tests: false -->`) — the header wins for
-that lane, so the lane files complete and then opens as `I Gi P RVp Gp C RVa TI RVc Gc`:
-`TW` is archived at lane open (the plan's steps carry their own failing-test-then-pass
-loop), while `TI` and `RVc` stay, because the plan's integration steps and the Postman
-collection are exactly what a reviewer has to re-run. `"goal": true`, so every worker card
-is judged after each turn (`--goal-max-turns 40`).
+`"refinement": true`, `"unit-tests": true` and `"integration-tests": true` in the manifest,
+with no per-lane header overriding any of them, so the lane files complete and opens as
+`I Gi P RVp Gp TW C RVa TI RVc Gc`: the plan gate releases `TW` and `C` together, `TW`
+writes the plan's unit tests while `C` writes the implementation beside it, and `TI` and
+`RVc` stay because the plan's integration steps and the Postman collection are exactly what
+a reviewer has to re-run. The unit-tests level is on deliberately: the plan's own steps are
+*write the failing test, run it, make it pass*, and `c-body.txt` treats tests as the TW
+card's — *never edit the TW card's tests* — so archiving `TW` would leave the plan's
+unit-test steps with no owner and demand a green suite from a card whose `DONE WHEN` line
+says a green suite is not part of its finish. `"goal": false`, written out rather than
+omitted, so no worker card carries the goal judge or its `--goal-max-turns 40` ceiling:
+the judge reads only the card's text (title + body cut at 2000 characters, plus the claim)
+and has never vouched for a deliverable, while either of its halt paths — a spent turn
+budget, or a `blocked` verdict that makes a worker self-block instead of completing — costs
+this board's biggest card its single attempt. Without it every worker card measures against
+`agent.max_turns` (80) instead of 40. The judge's out-of-turn transport is still exercised
+where that is the point: `boards/goal-smoke` is the post-`hermes update` canary.
 
 The plan is the specification and the card adds nothing to it: it names
 `docs/superpowers/plans/2026-09-14-headless-delivery-ext-arena-site.md`, says to work each
@@ -78,7 +88,7 @@ whether that repository keeps the board's changes is decided with its own git.
 
 ## Timing
 
-`max-runtime` is 30 minutes per card, and `max-reworks` is 4: these cards work a real
+`max-runtime` is 60 minutes per card, and `max-reworks` is 4: these cards work a real
 codebase with its own build, and an integration step that has to stand up Tomcat and
 Elasticsearch is not a 10-minute card. `"auto-gates": false`, so the three gates wait for a
 human — this board stages into someone else's repository, and committing there is that
