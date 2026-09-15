@@ -69,7 +69,7 @@ and has never vouched for a deliverable, while either of its halt paths — a sp
 budget, or a `blocked` verdict that makes a worker self-block instead of completing — costs
 this board's biggest card its single attempt. Without it every worker card measures against
 `agent.max_turns` (80) instead of 40. The judge's out-of-turn transport is still exercised
-where that is the point: `boards/goal-smoke` is the post-`hermes update` canary.
+where that is the point: `boards/is-even` is the post-`hermes update` canary.
 
 The plan is the specification and the card adds nothing to it: it names
 `docs/superpowers/plans/2026-09-14-headless-delivery-ext-arena-site.md`, says to work each

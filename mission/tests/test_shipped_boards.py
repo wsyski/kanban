@@ -46,7 +46,7 @@ def test_a_lane_can_turn_unit_tests_off_in_its_own_header(tmp_path):
     says otherwise wins for that lane. The door leaves the lane without a unit-test
     card and the review waiting on the coder alone — and the cards are still FILED,
     which is what makes the level reversible per lane. (The BOARD-level door on the
-    same parameter is `integration-tests` on is-even and goal-smoke, asserted below.)
+    same parameter is `integration-tests` on is-even, asserted below.)
 
     On a FIXTURE lane, because no shipped lane carries a header any more.
     `blade-workspace` was the only one, and it dropped `<!-- unit-tests: false -->`
@@ -77,13 +77,19 @@ def test_a_lane_can_turn_unit_tests_off_in_its_own_header(tmp_path):
 
 
 def test_a_board_can_turn_a_test_level_off_for_every_lane():
-    """THE BOARD-LEVEL DOOR. `is-even` and `goal-smoke` set `integration-tests: false`
-    in the manifest and say nothing about it in their idea header, so the level comes
-    from the manifest alone: the lane files complete and prunes TI and RVc at open,
-    and the code gate then hangs off the review instead of a second one. A board-level
-    false that the lane header could not turn back on would make the per-lane door
-    meaningless, which is why both doors are asserted together."""
-    for slug in ("is-even", "goal-smoke"):
+    """THE BOARD-LEVEL DOOR. `is-even` sets `integration-tests: false` in the manifest
+    and says nothing about it in its idea header, so the level comes from the manifest
+    alone: the lane files complete and prunes TI and RVc at open, and the code gate then
+    hangs off the review instead of a second one. A board-level false that the lane
+    header could not turn back on would make the per-lane door meaningless, which is why
+    both doors are asserted together.
+
+    `goal-smoke` was asserted here too until 2026-09-15 — an `is-even` copy with
+    `\"goal\": true` and a cloud model, which also set this level false. It was removed as
+    redundant: it is the SAME idea, so a probe changes `is-even`'s own parameters before
+    the run (DESIGN.md, *Probing it*) instead of carrying a second board for it.
+    """
+    for slug in ("is-even",):          # every shipped board with a board-level false
         cfg = json.load(open(os.path.join(BOARDS, slug, "board.json")))
         assert cfg["integration-tests"] is False, (slug, cfg)
         for lane, path in ideas(slug):

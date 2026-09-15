@@ -22,7 +22,6 @@ how its runs went is not kept here — the runs describe themselves (§4).
 | board | idea | lanes | gates, per-card ceiling |
 |---|---|---|---|
 | `is-even` | one Python function (`is_even`) and its tests — the cheap smoke board, no build tool, no dependencies. Was `minimal-development` until 2026-09-13, and is **the worked example of the work model**: it ships with `"model": "qwen38-27b"` / `"provider": "llama-swap"`, so its work cards run on the local rig while its reviews and its goal judge stay on the cloud pin. Its README records the 2026-09-13 probe, where the local model could not finish the refinement card | 1 | auto, 20 min |
-| `goal-smoke` | `is-even`'s idea on the profile's own (cloud) model, with the goal judge on — the board to run after a Hermes update, and the one that proves the lane needs no source patch. 2026-09-15: 9 cards, 4 PASSes, audit 0/0 on a checkout carrying only the non-kanban patches | 1 | auto, 4 min |
 | `roman-evaluator-js` | a browser page: `roman-evaluator.html`, a DOM-free parsing module with unit tests, `run.sh`, two launch modes | 1 | auto, 10 min |
 | `roman-evaluator-java` | the same problem twice: a roman CLI (`roman-cli/`) then a spec-first Spring Boot service (`roman-service/`) consuming lane 1's rule; needs JDK 17, Maven, a warm `~/.m2` | 2 | auto, 20 min |
 | `portfolio-engineering` | a GPW small-cap research pipeline built into the Hermes `trader` profile (external `default-workdir`) | 1 | human, 60 min (default) |
@@ -469,4 +468,4 @@ by every board — nothing scenario-specific to write per idea. To run new work:
 
 Only touch `mission/card-bodies/` or `mission/lanes.py` when the card graph itself must
 change (a new role, a new gate) — that changes every board, not just one idea. See
-`boards/` for six worked examples.
+`boards/` for five worked examples.
