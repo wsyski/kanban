@@ -1,0 +1,14 @@
+{
+  "$schema": "../../mission/board.schema.json",
+  "slug": "goal-smoke",
+  "name": "Goal Smoke",
+  "lanes": 1,
+  "unit-tests": true,
+  "integration-tests": false,
+  "auto-gates": true,
+  "goal": true,
+  "max-runtime": "4m",
+  "max-reworks": 1,
+  "model_override": "glm-5.3-flash",
+  "provider_override": "opencode-go"
+}

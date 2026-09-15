@@ -15,7 +15,7 @@ create and run a board, run records, operational rules, gate discipline — is
 | Per-card patch = OWN paths only (`git diff --cached -- <own paths>`) | card bodies — a bare diff bundles every earlier card's staged files |
 | The board's only git writes are stage and unstage | `mission/run.py`: `git add` by workers, `restore --staged` for its own leftovers. Never commit, branch, checkout, reset or push: a work directory that moves under a live run is REPORTED, not corrected (see [work directory pinning](#work-directory-pinning)) |
 | Nothing is deleted — not `work/`, not a run directory | `mission/reset.sh` archives cards and unstages; deleting either tree is a human's own `rm`. `work/` may be the input of a follow-up fix, and an old run is the evidence for why something wedged — no tool has an opinion about when either stops being useful |
-| One run, one directory — `runs/<run-id>/`, minted when an idea is armed | `run.py` `mint_run`; `runs/current` names the live run. A fresh directory cannot hold a previous run's hand-off, so stale-document safety is a property of the paths rather than of a deletion someone must remember |
+| One run, one directory — `runs/<run-id>/`, minted when an idea is armed | `run.py` `mint_run`; `runs/current` names the live run. `create-board.sh` mints the run it files into and REUSES one a previous filing left unstarted (`file_lanes.next_run_key`) rather than adding a second; a directory any driver has written into is never reused. A fresh directory cannot hold a previous run's hand-off, so stale-document safety is a property of the paths rather than of a deletion someone must remember |
 | A run's directory disappearing stops the board | `run.py` — nothing here removes one, so a missing `runs/<run-id>/` is someone else's `rm`: the driver halts instead of recording into a fresh directory and pointing `current` at evidence that is gone |
 | Options are validated before anything is filed — manifest and idea headers alike | `mission/board_schema.py`, at all three doors: `create-board.sh`, `start-board.sh`, and the driver when a Triage card is armed (findings go back as a comment on that card). One declaration of the option set, because a second one drifts |
 | Nobody commits before the gate — not even the driver | gate cards; `auto-gates` completes gates with "NOTHING COMMITTED" |
@@ -410,7 +410,14 @@ Where a row's reasoning is not obvious from the table:
 - **How the empty-run case arises.** `create-board.sh` mints its run and files the
   parked lanes in one step, and a refile archives only once it has an armed card. So only
   a filing that failed after `mint_run`, or cards archived under a live driver, leaves
-  a run like that.
+  a run like that. Nothing retracts a mint — `runs/` is a human's to prune, `reset.sh`
+  keeps it wholesale, and AGENTS.md forbids deleting run directories — so a *re-filing*
+  must not add a second one: `file_lanes.next_run_key` reuses the run `runs/current`
+  names while no driver has started in it, and treats any path in
+  `file_lanes.DRIVER_EVIDENCE` as proof the run happened (a run is never reused).
+  Measured on `is-even` (2026-09-13): two abandoned mints, the newer named by `current`,
+  and the board's own definition of done red — E1 "no driver.log — the run never
+  started", E4 — for a run that never existed.
 
 **Upstream lines belong to an attempt.** The dispatcher opens a card's worker log
 append-only, so one file holds every attempt, including every earlier run of that card,

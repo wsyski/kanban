@@ -331,18 +331,29 @@ fi
 
 cd "$REPO"
 python3 - "$SLUG" "$WORKDIR" "$LANES" "$BOARD_DIR" <<'PY'
-import datetime, os, sys
+import os, sys
 sys.path.insert(0, os.path.join(os.getcwd(), "mission"))
 import file_lanes
 
 slug, workdir, lanes_n, board_dir = sys.argv[1:5]
 lanes_n = int(lanes_n)
 repo = os.getcwd()
-key = f"{slug}-{datetime.datetime.now():%Y%m%d-%H%M%S}"
-cfg = file_lanes._board_cfg(board_dir)
 # Cards carry their run's paths in their bodies, so a filing belongs to a run —
 # this one, minted here and pointed at by runs/current. The driver mints a fresh
 # one each time an idea is armed; nothing ever deletes an older one.
+#
+# The id comes from file_lanes.next_run_key, which REUSES the run runs/current
+# already names when no driver ever started in it. A filing that is retried, or
+# abandoned before start-board.sh runs, leaves a mint nothing retracts — runs/ is a
+# human's to prune, reset.sh keeps it wholesale, and AGENTS.md forbids deleting run
+# directories — and a second mint would bury it as a directory no driver can start in
+# while runs/current named it: the audit's E1 "the run never started" for ever, and
+# run.empty_run_reason halting a restart on it. See tests/test_unstarted_mint.py.
+reused = file_lanes.unstarted_mint(repo, slug)
+key = file_lanes.next_run_key(repo, slug)
+if reused:
+    print(f"reusing run {reused} — filed before, and no driver ever started in it")
+cfg = file_lanes._board_cfg(board_dir)
 run_dir = file_lanes.run_dir(repo, slug, key)
 os.makedirs(run_dir, exist_ok=True)
 current = os.path.join(os.path.dirname(run_dir), "current")

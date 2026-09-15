@@ -131,6 +131,12 @@ Create and serve:
 with `--slug`/`--title` instead of `--board`). There is no import step and no second
 copy of an idea.
 
+A filing mints the run its cards are filed into, and a **re-filing reuses the run a
+previous filing minted and no driver ever started** (`runs/current` names it) — so a
+retried filing cannot leave a second, never-driven run directory behind, which the
+audit would report as E1 "no driver.log — the run never started" for ever. A run a
+driver has written into is never reused: paste its id into `start-board.sh` instead.
+
 ### The main loop is the dashboard
 
 `start-board.sh` serves: the driver stays up and **releases nothing**. You drive the

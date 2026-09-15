@@ -4,6 +4,7 @@ A board is a DIRECTORY — `boards/<slug>/` — holding `board.json` and one
 `lane-<k>.md` per lane. There is no import step and no second copy: the file
 the human edits is the file the board reads.
 """
+import datetime
 import json
 import os
 import subprocess
@@ -65,6 +66,62 @@ def run_dir(repo, board, run_id):
     cleared ones."""
     runs = os.path.join(os.path.abspath(repo), "boards", board, "runs")
     return os.path.join(runs, run_id) if run_id else runs
+
+
+# Every path a DRIVER creates under a run directory. The mint itself writes nothing:
+# `create-board.sh` makes the directory and points `runs/current` at it, and the first
+# driver start is what writes into it. So any one of these means the run happened —
+# and a run is never reused, never cleared, never deleted.
+DRIVER_EVIDENCE = ("driver.log", "driver.lock", "chain.jsonl", "timing.jsonl",
+                   "verdicts.jsonl", "run-summary.json", "halt.txt", "deadman.txt",
+                   "cards", "artifacts", "snapshots", "patches", "scratch")
+
+
+def unstarted_mint(repo, board):
+    """The run id `runs/current` names when no driver ever started in it, else None.
+
+    A filing mints the run BEFORE filing the cards — every body carries its run's
+    paths, so a filing belongs to a run — which means the directory exists while the
+    run does not. Nothing retracts a mint: `runs/` is a human's to prune ("never this
+    script's"), AGENTS.md forbids deleting run directories, and `reset.sh` keeps runs/
+    wholesale. So a filing that is retried, or abandoned before `start-board.sh` runs,
+    leaves a directory the board then treats as its current run: the audit fails it
+    (E1 "no driver.log — the run never started", E4) and `run.empty_run_reason` halts a
+    restart on it ("its filing failed"). Measured on `is-even` 2026-09-13: two such
+    mints, the newer named by `current`, and the board's own definition of done red for
+    a run that never existed.
+    """
+    runs = run_dir(repo, board, None)
+    try:
+        with open(os.path.join(runs, "current")) as f:
+            run_id = f.read().strip()
+    except OSError:
+        return None
+    if not run_id:
+        return None
+    directory = os.path.join(runs, run_id)
+    if not os.path.isdir(directory):
+        # A stale pointer, not a mint: the human pruned the directory, or the run is
+        # history. `run.use_run` resolves it and a restart recreates it; a filing has
+        # nothing to reuse and must not point at a directory that is not there.
+        return None
+    if any(os.path.exists(os.path.join(directory, name)) for name in DRIVER_EVIDENCE):
+        return None
+    return run_id
+
+
+def next_run_key(repo, board, now=None):
+    """The run id a filing should use: the unstarted mint's, or a fresh timestamp.
+
+    Reusing the id is what keeps `runs/` honest — one directory per armed idea rather
+    than one per filing attempt. `create-board.sh` is the only caller, and the shape of
+    a fresh key is the one every run id in `runs/` already has, so a run's name says
+    when it was filed and nothing else.
+    """
+    reuse = unstarted_mint(repo, board)
+    if reuse:
+        return reuse
+    return f"{board}-{(now or datetime.datetime.now()):%Y%m%d-%H%M%S}"
 
 
 def lane_paths(repo, board, lane, run_id=None):

@@ -39,15 +39,16 @@ def test_every_shipped_manifest_validates():
     assert not bad, "\n".join(f"{b}: {p}" for b, ps in bad.items() for p in ps)
 
 
-def test_a_board_can_be_built_without_unit_tests():
-    """THE BOARD-LEVEL PARAMETER, on the board that uses it. `unit-tests` is a board
-    option exactly like `integration-tests` (same table, same door — board_schema.OPTIONS
-    marks both as per-lane), and blade-workspace sets it false in its manifest AND repeats
-    it in its idea header. Either door leaves the lane without a unit-test card and the
-    review waiting on the coder alone — and the cards are still FILED, which is what lets
-    a header turn the level back on for a single lane."""
+def test_a_lane_can_turn_unit_tests_off_in_its_own_header():
+    """THE PER-LANE DOOR, on the lane that uses it. `unit-tests` is a board option
+    exactly like `integration-tests` (same table, same door — board_schema.OPTIONS
+    marks both as per-lane), and blade-workspace's lane repeats `unit-tests: false`
+    in its idea header while the manifest says otherwise: the header wins for that
+    lane. The door leaves the lane without a unit-test card and the review waiting on
+    the coder alone — and the cards are still FILED, which is what makes the level
+    reversible per lane. (The BOARD-level door on the same parameter is
+    `integration-tests` on is-even and goal-smoke, asserted below.)"""
     cfg = json.load(open(os.path.join(BOARDS, "blade-workspace", "board.json")))
-    assert cfg["unit-tests"] is False
     for lane, path in ideas("blade-workspace"):
         parsed = lanes.read_idea(path)
         assert parsed is not None, path
@@ -64,6 +65,28 @@ def test_a_board_can_be_built_without_unit_tests():
         # filed complete, pruned at lane open: that is what makes the header reversible
         assert [c["code"] for c in lanes.lane_cards(lane)] == [
             "I", "Gi", "P", "RVp", "Gp", "TW", "C", "RVa", "TI", "RVc", "Gc"]
+
+
+def test_a_board_can_turn_a_test_level_off_for_every_lane():
+    """THE BOARD-LEVEL DOOR. `is-even` and `goal-smoke` set `integration-tests: false`
+    in the manifest and say nothing about it in their idea header, so the level comes
+    from the manifest alone: the lane files complete and prunes TI and RVc at open,
+    and the code gate then hangs off the review instead of a second one. A board-level
+    false that the lane header could not turn back on would make the per-lane door
+    meaningless, which is why both doors are asserted together."""
+    for slug in ("is-even", "goal-smoke"):
+        cfg = json.load(open(os.path.join(BOARDS, slug, "board.json")))
+        assert cfg["integration-tests"] is False, (slug, cfg)
+        for lane, path in ideas(slug):
+            parsed = lanes.read_idea(path)
+            assert parsed is not None, path
+            headers, _body = parsed
+            opts = lanes.resolve_lane_options(cfg, headers, lane)
+            assert opts["integration-tests"] is False, (path, opts)
+            codes = [c["code"] for c in lanes.lane_cards(
+                lane, integration_tests=opts["integration-tests"], unit_tests=opts["unit-tests"])]
+            assert "TI" not in codes and "RVc" not in codes, codes
+            assert "TW" in codes, codes        # unit tests stay on
 
 
 def test_the_two_lane_board_resolves_each_lane_its_own_options():
