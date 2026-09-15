@@ -19,10 +19,9 @@ researcher's to find — a worker's `python3` may not.
   `PASS` comment on the gate card (README, "Answering a gate from the card"). Set it to
   `true` for an unattended run: the driver completes the gates on the same evidence and
   commits nothing.
-- `"max-runtime": "20m"` — a ceiling, not a target, and still well above the 4m a cloud run
-  needs because a local model loads cold (~48 s on the 24 GB rig) and decodes at ~27 t/s. It
-  was `"10m"` from 2026-09-14, when the work model changed to `qwen38-27b` below, and back to
-  `"20m"` on 2026-09-15. On an idea
+- `"max-runtime": "10m"` — a ceiling, not a target: a cloud run needs about 4m a card. A
+  local model needs `"20m"`, because it loads cold (~48 s on the 24 GB rig) and decodes at
+  ~27 t/s (see the work-model bullet below). On an idea
   this small a card that needs longer is doing work the
   idea does not ask for, so the ceiling also checks the card bodies. A timed-out card is a
   hard failure: the driver halts the board, and only a review that REJECTS sends work
@@ -31,13 +30,11 @@ researcher's to find — a worker's `python3` may not.
 - `"model_override": "glm-5.3-flash"`, `"provider_override": "opencode-go"` — as on
   every shipped board, the review cards (`RVp`, `RVa` and their rounds) run on a
   different model from the coder's default, so the review model is independent of the author. This is the cheap place to see the pin working.
-- `"model": "qwen38-27b"`, `"provider": "llama-swap"` — the WORK model: every card the
-  board files runs on it, the reviews excepted (they carry the pin above). **This board is
-  the worked example of the option, and it is kept pointing at the local rig on purpose** —
-  it is what "run a lane on a local model" looks like in a manifest. For a cloud-only run,
-  delete these two keys (nothing is then filed and every card runs its profile's own model)
-  and put `"max-runtime"` back to `"4m"`. `"provider"` is not optional: a bare model is
-  resolved against the profile's provider, which does not serve it.
+- No `"model"`/`"provider"` — no work-model flag is filed, so every card runs its profile's
+  own (cloud) model, the reviews excepted (they carry the pin above). To run the lane on the
+  local rig, add `"model": "qwen38-27b"`, `"provider": "llama-swap"` and raise
+  `"max-runtime"` to `"20m"`; the runs below used exactly that. `"provider"` is not
+  optional: a bare model is resolved against the profile's provider, which does not serve it.
 - **The 2026-09-15 local run: the model did the work and failed the hand-off.** `qwen38-27b` on
   `llama-swap`, `"max-runtime": "20m"`: lane 1 opened 08:03:18, `I1` was unblocked a second later, and
   `refined.md` was on disk by **08:06** — 6383 B and all eight sections, the work the 2026-09-13 probe
@@ -68,13 +65,13 @@ researcher's to find — a worker's `python3` may not.
   lands, or on a lighter card than `I1`.
 - **The goal judge is not the review pin.** `model_override`/`provider_override` moves the
   three review cards only; the goal judge is the auxiliary task `auxiliary.goal_judge`,
-  pinned machine-wide in `/etc/hermes/config.yaml` to `glm-5.3-flash` on `opencode-go`, so
-  a locally-run worker still gets its claim judged by a strong model. Without that pin the
+  pinned machine-wide in `/etc/hermes/config.yaml` to `z-ai/glm-5.3-flash` on `openrouter`,
+  so a locally-run worker still gets its claim judged by a strong model. Without that pin the
   judge follows the worker's own model, i.e. it goes local too.
   No `"assignees"` map: the graph names its profiles directly.
 - `"goal": true` — worker cards run under the goal judge, and because the judge is pinned
-  machine-wide to `glm-5.3-flash` on `opencode-go` (see the bullet above) it stays strong
-  while the work runs locally. This is the goal-judge probe
+  machine-wide to `z-ai/glm-5.3-flash` on `openrouter` (see the bullet above) it stays
+  strong when the work runs locally. This is the goal-judge probe
   ([DESIGN.md, *The goal judge*](../../DESIGN.md#the-goal-judge), probe bullet); set it
   `false` to run the same board without a judge and without the auxiliary model.
 

@@ -471,3 +471,12 @@ def test_goal_cards_narrows_which_cards_get_the_goal_flag():
     assert lanes.goal_args("Gc", cards=["Gc"]) == []
     # off is off
     assert lanes.goal_args("C", enabled=False, cards=["C"]) == []
+
+
+def test_goal_profiles_names_the_profiles_whose_judge_decides_a_card():
+    import lanes
+    assert lanes.goal_profiles({"goal": False}) == {}
+    assert lanes.goal_profiles({"goal": True, "goal-cards": ["C", "TI"],
+                                "integration-tests": False}) == {"coder": ["C"]}
+    everything = lanes.goal_profiles({"goal": True})
+    assert everything["researcher"] == ["I"] and "RVa" not in everything["coder"]

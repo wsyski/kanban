@@ -110,27 +110,9 @@ echo "keeping:  $BOARD_DIR/board.json, lane-*.md, README.md"
 
 # The driver goes first. One left serving reads the archived board as a run whose
 # filing failed and halts naming the wrong cause — or drives the cards create-board.sh
-# files next. Its pid is in the board's lock (acquire_lock). A killed driver leaves the
-# lock behind and the pid may since belong to anything, so only a process running THIS
-# repo's mission/run.py is stopped, however it was started (`mission/run.py`,
-# `cd mission; python3 run.py`, an absolute path) — an argument ending in run.py,
-# resolved against the process's own cwd. A zombie counts as gone.
-alive() { s=$(ps -o stat= -p "$1" 2>/dev/null) && [ -n "$s" ] && [ "${s#Z}" = "$s" ]; }
-runs_this_driver() {
-  local arg want
-  want=$(realpath -m "$REPO/mission/run.py")
-  [ -r "/proc/$1/cmdline" ] || return 1
-  while IFS= read -r -d '' arg; do
-    case "$arg" in
-      *run.py)
-        [ "${arg#/}" = "$arg" ] && arg="$(readlink "/proc/$1/cwd" 2>/dev/null)/$arg"
-        [ "$(realpath -m "$arg")" = "$want" ] && return 0 ;;
-    esac
-  done < "/proc/$1/cmdline"
-  return 1
-}
-pid=$(cat "$BOARD_DIR/runs/driver.lock" 2>/dev/null || true)
-case "$pid" in ''|*[!0-9]*) pid= ;; esac
+# files next. Which process counts as this board's driver: mission/driver-pid.sh.
+. "$REPO/mission/driver-pid.sh"
+pid=$(lock_pid "$BOARD_DIR")
 if [ -n "$pid" ] && alive "$pid" && runs_this_driver "$pid"; then
   kill "$pid" 2>/dev/null || true
   for _ in $(seq 50); do alive "$pid" || break; sleep 0.2; done

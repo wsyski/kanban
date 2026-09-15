@@ -186,6 +186,21 @@ def any_lane(value, default=True):
     return any(value) if isinstance(value, list) else bool(value)
 
 
+def goal_profiles(cfg):
+    """{profile: [worker codes]} for the cards a manifest files with `--goal`.
+
+    The goal judge is each worker profile's `auxiliary.goal_judge`, so this is the
+    set of profiles whose judge setting decides a card — create-board.sh prints it."""
+    out = {}
+    for c in lane_cards(1, integration_tests=any_lane(cfg.get("integration-tests", True)),
+                        unit_tests=any_lane(cfg.get("unit-tests", True)),
+                        refinement=any_lane(cfg.get("refinement", True)),
+                        assignees=cfg.get("assignees")):
+        if goal_args(c["code"], enabled=cfg.get("goal") is True, cards=cfg.get("goal-cards")):
+            out.setdefault(c["assignee"], []).append(c["code"])
+    return out
+
+
 def required_profiles(assignees=None, refinement=True, unit_tests=True,
                       integration_tests=True):
     """Every hermes profile a board needs before its cards can dispatch.

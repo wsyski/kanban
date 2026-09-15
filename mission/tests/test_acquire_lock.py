@@ -100,3 +100,36 @@ def test_reset_stops_this_boards_driver_before_archiving(tmp_path):
         for p in (driver, other_repo, bystander):
             p.kill()
             p.wait()
+
+
+def test_create_board_refuses_while_this_boards_driver_serves(tmp_path):
+    """Re-filing under a live driver: it reads the half-filed run as a failed filing and
+    halts (is-even, 2026-09-15). create-board.sh asks the same question reset.sh does,
+    before it touches the engine's registry."""
+    import json
+    import subprocess
+    repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    helper = os.path.join(repo, "mission", "driver-pid.sh")
+    board = tmp_path / "board"
+    (board / "runs").mkdir(parents=True)
+    sleep = [sys.executable, "-c", "import time; time.sleep(60)"]
+    driver = subprocess.Popen(sleep + [os.path.join(repo, "mission", "run.py"), "--serve"])
+    bystander = subprocess.Popen(sleep)
+
+    def live(pid):
+        (board / "runs" / "driver.lock").write_text(str(pid))
+        return subprocess.run(["bash", "-c", f'REPO="{repo}"; . "{helper}"; '
+                               f'live_driver_pid "{board}"'],
+                              capture_output=True, text=True, timeout=30)
+    try:
+        r = live(driver.pid)
+        assert r.returncode == 0 and r.stdout.strip() == str(driver.pid)
+        assert live(bystander.pid).returncode != 0
+        assert live("not-a-pid").returncode != 0
+    finally:
+        for p in (driver, bystander):
+            p.kill()
+            p.wait()
+    script = open(os.path.join(repo, "mission", "create-board.sh")).read()
+    assert script.index('live_driver_pid "$BOARD_DIR"') < script.index("hermes kanban boards create")
+    assert script.index('live_driver_pid "$BOARD_DIR"') < script.index("already exists — refusing")

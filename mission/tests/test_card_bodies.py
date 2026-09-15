@@ -455,6 +455,7 @@ def test_every_gate_body_tells_a_person_how_to_answer_from_the_card():
         assert run.GATE_READY_MARK in text, body
         assert "COMMENT" in text and "PASS" in text, body
         assert "DO NOT" in text and "block this card" in text, body
-    assert "REWORK: <" in read("gi-body.txt")
+        assert "REWORK: <" in text and "The reason is required" in text, body
     for body in ("gp-body.txt", "gc-body.txt"):
-        assert "There is no REWORK at this gate" in read(body), body
+        assert "new GATE READY" in read(body), body
+    assert "OWNER: TW" in read("gc-body.txt")

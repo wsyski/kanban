@@ -5,8 +5,10 @@ The gate becomes ready only when the newest plan-review verdict is PASS; the dri
 WHAT YOU DO (from this card, in the dashboard or the CLI):
 1. Wait for the driver's comment starting "GATE READY" on this card. Until it appears the plan review has not passed, and a verdict you write is not applied (the driver answers "NOT APPLIED" and says why).
 2. Read <PLAN> and the newest plan-review verdict (the RVp card, or its latest re-review round), including its NOTES and any gap the plan card reported.
-3. Answer with a COMMENT on this card whose first word is PASS (or PASS: <your words>). The driver applies it within a minute and completes this card; the unit-test card starts.
-   There is no REWORK at this gate: nothing files a plan revision from here. To change the plan, edit <PLAN> yourself, then comment PASS.
+3. Answer with a COMMENT on this card whose first word is the verdict:
+   PASS   (or PASS: <your words>) — accept; the driver completes this card and the unit-test card starts.
+   REWORK: <what is wrong with the plan> — the planner revises it and the plan review re-runs (up to the board's rework cap). This card stays held and gets a new GATE READY when the review passes; answer that one. The reason is required: the revision is built from it.
+   Small changes you can also make yourself: edit <PLAN>, then comment PASS.
 4. Optional: inspect and commit what is staged (git diff --cached --stat). Committing is never required.
 
 DO NOT — each of these stops the board or skips your decision:

@@ -21,7 +21,7 @@ how its runs went is not kept here — the runs describe themselves (§4).
 
 | board | idea | lanes | gates, per-card ceiling |
 |---|---|---|---|
-| `is-even` | one Python function (`is_even`) and its tests — the cheap smoke board, no build tool, no dependencies. Was `minimal-development` until 2026-09-13, and is **the worked example of the work model**: it ships with `"model": "qwen38-27b"` / `"provider": "llama-swap"`, so its work cards run on the local rig while its reviews and its goal judge stay on the cloud pin. Its README records the 2026-09-13 probe, where the local model could not finish the refinement card | 1 | human, 20 min |
+| `is-even` | one Python function (`is_even`) and its tests — the cheap smoke board, no build tool, no dependencies. Was `minimal-development` until 2026-09-13. It runs on the profiles' cloud models with the goal judge on every worker card (the canary for the judge after a `hermes update`); its README says how to point it at the local rig, and records the local-model runs | 1 | human, 10 min |
 | `roman-evaluator-js` | a browser page: `roman-evaluator.html`, a DOM-free parsing module with unit tests, `run.sh`, two launch modes | 1 | auto, 10 min |
 | `roman-evaluator-java` | the same problem twice: a roman CLI (`roman-cli/`) then a spec-first Spring Boot service (`roman-service/`) consuming lane 1's rule; needs JDK 17, Maven, a warm `~/.m2` | 2 | auto, 20 min |
 | `portfolio-engineering` | a GPW small-cap research pipeline built into the Hermes `trader` profile (external `default-workdir`) | 1 | human, 60 min (default) |
@@ -232,6 +232,11 @@ Re-create a board after engine changes:
     mission/create-board.sh --board boards/<slug>
     mission/start-board.sh --slug <slug>            # then arm it: mission/arm.sh <slug>
 
+Run `reset.sh` first, not `boards rm` alone: `create-board.sh` refuses (exit 6) while the
+board's driver is still running, because a serving driver reads a half-filed run as a
+failed filing and halts. A driver whose run had finished exits by itself when its board is
+removed (`BOARD REMOVED` in `driver.log`); mid-run, a removed board halts it at once.
+
 ### How it flows (diagram)
 
 Both pictures below are GENERATED from `mission/lanes.py` by `mission/render-flow.py`,
@@ -419,6 +424,10 @@ with the CLI:
   `"goal-cards"` narrows it to some worker cards, e.g. `["C", "TI"]` for the long
   implementation cards; its rounds follow their base card. Unset means all of `I`, `P`,
   `TW`, `C`, `TI`. Both keys are read at filing, so changing them means re-creating the board.
+  Which model judges is not a board option: it is each worker profile's resolved
+  `auxiliary.goal_judge` (the managed `/etc/hermes/config.yaml` pin wins), and
+  `create-board.sh` prints it per profile in its pre-flight (`goal judge for C,TI (profile
+  coder): openrouter / z-ai/glm-5.3-flash`).
 - **The review model is a different model.** `model_override`/`provider_override`
   (board-level only, so no lane can buy itself a different review model) go on the
   review cards and their rounds. The goal judge is not affected: it runs on the worker's
@@ -472,18 +481,28 @@ chain, not for work whose authorization must be a commit.
 **Answering a gate from the card.** When a gate's input is valid the driver posts a
 comment starting `GATE READY` on the gate card, with its evidence and the reply options.
 You answer with a comment of your own whose first word is the verdict — `PASS` (or
-`PASS: <your words>`; `ACCEPT` reads the same), or at the idea gate only
-`REWORK: <what is wrong>`. On its next tick the driver completes the gate with those
-words as the `--result` (`comment #<n> (<author>)` goes in the summary), so the verdict
-path is the same as the CLI's. The word must stand alone or be followed by `:` or a dash:
+`PASS: <your words>`; `ACCEPT` reads the same) or `REWORK: <what is wrong>`. On its next
+tick the driver acts on it:
+
+- `PASS` completes the gate with your words as the `--result` (`comment #<n> (<author>)`
+  goes in the summary), the same verdict path as the CLI's.
+- `REWORK` at the idea gate completes it with `REWORK: …`, and the researcher's
+  revision and a re-gate card follow.
+- `REWORK` at the plan or code gate files the round that gate's loop files after a
+  review `REJECT`, with your words as the findings: a plan revision and plan re-review,
+  or a code revision (for the coder, or `OWNER: TW` / `OWNER: TI`) and re-review. The
+  gate stays held and says `REWORK APPLIED`. When the re-review passes it posts a new
+  `GATE READY` naming that review (`[RVp1-r2]`), and only comments under it count.
+
+Every rework counts against `max-reworks`. The word must stand alone or be followed by `:` or a dash:
 `Pass it to Anna` is a note, not a verdict. This works from the CLI (`hermes kanban comment <id> "PASS"`),
 the browser dashboard and the desktop app alike. The driver answers on the card with
 `NOT APPLIED (comment #<id>): …` instead when:
 
 - the verdict was written before `GATE READY` (the gate was still waiting) — write it again;
-- it is `REWORK` at the plan or code gate, where nothing files a revision — edit the
-  files yourself, then `PASS`;
-- it is `REWORK` with no reason.
+- it is `REWORK` with no reason;
+- it is `REWORK` and the lane has used all its `max-reworks` rounds — edit the files
+  yourself and `PASS`, or stop and reset.
 
 Other comments, and the driver's own (author `kanban-driver`), are ignored. Every gate
 card's body says the same, together with what stops the board: blocking a gate by hand,

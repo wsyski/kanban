@@ -574,7 +574,7 @@ def record_rework(lane, gate_code, round_no, cards, findings, state):
 
 
 def file_revision(state, lane, round_no, findings, base="P", reviewer_prefix="RVp",
-                  gate_code="Gp", max_rounds=3, verdict_card_id=None):
+                  gate_code="Gp", max_rounds=3, verdict_card_id=None, sender=None):
     """File one rework round: a revision card + its re-gate, linked to the gate.
 
     Serves BOTH loops: the plan loop (base P, reviewer RVp,
@@ -589,13 +589,13 @@ def file_revision(state, lane, round_no, findings, base="P", reviewer_prefix="RV
         rev_body_file, rev_assignee = "p-body.txt", "coder"
         rr_title = f"RVp{lane}-r{round_no + 1}: plan review round {round_no + 1} - lane {lane}"
         rr_body_file, rr_assignee, rr_code = "rvp-body.txt", "coder", "RVp"
-        sender = "The plan review"
+        sender = sender or "The plan review"
     else:
         rev_title = f"I{lane}-rev-{round_no}: idea refinement round {round_no} - lane {lane}"
         rev_body_file, rev_assignee = "i-body.txt", "researcher"
         rr_title = f"Gi{lane}-r{round_no + 1}: idea re-gate round {round_no + 1} - lane {lane}"
         rr_body_file, rr_assignee, rr_code = "gi-body.txt", "human-gate", "Gi"
-        sender = "The idea gate"
+        sender = sender or "The idea gate"
     if title_of_prefix(state, rev_title.split(":")[0] + ":")[0]:
         return  # already filed
     gate_id = card_id(state, lanes.card_title(gate_code, lane))
@@ -915,6 +915,15 @@ GATE_READY_MARK = "GATE READY"
 _VERDICT_RE = re.compile(r"\s*(PASS|ACCEPT|REWORK)\s*(?:[:—–-]\s*(.*?))?\s*$",
                          re.IGNORECASE | re.DOTALL)
 GATE_NAMES = {"gi": "idea gate", "gp": "plan gate", "gc": "code gate"}
+_GATE_TAG = {}          # gate code -> the review card its current readiness rests on
+
+
+def verdict_code(state, v_card):
+    """The code of the review card a verdict came from ('RVp1-r2'), or ''."""
+    for t, c in state.items():
+        if v_card is not None and c.get("id") == v_card.get("id"):
+            return t.split(":")[0]
+    return ""
 
 
 def driver_comment(card_id, body):
@@ -941,13 +950,19 @@ def _card_comments(card_id):
     return [{**c, "n": i} for i, c in enumerate(card_show(card_id).get("comments") or [], 1)]
 
 
-def gate_ready_text(title, kind, lane, evidence, cid):
+REWORK_TO = {"gi": "the researcher revises the idea and you get a re-gate card",
+             "gp": "the planner revises the plan, the plan review re-runs, and this gate "
+                   "comes back with a new GATE READY",
+             "gc": "the coder revises (start with OWNER: TW or OWNER: TI to send it to the "
+                   "test card instead), the review re-runs, and this gate comes back with a "
+                   "new GATE READY"}
+
+
+def gate_ready_text(title, kind, lane, evidence, cid, tag=""):
     code = title.split(":")[0]
-    rework = ("  REWORK: <what is wrong>   send the idea back to the researcher; the "
-              "plan waits for the re-gate\n" if kind == "gi" else
-              "  (no REWORK here: to change the plan or code, edit the files "
-              "yourself, then PASS)\n")
-    return (f"{GATE_READY_MARK} — {code} ({GATE_NAMES[kind]}, lane {lane}).\n"
+    rework = f"  REWORK: <what is wrong>   {REWORK_TO[kind]}\n"
+    return (f"{GATE_READY_MARK} — {code} ({GATE_NAMES[kind]}, lane {lane})"
+            f"{f' [{tag}]' if tag else ''}.\n"
             f"Evidence: {evidence}\n\n"
             f"YOUR MOVE: read what this card's description lists, then add a COMMENT "
             f"on this card starting with one word. The driver applies it on its next "
@@ -963,17 +978,31 @@ def gate_ready_text(title, kind, lane, evidence, cid):
 
 
 def apply_comment_verdict(state, title, kind, lane):
-    """Complete a held human gate from the newest verdict comment after GATE READY,
-    posting GATE READY first if the card does not carry it yet (restart-safe: the
-    thread, not memory, says whether it was posted)."""
+    """Act on the newest verdict comment after this readiness's GATE READY, posting
+    GATE READY first when the card does not carry it yet (restart-safe: the thread,
+    not memory, says whether it was posted).
+
+    A plan or code gate is ready again after every review round, so its GATE READY
+    names the review card it rests on (`[RVp1-r2]`): a comment written under an
+    earlier readiness belongs to that one. An idea re-gate is a new card, so Gi needs
+    no tag. PASS completes the gate; REWORK files the round the gate's own loop would
+    file after a REJECT, with the person's words as the findings, and leaves the gate
+    held."""
+    code = title.split(":")[0]
     cid = card_id(state, title)
     comments = _card_comments(cid)
-    ready = next((c for c in comments if c.get("author") == DRIVER_AUTHOR
-                  and (c.get("body") or "").startswith(GATE_READY_MARK)), None)
+    tag = _GATE_TAG.get(code, "")
+    head = f"{GATE_READY_MARK} — {code} "
+    ready = None
+    for c in comments:
+        body = c.get("body") or ""
+        if c.get("author") == DRIVER_AUTHOR and body.startswith(head) \
+                and (not tag or f"[{tag}]" in body.split("\n", 1)[0]):
+            ready = c
     if ready is None:
-        driver_comment(cid, gate_ready_text(title, kind, lane, _GATE_EVIDENCE[title.split(":")[0]], cid))
-        send_notice(f"{BOARD}: {title.split(':')[0]} ({GATE_NAMES[kind]}, lane {lane}) "
-                    f"is ready — answer it with a PASS comment on the card",
+        driver_comment(cid, gate_ready_text(title, kind, lane, _GATE_EVIDENCE[code], cid, tag))
+        send_notice(f"{BOARD}: {code} ({GATE_NAMES[kind]}, lane {lane}) is ready — "
+                    f"answer it with a PASS or REWORK comment on the card",
                     filename="gate-ready.txt")
         return
     for c in reversed(comments):
@@ -982,31 +1011,57 @@ def apply_comment_verdict(state, title, kind, lane):
         found = _comment_verdict(c)
         if not found:
             continue
-        word, words = found
-        refusal = None
-        if word == "REWORK" and kind != "gi":
-            refusal = (f"REWORK is not a verdict at the {GATE_NAMES[kind]}: nothing "
-                       f"files a revision from here. To change the work, edit the files "
-                       f"yourself and then comment PASS; to stop, leave the card and "
-                       f"stop the driver.")
-        elif word == "REWORK" and not words:
-            refusal = ("REWORK needs a reason — the researcher's revision card is "
-                       "built from it. Comment again: REWORK: <what is wrong>.")
-        if refusal:
-            if not _replied(comments, c["n"]):
-                driver_comment(cid, f"NOT APPLIED (comment #{c['n']}): {refusal}")
+        if _replied(comments, c["n"]):
             return
-        result = f"REWORK: {words}" if word == "REWORK" else f"PASS: {words or 'accepted'}"
+        word, words = found
+        if word == "REWORK" and (kind != "gi" or not words):
+            reply = gate_rework(state, kind, lane, words)
+            driver_comment(cid, f"{reply} (comment #{c['n']})" if reply.startswith("REWORK APPLIED")
+                           else f"NOT APPLIED (comment #{c['n']}): {reply}")
+            if reply.startswith("REWORK APPLIED"):
+                log(f"GATE {code}: REWORK by comment #{c['n']} ({c.get('author')})")
+            return
         if state[title]["status"] == "blocked":
             kb("unblock", cid)
-        # Attribution in the summary only: a REWORK result becomes the revision card's
-        # instructions (rework_answers).
+        # An idea-gate REWORK completes the gate: its re-gate is a new card, and the
+        # rework loop reads the verdict from this result. Attribution goes in the
+        # summary only, because rework_answers turns the result into instructions.
+        result = f"REWORK: {words}" if word == "REWORK" else f"PASS: {words or 'accepted'}"
         kb("complete", cid, "--result", result,
-           "--summary", f"{title.split(':')[0]} {word.lower()} by comment #{c['n']} "
-                        f"({c.get('author')})")
-        log(f"GATE {title.split(':')[0]}: {word} by comment #{c['n']} "
-            f"({c.get('author')}) — nothing committed by the driver")
+           "--summary", f"{code} {word.lower()} by comment #{c['n']} ({c.get('author')})")
+        log(f"GATE {code}: {word} by comment #{c['n']} ({c.get('author')}) — nothing "
+            f"committed by the driver")
         return
+
+
+HUMAN_SENDER = "The gate-holder (a person, at the {gate})"
+
+
+def gate_rework(state, kind, lane, words):
+    """Carry out a person's REWORK at the plan or code gate: the reply for the card,
+    "REWORK APPLIED: …" or why not."""
+    if not words:
+        return ("REWORK needs a reason — the revision card is built from it. Comment "
+                "again: REWORK: <what is wrong>.")
+    cap = lanes.max_reworks(lane_options(lane))
+    if kind == "gp":
+        rounds = len([t for t in state if t.startswith(f"P{lane}-rev")])
+    else:
+        rounds = code_rework_rounds(state, lane)
+    if rounds >= cap:
+        return (f"this lane has used all {cap} rework rounds (max-reworks). Edit the "
+                f"files yourself and comment PASS, or stop the driver and reset the board.")
+    sender = HUMAN_SENDER.format(gate=GATE_NAMES[kind])
+    if kind == "gp":
+        file_revision(state, lane, rounds + 1, words, base="P", reviewer_prefix="RVp",
+                      gate_code="Gp", max_rounds=cap, sender=sender)
+        return (f"REWORK APPLIED: plan revision round {rounds + 1} of {cap} filed; this "
+                f"gate comes back with a new GATE READY when the plan review passes")
+    owner = rework_owner(words)
+    file_code_revision(state, lane, rounds + 1, words, owner=owner, max_rounds=cap,
+                       sender=sender)
+    return (f"REWORK APPLIED: code revision round {rounds + 1} of {cap} filed for {owner}; "
+            f"this gate comes back with a new GATE READY when the review passes")
 
 
 def answer_early_verdicts(state, title, waiting):
@@ -1014,7 +1069,10 @@ def answer_early_verdicts(state, title, waiting):
     on the card, so a person is not left thinking the click worked."""
     cid = card_id(state, title)
     comments = _card_comments(cid)
-    for c in comments:
+    # Only what a person wrote since the driver last spoke on this card: anything
+    # earlier was answered then, or belongs to a readiness that has passed.
+    last = max((c["n"] for c in comments if c.get("author") == DRIVER_AUTHOR), default=0)
+    for c in comments[last:]:
         if _comment_verdict(c) and not _replied(comments, c["n"]):
             driver_comment(cid, f"NOT APPLIED (comment #{c['n']}): the gate is "
                                 f"not ready — {waiting}. The driver posts "
@@ -1056,17 +1114,19 @@ def _gate_action(state, title, kind, lane):
         evidence = (f"refined idea present, all sections, "
                     f"{n_findings} finding(s) with evidence ({os.path.getsize(refined)} bytes)")
     elif kind == "gp":
-        verdict_txt = latest_verdict(state, lane, "RVp")
+        v_card, verdict_txt = latest_verdict_card(state, lane, "RVp")
         if verdict_token(verdict_txt) != "PASS":
             return f"waiting: plan review verdict = {verdict_txt[:40]!r}"
+        _GATE_TAG[title.split(":")[0]] = verdict_code(state, v_card)
         # The plan review reads the plan by PATH, so the index count here is
         # context, not the subject: "plan staged (0 files)" read as a
         # contradiction in the run summary of 2026-09-11.
         evidence = f"plan verdict PASS ({len(staged_files())} file(s) staged)"
     else:  # gc
-        verdict_txt = latest_verdict(state, lane, "RVa", final_code="RVc")
+        v_card, verdict_txt = latest_verdict_card(state, lane, "RVa", final_code="RVc")
         if verdict_token(verdict_txt) != "PASS":
             return f"waiting: final review verdict = {verdict_txt[:40]!r}"
+        _GATE_TAG[title.split(":")[0]] = verdict_code(state, v_card)
         staged = staged_files()
         # Say which outcome the lane reached, not just a count: "0 files staged"
         # reads the same for a lane that verified what was already there (a valid
@@ -2099,7 +2159,7 @@ CODE_REWORK_ROLES = {
 
 
 def file_code_revision(state, lane, round_no, findings, owner="C", max_rounds=2,
-                       verdict_card_id=None):
+                       verdict_card_id=None, sender="The review"):
     """File one code-rework round: the revision card its owner fixes + RVa's re-review.
 
     Mirrors file_revision. The owner is the card the REVIEW named (`rework_owner`), not
@@ -2121,7 +2181,7 @@ def file_code_revision(state, lane, round_no, findings, owner="C", max_rounds=2,
     runtime, render = _round_settings(lane)
     rbody = render(body_file)
     rbody += (f"\nREVISION ROUND {round_no} of {max_rounds} (max {max_rounds}, then human "
-              f"escalation).\n\nThe review returned the work. Address EXACTLY:\n{findings}\n"
+              f"escalation).\n\n{sender} returned the work. Address EXACTLY:\n{findings}\n"
               f"Fix only these, re-stage your files, re-attach, and complete with a result that "
               f"says what changed and names every test still failing.\n")
     rbody += _full_verdict_pointer(verdict_card_id)
@@ -3461,6 +3521,9 @@ def main():
                     log("IDLE — waiting for a new idea (promote a Triage card to start)")
                     idle = True
         except Exception as e:
+            code = board_removed_exit(e, idle)
+            if code is not None:
+                return code
             import traceback
             log(f"ERROR: {e}\n{traceback.format_exc()}")
             # transient CLI/board errors are expected mid-run; keep driving — until
@@ -3475,6 +3538,27 @@ def main():
             log("timeout — stopping driver")
             return 1
         time.sleep(POLL)
+
+def board_removed_exit(exc, idle):
+    """The exit code when `exc` says the Hermes board itself is gone, else None.
+
+    Retrying cannot bring a removed board back, and three tracebacks before a halt
+    buried the cause. A serving driver whose run had finished has nothing left to
+    guard: it exits 0 without writing a halt into that finished run (blade-workspace
+    and arena-federated-search, 2026-09-15 19:01, seven hours after ALL GATES
+    COMPLETE). Mid-run it is a real halt, named for what happened."""
+    if f"board '{BOARD}' does not exist" not in str(exc):
+        return None
+    if idle:
+        log(f"BOARD REMOVED: the Hermes board '{BOARD}' no longer exists and the run "
+            f"had finished — driver exiting")
+        return 0
+    record_halt(f"the Hermes board '{BOARD}' was removed under a live run — the cards "
+                f"are gone; re-file it: mission/create-board.sh --board boards/{BOARD}; "
+                f"mission/start-board.sh --slug {BOARD}")
+    log("BOARD HALTED — driver exiting; board state left for human inspection")
+    return 1
+
 
 _DEADMAN_STUCK = [frozenset()]   # the stuck set last notified, so one stall is one message
 

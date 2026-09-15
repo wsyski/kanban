@@ -1131,3 +1131,31 @@ def test_the_deadman_ignores_unreadable_cards(monkeypatch):
     monkeypatch.setattr(run, "kb", lambda *a: (_ for _ in ()).throw(RuntimeError(LOCKED)))
     run.deadman_check()
     assert notices == []
+
+
+# ---- the Hermes board itself removed under a driver ------------------------
+
+def test_a_removed_board_after_a_finished_run_exits_quietly(monkeypatch):
+    halts, lines = [], []
+    monkeypatch.setattr(run, "BOARD", "b1")
+    monkeypatch.setattr(run, "log", lines.append)
+    monkeypatch.setattr(run, "record_halt", halts.append)
+    gone = RuntimeError("kb ('list', '--json'): kanban: board 'b1' does not exist. Create it")
+    assert run.board_removed_exit(gone, idle=True) == 0
+    assert not halts and "BOARD REMOVED" in lines[0]
+
+
+def test_a_removed_board_mid_run_halts_at_once_naming_it(monkeypatch):
+    halts = []
+    monkeypatch.setattr(run, "BOARD", "b1")
+    monkeypatch.setattr(run, "log", lambda m: None)
+    monkeypatch.setattr(run, "record_halt", halts.append)
+    gone = RuntimeError("kanban: board 'b1' does not exist.")
+    assert run.board_removed_exit(gone, idle=False) == 1
+    assert "was removed under a live run" in halts[0] and "create-board.sh" in halts[0]
+
+
+def test_other_errors_and_other_boards_are_not_a_removal(monkeypatch):
+    monkeypatch.setattr(run, "BOARD", "b1")
+    assert run.board_removed_exit(RuntimeError("timed out after 60s"), idle=True) is None
+    assert run.board_removed_exit(RuntimeError("board 'b10' does not exist"), idle=True) is None

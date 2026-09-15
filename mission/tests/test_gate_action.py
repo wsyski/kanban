@@ -257,22 +257,90 @@ def test_a_verdict_written_before_the_gate_was_ready_is_answered_not_applied(ref
 
 
 GP = lanes.card_title("Gp", 1)
+GC = lanes.card_title("Gc", 1)
 
 
-def test_rework_at_the_plan_gate_is_refused_with_what_to_do_instead(monkeypatch, card):
-    monkeypatch.setattr(run, "lane_options", lambda lane: {"auto-gates": False})
+@pytest.fixture
+def held(monkeypatch, card):
+    """A plan and a code gate whose newest review passed, with a round recorder."""
+    monkeypatch.setattr(run, "lane_options", lambda lane: {"auto-gates": False, "max-reworks": 2})
     monkeypatch.setattr(run, "log", lambda msg: None)
-    monkeypatch.setattr(run, "latest_verdict", lambda *a, **k: "PASS: fine")
     monkeypatch.setattr(run, "staged_files", lambda: [])
+    monkeypatch.setattr(run, "write_timing_report", lambda lane: None)
+    monkeypatch.setattr(run, "preserve_artifacts", lambda: None)
+    monkeypatch.setattr(run, "commit_target", lambda: "here")
+    monkeypatch.setattr(run, "SNAP_DIR", "/tmp")
+    state = {
+        GP: {"id": "t_gp", "status": "blocked"},
+        GC: {"id": "t_gc", "status": "blocked"},
+        "RVp1: plan review - lane 1": {"id": "t_rvp", "status": "done", "result": "PASS: ok"},
+        "RVa1: implementation review - lane 1": {"id": "t_rva", "status": "done", "result": "PASS: ok"},
+    }
+    monkeypatch.setattr(run, "latest_verdict_card", lambda st, lane, prefix, final_code=None: (
+        st["RVp1: plan review - lane 1"] if prefix == "RVp" else st["RVa1: implementation review - lane 1"],
+        "PASS: ok"))
+    filed = []
+    monkeypatch.setattr(run, "file_revision", lambda *a, **k: filed.append(("plan", a, k)))
+    monkeypatch.setattr(run, "file_code_revision", lambda *a, **k: filed.append(("code", a, k)))
     run._ANNOUNCED.clear()
-    state = {GP: {"id": "t_gp", "status": "blocked"}}
+    yield state, filed
+    run._ANNOUNCED.clear()
+
+
+def test_rework_at_the_plan_gate_files_a_plan_round_with_the_persons_words(held, card):
+    state, filed = held
+    run.gate_action(state, GP, "gp", 1)
+    card.human("REWORK: split step 3 into two tasks")
+    run.gate_action(state, GP, "gp", 1)
+    assert not card.completed(), "the gate stays held while the round runs"
+    [(what, args, kw)] = filed
+    assert what == "plan" and args[2] == 1 and args[3] == "split step 3 into two tasks"
+    assert kw["base"] == "P" and kw["gate_code"] == "Gp" and "gate-holder" in kw["sender"]
+    [applied] = [c for c in card.driver_comments() if c.startswith("REWORK APPLIED")]
+    assert "(comment #2)" in applied
+    # a second pass over the same thread files nothing more
+    run.gate_action(state, GP, "gp", 1)
+    assert len(filed) == 1
+
+
+def test_rework_at_the_code_gate_files_a_code_round_for_the_named_owner(held, card):
+    state, filed = held
+    run.gate_action(state, GC, "gc", 1)
+    card.human("REWORK: OWNER: TW the parser test asserts nothing")
+    run.gate_action(state, GC, "gc", 1)
+    [(what, args, kw)] = filed
+    assert what == "code" and kw["owner"] == "TW" and "parser test" in args[3]
+
+
+def test_rework_past_the_cap_is_refused_on_the_card(held, card):
+    state, filed = held
+    state["P1-rev-1: plan revision round 1 - lane 1"] = {"id": "r1", "status": "done"}
+    state["P1-rev-2: plan revision round 2 - lane 1"] = {"id": "r2", "status": "done"}
+    run.gate_action(state, GP, "gp", 1)
+    card.human("REWORK: again")
+    run.gate_action(state, GP, "gp", 1)
+    assert not filed
+    [reply] = [c for c in card.driver_comments() if c.startswith("NOT APPLIED")]
+    assert "2" in reply and "PASS" in reply
+
+
+def test_a_new_review_round_brings_a_new_gate_ready(held, card, monkeypatch):
+    """After the round, the old GATE READY and the REWORK under it must not count."""
+    state, filed = held
     run.gate_action(state, GP, "gp", 1)
     card.human("REWORK: split step 3")
     run.gate_action(state, GP, "gp", 1)
-    assert not card.completed()
-    [reply] = [c for c in card.driver_comments() if c.startswith("NOT APPLIED")]
-    assert "edit" in reply and "PASS" in reply
-    run._ANNOUNCED.clear()
+    state["RVp1-r2: plan review round 2 - lane 1"] = {"id": "t_rvp2", "status": "done",
+                                                     "result": "PASS: fixed"}
+    monkeypatch.setattr(run, "latest_verdict_card", lambda st, lane, prefix, final_code=None: (
+        st["RVp1-r2: plan review round 2 - lane 1"], "PASS: fixed"))
+    run.gate_action(state, GP, "gp", 1)
+    readies = [c for c in card.driver_comments() if c.startswith(run.GATE_READY_MARK)]
+    assert len(readies) == 2 and "RVp1-r2" in readies[1]
+    assert len(filed) == 1 and not card.completed()
+    card.human("PASS")
+    run.gate_action(state, GP, "gp", 1)
+    assert len(card.completed()) == 1
 
 
 def test_auto_gates_ignore_comments_and_complete_on_evidence(monkeypatch, refined_file, card):
@@ -281,3 +349,18 @@ def test_auto_gates_ignore_comments_and_complete_on_evidence(monkeypatch, refine
     run.gate_action(STATE, GI, "gi", 1)
     [done] = card.completed()
     assert "auto-gate" in done[done.index("--result") + 1]
+
+
+def test_a_waiting_gate_answers_only_what_came_after_the_drivers_last_word(held, card, monkeypatch):
+    state, filed = held
+    run.gate_action(state, GP, "gp", 1)
+    card.human("PASS")                          # superseded by the REWORK below
+    card.human("REWORK: split step 3")
+    run.gate_action(state, GP, "gp", 1)
+    monkeypatch.setattr(run, "latest_verdict_card", lambda *a, **k: (None, "unreadable"))
+    run.gate_action(state, GP, "gp", 1)
+    assert not [c for c in card.driver_comments() if c.startswith("NOT APPLIED")]
+    card.human("PASS")
+    run.gate_action(state, GP, "gp", 1)
+    [reply] = [c for c in card.driver_comments() if c.startswith("NOT APPLIED")]
+    assert "(comment #5)" in reply and not card.completed()

@@ -7,8 +7,10 @@ WHAT YOU DO (from this card, in the dashboard or the CLI):
 2. Read the plan at <PLAN> and the newest review verdict (RVa, RVc, or their latest re-review round), with the run evidence in the driver log.
 3. Check by hand every success criterion <REFINED> marks `manual at Gc`; no card could automate those.
 4. Inspect the staged index (git diff --cached --stat) and commit and push it if you want this work in history, with an explicit pathspec. Committing is never required, before or after PASS.
-5. Answer with a COMMENT on this card whose first word is PASS (or PASS: <your words>). The driver applies it within a minute and completes this card; the next lane starts.
-   There is no REWORK at this gate: nothing files a code revision from here. To change the code, edit the files yourself, then comment PASS. To reject the lane, do not comment: stop the driver and reset the board.
+5. Answer with a COMMENT on this card whose first word is the verdict:
+   PASS   (or PASS: <your words>) — accept; the driver completes this card and the next lane starts.
+   REWORK: <what is wrong> — the coder revises and the review re-runs (up to the board's rework cap). To send it to a test card instead, start the reason with OWNER: TW or OWNER: TI. This card stays held and gets a new GATE READY when the review passes; answer that one. The reason is required.
+   Small changes you can also make yourself: edit the files, then comment PASS. To abandon the lane, do not comment: stop the driver and reset the board.
 
 DO NOT — each of these stops the board or skips your decision:
 - block this card: a gate blocked by hand can halt the board;

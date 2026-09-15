@@ -292,6 +292,30 @@ for p in $REQUIRED; do
   hermes profile list | grep -q " $p " || { echo "profile $p not available" >&2; exit 1; }
 done
 
+# Which model judges the goal-mode cards. Not a board option: it is each worker
+# profile's resolved `auxiliary.goal_judge` (a managed /etc/hermes pin wins), and no
+# `hermes kanban create` flag carries it — so say it here, where it can still be fixed.
+GOAL_PROFILES=$(python3 - "$REPO" "$BOARD_DIR" <<'PY'
+import json, os, sys
+repo, board_dir = sys.argv[1:3]
+sys.path.insert(0, os.path.join(repo, "mission"))
+import lanes
+manifest = os.path.join(board_dir, "board.json")
+cfg = json.load(open(manifest)) if os.path.exists(manifest) else {}
+for profile, codes in sorted(lanes.goal_profiles(cfg).items()):
+    print(f"{profile} {','.join(codes)}")
+PY
+) || exit 1
+if [ -z "$GOAL_PROFILES" ]; then
+  echo "goal judge: off (no card is filed with --goal)"
+else
+  while read -r p codes; do
+    jp=$(hermes -p "$p" config get auxiliary.goal_judge.provider </dev/null 2>/dev/null || true)
+    jm=$(hermes -p "$p" config get auxiliary.goal_judge.model </dev/null 2>/dev/null || true)
+    echo "goal judge for $codes (profile $p): ${jp:-?} / ${jm:-its worker model}"
+  done <<< "$GOAL_PROFILES"
+fi
+
 # A profile EXISTING is not the same as anything being willing to dispatch its
 # cards. Without a dispatcher the board files perfectly and then sits forever —
 # indistinguishable from a slow board, and the failure is silent for hours.
@@ -309,6 +333,16 @@ if command -v lsof >/dev/null 2>&1; then
   echo "dispatcher: held"
 else
   echo "dispatcher: unchecked (no lsof) — confirm a gateway is running" >&2
+fi
+
+# A driver still serving this board reads a re-filing half-way through — a run with
+# no cards yet — as a failed filing, and halts (is-even, 2026-09-15 19:21). Removing
+# the board with `hermes kanban boards rm` does not stop it; reset.sh does.
+. "$REPO/mission/driver-pid.sh"
+if DRIVER_PID=$(live_driver_pid "$BOARD_DIR"); then
+  echo "the driver for '$SLUG' is still running (pid $DRIVER_PID) — refusing." >&2
+  echo "Stop it first: mission/reset.sh --board ${BOARD_DIR#$REPO/} --batch" >&2
+  exit 6
 fi
 
 # NB: probe the registry, never `hermes kanban --board <slug> list` — that
