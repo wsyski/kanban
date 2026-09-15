@@ -82,7 +82,7 @@ OPTIONS = {
     "timeout-min":       ("count",    240,   False, None),
     "assignees":         ("roles",    {},    False, None),
     # The WORK model: every card the board files runs on it, and a lane may name
-    # its own in the idea header (`<!-- model: ornith-35b -->`). Named as the flag
+    # its own in the idea header (`<!-- model: qwen38-27b -->`). Named as the flag
     # it becomes at filing (`hermes kanban create --model`, `--provider`), because
     # that is what a reader greps for. Omitted everywhere, no flag is filed and
     # every card runs its assignee profile's own model — the behaviour before

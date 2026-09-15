@@ -56,7 +56,7 @@ same set:
       "goal-max-turns": 40,
       "timeout-min": 240,                        # the driver's own cap
       "assignees": {"reviewer": "senior"},       # optional: role -> hermes profile
-      "model": "ornith-35b",                     # optional: the WORK model, every card
+      "model": "qwen38-27b",                     # optional: the WORK model, every card
       "provider": "llama-swap",                  # optional: its provider (needs the model)
       "model_override": "glm-5.3",               # optional: the model the REVIEWS run on
       "provider_override": "opencode-go",        # optional: its provider (needs the model)
@@ -95,7 +95,7 @@ person. Name a role here to have its cards worked elsewhere.
 the plan, the tests, the implementation, the reviews and every rework round. Omitted,
 no model flag is filed at all and each card runs its assignee profile's own model, which
 is what every board did before 2026-09-13. A lane may name its own pair in the idea
-header (`<!-- model: ornith-35b -->`, `<!-- provider: llama-swap -->`); its cards are
+header (`<!-- model: qwen38-27b -->`, `<!-- provider: llama-swap -->`); its cards are
 re-pointed to it when the lane opens, because a board files its cards before any idea
 exists. Naming a model without its provider asks the profile's provider for it, so name
 the pair.

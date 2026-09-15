@@ -125,15 +125,15 @@ def test_opening_a_lane_re_points_its_cards_at_the_lanes_model(monkeypatch, tmp_
     calls = []
     _board_env(monkeypatch, tmp_path, calls, it=False)
     monkeypatch.setattr(run, "manifest", lambda: {
-        "model": "ornith-35b", "provider": "llama-swap",
+        "model": "qwen38-27b", "provider": "llama-swap",
         "model_override": "glm-5.3-flash", "provider_override": "opencode-go"})
     monkeypatch.setattr(run, "lane_options", lambda lane: {
         "integration-tests": False, "unit-tests": True, "auto-gates": False,
-        "model": "qwen38-27b", "provider": "llama-swap", "idea": "## Idea 1: is_even\n"})
+        "model": "muse-glimmer-30b", "provider": "llama-swap", "idea": "## Idea 1: is_even\n"})
     run.tick()
     sets = {c[1]: c[2:] for c in calls if c[0] == "set-model"}
     for cid in ("id-I", "id-P", "id-TW", "id-C"):
-        assert sets[cid] == ("qwen38-27b", "--provider", "llama-swap"), cid
+        assert sets[cid] == ("muse-glimmer-30b", "--provider", "llama-swap"), cid
     # the review was filed with the pin already, so it is not re-pointed at all...
     assert "id-RVa" not in sets, sets
     # ...and a gate is never re-pointed: nothing spawns it
@@ -148,14 +148,14 @@ def test_a_lane_without_a_pin_re_points_its_review_too(monkeypatch, tmp_path):
     form of the same note)."""
     calls = []
     _board_env(monkeypatch, tmp_path, calls, it=False)
-    monkeypatch.setattr(run, "manifest", lambda: {"model": "ornith-35b",
+    monkeypatch.setattr(run, "manifest", lambda: {"model": "qwen38-27b",
                                                   "provider": "llama-swap"})
     monkeypatch.setattr(run, "lane_options", lambda lane: {
         "integration-tests": False, "unit-tests": True, "auto-gates": False,
-        "model": "qwen38-27b", "provider": "llama-swap", "idea": "## Idea 1: is_even\n"})
+        "model": "muse-glimmer-30b", "provider": "llama-swap", "idea": "## Idea 1: is_even\n"})
     run.tick()
     sets = {c[1]: c[2:] for c in calls if c[0] == "set-model"}
-    assert sets["id-RVa"] == ("qwen38-27b", "--provider", "llama-swap"), sets
+    assert sets["id-RVa"] == ("muse-glimmer-30b", "--provider", "llama-swap"), sets
     run._OPENED.clear()
 
 

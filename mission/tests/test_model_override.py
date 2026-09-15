@@ -86,8 +86,11 @@ def test_a_provider_without_a_model_is_not_sent():
 
 # --- the work model: every card, unless a lane says otherwise ----------------
 
-WORK = {"model": "ornith-35b", "provider": "llama-swap"}
-LANE = {"model": "qwen38-27b", "provider": "llama-swap"}
+WORK = {"model": "qwen38-27b", "provider": "llama-swap"}
+# The lane's OWN pair, deliberately a different model from the board's: these tests
+# exist to show which one wins, and a pair that matched the board's would pass either
+# way. Any second key of the rig does; this is the third slot of its roster.
+LANE = {"model": "muse-glimmer-30b", "provider": "llama-swap"}
 
 
 def test_the_work_model_rides_every_card():
@@ -96,14 +99,14 @@ def test_the_work_model_rides_every_card():
     is filed at all and every card keeps its profile's own model."""
     for code in ("I", "P", "TW", "C", "TI", "RVp", "RVa", "RVc"):
         assert lanes.model_args(code, dict(WORK)) == \
-            ["--model", "ornith-35b", "--provider", "llama-swap"], code
+            ["--model", "qwen38-27b", "--provider", "llama-swap"], code
 
 
 def test_a_lane_header_model_beats_the_board():
     """`resolve_lane_options` has already folded the idea header over the board, so
     the lane's dict is the only thing to read below the pin."""
     assert lanes.model_args("C", dict(WORK), dict(LANE)) == \
-        ["--model", "qwen38-27b", "--provider", "llama-swap"]
+        ["--model", "muse-glimmer-30b", "--provider", "llama-swap"]
 
 
 def test_the_review_pin_beats_the_lane_and_the_board_model():
@@ -112,10 +115,10 @@ def test_the_review_pin_beats_the_lane_and_the_board_model():
     both = {**WORK, **PINNED}
     assert lanes.model_args("RVa", both, dict(LANE)) == [
         "--model", "glm-5.3-flash", "--provider", "opencode-go"]
-    # ...and with no pin, the work model reaches the reviews too — which is the
+    # ...and with no pin, the lane's model reaches the reviews too — which is the
     # case board_schema.review_model_notices reports at the door.
     assert lanes.model_args("RVa", dict(WORK), dict(LANE)) == \
-        ["--model", "qwen38-27b", "--provider", "llama-swap"]
+        ["--model", "muse-glimmer-30b", "--provider", "llama-swap"]
 
 
 # --- the schema declares these keys ------------------------------------------
@@ -150,11 +153,11 @@ def test_a_board_model_with_no_pin_is_reported_and_not_refused():
     """A legitimate board (one local model for everything) is a note, not an error:
     the audit's clean gate must survive it, and the operator must still be told the
     verdict no longer comes from a different model."""
-    assert board_schema.review_model_notices({"model": "ornith-35b"}, where="b")
+    assert board_schema.review_model_notices({"model": "qwen38-27b"}, where="b")
     assert board_schema.review_model_notices(
-        {"model": "ornith-35b", "model_override": "glm-5.3-flash"}, where="b") == []
+        {"model": "qwen38-27b", "model_override": "glm-5.3-flash"}, where="b") == []
     assert board_schema.review_model_notices({}, where="b") == []
-    assert board_schema.validate({"lanes": 1, "model": "ornith-35b"}, where="b") == []
+    assert board_schema.validate({"lanes": 1, "model": "qwen38-27b"}, where="b") == []
 
 
 def test_a_manifest_may_pin_a_model():
@@ -236,7 +239,7 @@ def test_filing_puts_the_work_model_on_every_card_and_the_pin_on_the_reviews(mon
         if a[1].startswith("RV"):
             assert _arg(a, "--model") == "glm-5.3-flash", a[1]
         else:
-            assert _arg(a, "--model") == "ornith-35b", a[1]
+            assert _arg(a, "--model") == "qwen38-27b", a[1]
             assert _arg(a, "--provider") == "llama-swap", a[1]
 
 
@@ -326,7 +329,7 @@ def test_a_revision_card_filed_with_no_lane_on_disk_takes_the_board_model(monkey
              for c in ("Gi", "Gp", "Gc")}
     run.file_code_revision(state, 1, 1, "1. fix", owner="C")
     rev = next(c for c in calls if c[0] == "create" and c[1].startswith("C1-rev-1"))
-    assert _arg(rev, "--model") == "ornith-35b"
+    assert _arg(rev, "--model") == "qwen38-27b"
 
 
 # --- create-board.sh's pre-flight asks the graph, not a list ----------------
