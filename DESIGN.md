@@ -70,7 +70,7 @@ gate, bounded, then escalation:
 ```
 RVp(n)     ──REJECT───────→ P(n)-rev-N          → RVp(n)-r(N+1) ──PASS───→ Gp(n) opens
 RVa/RVc(n) ──REJECT+OWNER─→ (C|TW|TI)(n)-rev-N  → RVa(n)-r(N+1) ──PASS───→ Gc(n) opens
-Gi(n)      ──REWORK───────→ I(n)-rev-N          → Gi(n)-r(N+1)  ──ACCEPT─→ P(n) opens
+Gi(n)      ──REWORK───────→ I(n)-rev-N          → Gi(n)-r(N+1)  ──PASS───→ P(n) opens
 ```
 
 - **Cap:** all three loops read `lanes.max_reworks` for the lane — `max-reworks` from

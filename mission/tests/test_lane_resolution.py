@@ -72,12 +72,12 @@ def test_title_prefix_does_not_cross_lane_numbers():
     """Gi1 must not match Gi10; P1 must not match P12. Real titles."""
     st = {
         "Gi10: idea gate - lane 10": {"id": "t1", "status": "done",
-                                      "result": "ACCEPT", "completed_at": 1},
+                                      "result": "PASS", "completed_at": 1},
     }
     t, c = run.title_of_prefix(st, "Gi1")
     assert c is None
     st["Gi1: idea gate - lane 1"] = {"id": "t2", "status": "done",
-                                     "result": "ACCEPT", "completed_at": 2}
+                                     "result": "PASS", "completed_at": 2}
     t, c = run.title_of_prefix(st, "Gi1")
     assert c and c["id"] == "t2"
     # round digit continues a code whose prefix ends non-digit

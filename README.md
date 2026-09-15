@@ -126,12 +126,17 @@ Create and serve:
 
     $EDITOR boards/<s>/lane-1.md              # optional: prefill the idea
     mission/create-board.sh --board boards/<s>
+    hermes kanban boards switch <s>           # create registers the board but does NOT
+                                              # make it current — without this the cards
+                                              # file and no worker ever spawns
     mission/start-board.sh --slug <s>         # serves; releases nothing yet
-    mission/arm.sh <s> [lane]                 # or drag the Triage card — same go signal
+    mission/arm.sh <s> [lane]                 # the go signal — prefer it to the drag, see below
 
 `mission/create-board.sh --help` is authoritative (including the empty board you get
-with `--slug`/`--title` instead of `--board`). There is no import step and no second
-copy of an idea.
+with `--slug`/`--title` instead of `--board`). There is no import step: `lane-1.md` is
+filed onto the Triage card as the LIVE copy of the idea, and arming adopts the CARD and
+writes it back over the file — so edit the card, not the file, until the lane is
+activated.
 
 A filing mints the run its cards are filed into, and a **re-filing reuses the run a
 previous filing minted and no driver ever started** (`runs/current` names it) — so a
@@ -145,10 +150,13 @@ driver has written into is never reused: paste its id into `start-board.sh` inst
 board from `http://127.0.0.1:9119/kanban`:
 
 1. Write the idea into the board's Triage card — edit it right there.
-2. **Drag it from Triage to Todo.** That is the go signal, and the only gesture — a shell
-   makes the same one with `mission/arm.sh <slug> [lane]`, which creates an unassigned card
-   in `todo` carrying the idea (`armed_ideas` reads either, because what it tests is that an
-   unassigned card has left Triage).
+2. **Drag it from Triage to Todo.** That is the go signal — a shell makes the same one with
+   `mission/arm.sh <slug> [lane]`, which creates an unassigned card carrying the idea
+   (`armed_ideas` reads either, because what it tests is that an unassigned card has left
+   Triage). **When `kanban.default_assignee` names a profile, prefer `arm.sh`:** the
+   dispatcher assigns an unassigned `ready` card and spawns a worker on it within seconds,
+   and `armed_ideas` then skips it (it ignores any card with an assignee), so the lane never
+   opens. `arm.sh` files its card `blocked`, which the dispatcher never claims.
 3. The driver validates the card's headers and the board's manifest, adopts the text
    into `lane-<k>.md`, mints `runs/<run-id>/`, archives the previous run's cards, files
    a fresh lane set, and drives it. If validation fails it files nothing and comments
@@ -222,7 +230,7 @@ Re-create a board after engine changes:
     mission/reset.sh --board boards/<slug> --batch  # stop driver + workers, archive cards, unstage
     hermes kanban boards rm <slug>                  # reset archives cards, not the board
     mission/create-board.sh --board boards/<slug>
-    mission/start-board.sh --slug <slug>            # then drag Triage → Todo
+    mission/start-board.sh --slug <slug>            # then arm it: mission/arm.sh <slug>
 
 ### How it flows (diagram)
 
@@ -458,6 +466,29 @@ completes the gate — and still commits nothing; the files stand staged for you
 to smoke-test the machinery and for lanes whose human check is recorded outside the
 chain, not for work whose authorization must be a commit.
 
+**Completing a gate is one CLI call** — the gate card is how the lane is released:
+
+    env -u HERMES_HOME hermes kanban --board <slug> complete <CARD-ID> --result "PASS: <what you decided>"
+
+- `env -u HERMES_HOME` matters when you run it from inside a Hermes profile session: the
+  profile's `HERMES_HOME` makes `hermes kanban` resolve the *profile's* kanban dir instead of
+  `~/.hermes/kanban`, where the boards live. From a plain shell it is a harmless no-op.
+- `--board <slug>` names the board explicitly; omit it and the CLI uses whichever board is
+  current.
+- `--result` is optional to the CLI — the card completes without it. But the finished run's
+  audit reads that text for one word — `PASS` at a `Gp`/`Gc` gate, `refined idea present` at
+  `Gi` — out of a snapshot written once and never rewritten, so spell the evidence out. The
+  gate card's own body prints the same command with its id, and the driver's `HUMAN GATE READY`
+  log line names it too.
+
+The **dashboard** completes the same card (the plugin's `PATCH /api/plugins/kanban/tasks/<id>`
+calls the same `complete_task`, and *Mark done* stores your summary as both `result` and
+`summary`), with two traps: in the **Electron desktop app** the summary dialog is
+`window.prompt`, which Electron does not implement, so pressing Complete returns `null` and the
+move is silently dropped — use a browser tab (`http://127.0.0.1:9119/kanban`) or the CLI; and a
+**comment is not the completion field**, so a verdict typed into the comment box leaves the
+card's status untouched.
+
 ## 7. Filing a new idea (genericity)
 
 The card graph (`mission/lanes.py`) and card bodies (`mission/card-bodies/`) are shared
@@ -473,7 +504,10 @@ by every board — nothing scenario-specific to write per idea. To run new work:
    prose silently ignored. Write paths relative to the board's work directory, so the
    idea stays portable between boards.
 2. Create the board (§3): `mission/create-board.sh --board boards/<s>`.
-3. `mission/start-board.sh --slug <s>` launches the driver; drag the Triage card to Todo.
+3. Make it current: `hermes kanban boards switch <s>` — creating registers the board but
+   does **not** make it current, and the dispatcher follows the current board.
+4. `mission/start-board.sh --slug <s>` launches the driver; arm it with `mission/arm.sh <s>`
+   (or drag the Triage card — see §3 for the `default_assignee` race).
 
 Only touch `mission/card-bodies/` or `mission/lanes.py` when the card graph itself must
 change (a new role, a new gate) — that changes every board, not just one idea. See

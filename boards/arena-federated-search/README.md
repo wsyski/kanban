@@ -81,6 +81,59 @@ URLs onto the incoming request's base URL — the endpoint the companion plan in
 `boards/blade-workspace` implements. The two boards are the two halves of one feature
 (PLCB-25380), which is why this one can only be deployed after that one is.
 
+## Running it
+
+See §3 of the root README for the loop; the board-specific commands are:
+
+    mission/create-board.sh --board boards/arena-federated-search
+    hermes kanban boards switch arena-federated-search      # create files the board
+                                                            # but leaves it NON-current
+    mission/start-board.sh --slug arena-federated-search    # serves; releases nothing
+    mission/run-audit.py --runs boards/arena-federated-search/runs   # 0/0 is the pass
+
+`create-board.sh` files eleven parked cards — the complete `LANE_CARDS` set — and the
+driver prunes `TI1`/`RVc1` down to the nine-card lane when the lane opens (see *Lane
+shape*). The board is IT-complete at filing; the integration level is dropped at arm.
+
+**The go signal is the arm card.** Serve mode releases nothing on its own. Arm lane 1
+from a shell — this is the reliable gesture and the one to use:
+
+    mission/arm.sh arena-federated-search 1
+
+`arm.sh` files the idea as a **`blocked`, unassigned** card, which the driver's
+`armed_ideas()` reads and the dispatcher never claims, and it archives the board's own
+seeded Triage card (whose title it would otherwise duplicate).
+
+**Do not drag the seeded Triage card to Todo on this machine.** `kanban.default_assignee`
+is set to `coder`, so a drag leaves the card unassigned-but-`ready` and the dispatcher
+assigns it and spawns a worker within seconds; `armed_ideas()` then skips it (it ignores
+any card with an assignee, `run.py:2980`), so the driver can never read the idea again —
+`_ARMED` stays false, `open_lanes()` skips the lane every tick, and every card sits
+`blocked` with nothing running (measured 2026-09-15, this board). If it happens: archive
+that card and run `arm.sh` — `block`/`unblock` alone do not clear its assignee.
+
+Never the dashboard's `specify` button: it rewrites the idea with an auxiliary LLM before
+the researcher reads it.
+
+`"auto-gates": false`, so three human gates stop the run and nothing downstream moves
+until a person completes the card (see §6 of the root README for gate discipline):
+
+- `Gi` — read `refined.md` against this idea; the result's first word is `PASS:` (opens
+  the lane) or `REWORK: <what is wrong>` (files a revision and re-gates).
+- `Gp` — read `plan.md` and the `RVp` verdict; complete it only with `PASS` on record.
+  Its completion releases `TW` and `C` together.
+- `Gc` — read `plan.md`, the newest verdict and `git -C <workdir> diff --cached --stat`;
+  committing is the gate-holder's call, with an explicit pathspec.
+
+Complete a gate from the shell — the card id is on the board and in the driver's
+`HUMAN GATE READY` line:
+
+    env -u HERMES_HOME hermes kanban --board arena-federated-search complete <CARD-ID> --result "PASS: <what you decided>"
+
+Write the gate's own evidence word into the result (`refined idea present` at `Gi`, the
+word `PASS` at `Gp`/`Gc`) — the audit checks exactly those tokens in the run snapshot.
+The driver never commits and never moves a branch; the workspace index is the hand-off.
+
 ## Cleaning up
 
     mission/reset.sh --board boards/arena-federated-search

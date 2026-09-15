@@ -263,8 +263,18 @@ def test_rejection_findings_accept_any_punctuation_after_the_token():
 def test_rework_is_the_first_word_in_any_case():
     assert run.is_rework("REWORK: q1 yes")
     assert run.is_rework("  rework — answers")
-    assert not run.is_rework("ACCEPT: rework nothing")
+    assert not run.is_rework("PASS: rework nothing")
     assert run.rework_answers("REWORK: q1 yes, q2 42") == "q1 yes, q2 42"
+
+
+def test_the_affirmative_word_is_pass_at_every_gate():
+    """One affirmative word, and it is the token the driver already reads: `PASS`
+    (verdict_token, via VERDICT_CODES) — ACCEPT was never a token at all, so the
+    gate bodies and the diagram say PASS now. `REWORK` stays the Gi send-back, the
+    one decision the driver routes on."""
+    assert run.verdict_token("PASS: refined idea accepted") == "PASS"
+    assert run.verdict_token("ACCEPT: refined idea accepted") == ""
+    assert "Gi".lower().startswith(run.VERDICT_CODES)   # a Gi PASS is recorded, not prose
 
 
 # --- rework_rounds: the three loops ------------------------------------------
@@ -338,10 +348,10 @@ def test_rework_at_the_idea_gate_files_a_researcher_round(monkeypatch):
     assert [(f[0], f[3], f[4]["base"]) for f in filed] == [("rev", "q1 yes", "I")]
 
 
-def test_accept_at_the_idea_gate_files_nothing(monkeypatch):
+def test_pass_at_the_idea_gate_files_nothing(monkeypatch):
     filed = _recording(monkeypatch)
     st = full_lane_state()
-    st[lanes.card_title("Gi", 1)].update(status="done", result="ACCEPT: fine", completed_at=10)
+    st[lanes.card_title("Gi", 1)].update(status="done", result="PASS: fine", completed_at=10)
     run.rework_rounds(st)
     assert filed == []
 
@@ -422,7 +432,7 @@ def test_p_waits_while_the_newest_idea_verdict_is_rework():
     st[lanes.card_title("Gi", 1)].update(status="done", result="REWORK: q1", completed_at=10)
     assert run.held_by_verdict(st, "p", 1)
     st["Gi1-r2: idea re-gate round 2 - lane 1"] = card(
-        "Gi1-r2", status="done", result="ACCEPT", completed_at=20)
+        "Gi1-r2", status="done", result="PASS", completed_at=20)
     assert not run.held_by_verdict(st, "p", 1)
 
 

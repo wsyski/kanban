@@ -11,7 +11,7 @@ If this lane runs with human gates (the default), the driver pauses here and log
    hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "..."
 
 VERDICT (result field, first word decides):
-- ACCEPT: --result "ACCEPT: <what you decided>". The normal case — anything that does not start with REWORK also opens the lane.
+- PASS: --result "PASS: <what you decided>". The normal case — anything that does not start with REWORK also opens the lane.
 - REWORK: --result "REWORK: <what is missing or wrong, with your answers>". The driver files a researcher revision and a re-gate, and the plan card waits for the re-gate (up to the board's rework cap, then the lane escalates to a human).
 
 Complete it from the CLI (the command above), or from a browser on the dashboard: the desktop app cannot complete a card at all — its `Complete` collects the summary with `window.prompt`, which Electron does not implement, so the click does nothing (DESIGN.md, *Known traps*).

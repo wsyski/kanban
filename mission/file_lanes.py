@@ -429,13 +429,16 @@ def file_ideas(board, repo, ideas_dir, lane_count, key_prefix, run_id=None,
             runs_root = os.path.dirname(runs_root)
         body = (f"RAW IDEA for lane {lane} — human input, not a work card.\n\n"
                 f"{_options_line(repo, board, lane, text, workdir)}\n"
-                f"Source: {os.path.join(ideas_dir, f'lane-{lane}.md')}\n"
-                f"The driver snapshots this into the run it is driving when it "
+                f"Edit THIS CARD until the lane is activated — it is the live idea. "
+                f"Arming adopts the card's text and writes it back over "
+                f"{os.path.join(ideas_dir, f'lane-{lane}.md')} (the file of record, "
+                f"which git history keeps), so an edit made to the file alone never "
+                f"reaches the lane.\n"
+                f"The driver snapshots the adopted text into the run it is driving when it "
                 f"activates lane {lane} — `<runs>/<run-id>/snapshots/lane-{lane}.md` "
                 f"under {runs_root} (a run is minted when an idea is armed, so the id "
-                f"is not known until then); lane {lane}'s cards read the snapshot, "
-                f"never the source.\n"
-                f"Edit the source until the lane is activated.\n\n---\n\n{text}")
+                f"is not known until then); lane {lane}'s cards read the snapshot "
+                f"alone.\n\n---\n\n{text}")
         out = kb(board, "create", idea_title(text, lane),
                  "--body", body, "--triage",
                  "--idempotency-key", f"{key_prefix}-idea-{lane}",

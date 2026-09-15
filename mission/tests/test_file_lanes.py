@@ -227,6 +227,22 @@ def test_file_ideas_carries_the_raw_text_and_points_at_the_snapshot(monkeypatch,
     assert "runs/k/snapshots" not in body
 
 
+def test_the_idea_card_body_sends_the_holder_to_the_card(monkeypatch, tmp_path):
+    """The card is the LIVE idea and the file is the record: arming adopts the card's
+    text and writes it back over the file, so a sentence telling the human to 'edit the
+    source' sent them to a file whose edit is clobbered."""
+    import file_lanes
+    fake = FakeKb()
+    monkeypatch.setattr(file_lanes, "kb", fake)
+    (tmp_path / "lane-1.md").write_text("## Idea 1: CLI\n\nBuild the CLI.\n")
+    file_lanes.file_ideas("b", "/repo", str(tmp_path), 1, "k")
+    body = fake.created()[0][fake.created()[0].index("--body") + 1]
+    assert "Edit THIS CARD" in body
+    assert "Edit the source" not in body
+    # the marker block must still split cleanly from the adopted text
+    assert body.split("\n---\n", 1)[1].strip().startswith("## Idea 1")
+
+
 def test_file_ideas_files_nothing_on_an_empty_generic_board(monkeypatch, tmp_path):
     """A generic board with no ideas entered has an empty triage column."""
     import file_lanes
