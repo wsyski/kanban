@@ -7,8 +7,18 @@ If this lane runs with human gates (the default), the driver pauses here. Your o
 2. Check by hand every success criterion <REFINED> marks `manual at Gc`; no card could automate those.
 3. Inspect the staged index: git diff --cached --stat
 4. Commit and push if you want this work in history — entirely at your discretion, with an explicit pathspec. The flow does not require it.
-5. Complete this card: hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "<what you decided>"
+5. Complete this card. Write PASS — the driver adds its own evidence line and the staged
+   path list beside it, so nothing else needs to be written:
+       hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "PASS: accepted"
+   PASS is the first word and the only one that releases the lane; your own words may
+   follow the colon ("PASS: reviewed the diff, committing it").
 
-Complete it from the CLI (the command above), or from a browser on the dashboard: the desktop app cannot complete a card at all — its `Complete` collects the summary with `window.prompt`, which Electron does not implement, so the click does nothing (DESIGN.md, *Known traps*).
+Complete it from the CLI (the command above), or from a browser on the dashboard — in a
+browser the Complete dialog asks for a summary: type PASS (or PASS: <your words>) into it.
+The desktop app cannot complete a card at all: its `Complete` collects the summary with
+`window.prompt`, which Electron does not implement, so the click does nothing
+(DESIGN.md, *Known traps*).
+
+OPTIONAL: the board does not need it — the driver records the evidence line. MANDATORY in the dashboard's Complete dialog, so type PASS there.
 
 Completing this card is what releases the next lane's root card.
