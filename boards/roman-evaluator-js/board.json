@@ -6,8 +6,13 @@
   "integration-tests": false,
   "auto-gates": true,
   "goal": true,
-  "max-runtime": "10m",
+  "goal-cards": [
+    "C"
+  ],
+  "max-runtime": "20m",
   "max-reworks": 2,
+  "model": "qwen38-27b",
+  "provider": "llama-swap",
   "model_override": "glm-5.3-flash",
   "provider_override": "opencode-go"
 }

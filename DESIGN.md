@@ -147,7 +147,15 @@ each worker really carried its `-m … --provider llama-swap`, and each wrote a 
 inline-base64 copy the old contract forced — not on the work, and not on tool-call
 formatting, which was valid JSON in every one of the 77 calls. The driver-side attach
 above removes that copy, so a local model as a worker is unproven again rather than
-disproven. `board_schema` refuses a provider without a model beside it in the same scope, as the
+disproven: on 2026-09-16 `qwen38-27b` carried `I1` (6 min) and `P1` (11 min) with the
+driver attaching both hand-offs, which is further than any local run had reached.
+
+**A local model must serve the lane's fork.** `TW ∥ C` puts two cards in flight at once, so
+a llama.cpp slot with `--parallel 1` serialises them and both ceilings run in wall time —
+measured the same day, both fork cards timed out at 1202s of a 20m limit on `qwen38-27b`,
+which halts the board. Name a model with two or more parallel slots (`ornith-35b` here), or
+drop the fork with `unit-tests: false`. The per-card ceiling is also wall time against a
+COLD model: the first card on a slot pays the load (~48 s on the 24 GB rig). `board_schema` refuses a provider without a model beside it in the same scope, as the
 engine does, and reports (never refuses) a board that names a work model and no pin —
 its reviews have quietly become the author's model. `lanes.model_args` is the single
 lookup for the whole precedence, so filing, the rework rounds and the lane-open re-point

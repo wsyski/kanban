@@ -67,7 +67,14 @@ researcher's to find — a worker's `python3` may not.
     profile. A correction to the earlier note here: the eight `read_file` calls "in one
     millisecond" were eight DIFFERENT chunk files the model had just made with `cut`, read in one
     parallel call — not a loop.
-  - **Still unproven, not disproven:** whether these models can carry a card end to end now that
+  - **The `TW ∥ C` fork needs a model with two parallel slots.** Measured 2026-09-16: on
+  `qwen38-27b` (`--parallel 1`) the lane reached the fork at 08:49 with both cards live, their
+  requests serialised in the one slot (completions grew 1m05 → 1m25 → 3m22 as they queued), and
+  **both timed out at 1202s** — a hard failure that halts the board. A card's ceiling is wall time,
+  so two cards on one slot need roughly twice it. `ornith-35b` runs `--parallel 2` (262144 context
+  per session) and is the local model this lane shape fits. The alternative on a single-slot model
+  is `"unit-tests": false`, which drops `TW` and leaves one worker card live at a time.
+- **Still unproven, not disproven:** whether these models can carry a card end to end now that
     the copy is gone. Re-run `is-even` with `"model": "qwen38-27b"`, `"provider": "llama-swap"`
     and `"max-runtime": "20m"`. The rig's configuration is in the KnowledgeBase note
     `docs/large-language-models/llama-server-configuration.md`.

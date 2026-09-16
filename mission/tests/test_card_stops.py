@@ -1159,3 +1159,46 @@ def test_other_errors_and_other_boards_are_not_a_removal(monkeypatch):
     monkeypatch.setattr(run, "BOARD", "b1")
     assert run.board_removed_exit(RuntimeError("timed out after 60s"), idle=True) is None
     assert run.board_removed_exit(RuntimeError("board 'b10' does not exist"), idle=True) is None
+
+
+# ---- a timeout names what else was running on the same model ----------------
+
+def _fork_state():
+    return {"TW1: unit tests - lane 1": {"id": "t_tw", "status": "blocked",
+                                         "title": "TW1: unit tests - lane 1"},
+            "C1: implement - lane 1": {"id": "t_c", "status": "running",
+                                       "title": "C1: implement - lane 1"},
+            "RVa1: code review - lane 1": {"id": "t_rva", "status": "running",
+                                           "title": "RVa1: code review - lane 1"}}
+
+
+def test_a_timeout_names_the_sibling_that_shared_the_model(monkeypatch):
+    """is-even, 2026-09-16: both fork cards timed out at 1202s of a 20m ceiling on a
+    `--parallel 1` slot while the work itself took minutes. The halt named only the card
+    that tripped, which reads as a slow model rather than a busy one."""
+    monkeypatch.setattr(run, "manifest",
+                        lambda: {"model": "ornith-35b", "provider": "llama-swap",
+                                 "model_override": "glm-5.3-flash",
+                                 "provider_override": "opencode-go"})
+    monkeypatch.setattr(run, "lane_model_opts", lambda lane: {})
+    st = _fork_state()
+    note = run.concurrency_note(st, st["TW1: unit tests - lane 1"])
+    assert "on ornith-35b" in note and "C1" in note
+    assert "RVa1" not in note, "the review runs on the pinned review model, not this one"
+    assert "one request at a time" in note
+
+
+def test_a_lone_card_timing_out_just_names_its_model(monkeypatch):
+    monkeypatch.setattr(run, "manifest", lambda: {"model": "qwen38-27b", "provider": "llama-swap"})
+    monkeypatch.setattr(run, "lane_model_opts", lambda lane: {})
+    st = _fork_state()
+    st["C1: implement - lane 1"]["status"] = "done"
+    st["RVa1: code review - lane 1"]["status"] = "done"
+    assert run.concurrency_note(st, st["TW1: unit tests - lane 1"]) == " (on qwen38-27b)"
+
+
+def test_a_board_that_names_no_model_says_nothing_about_one(monkeypatch):
+    monkeypatch.setattr(run, "manifest", lambda: {})
+    monkeypatch.setattr(run, "lane_model_opts", lambda lane: {})
+    st = _fork_state()
+    assert run.concurrency_note(st, st["TW1: unit tests - lane 1"]) == ""

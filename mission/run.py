@@ -2134,7 +2134,9 @@ def _tick():
         mark_attempt(card)
         kb("unblock", card["id"])
         record_chain_start(card, lane)
-        log(f"unblocked {title.split(':')[0]} (parents done)")
+        model = card_model(lanes.base_code(title.split(":")[0]), lane)
+        log(f"unblocked {title.split(':')[0]} (parents done)"
+            + (f" on {model}" if model else ""))
     st = state = board()
     # 1b. the document chain: a start record for every card that left the parked
     #     state, then one record per card as it finishes.
@@ -2513,7 +2515,7 @@ def halt_if_exhausted(st):
         # back, by filing a revision card; a ceiling is not a review.
         if p.get("kind") == "timed_out":
             stop_a_timeout(c, p)
-            reason_txt = str(p.get("reason") or "")
+            reason_txt = str(p.get("reason") or "") + concurrency_note(st, c)
             break
         if p.get("kind") == "gave_up" or c.get("status") == "blocked":
             # Provider starvation is not a content failure — the worker never got
@@ -2557,6 +2559,39 @@ def halt_if_exhausted(st):
 
 _HALTED = {"reason": None}   # mutable holder: functions assign inner keys
 _ESCALATED = set()   # gate codes already escalated this run (rejoined on restart)
+
+
+def card_model(code, lane):
+    """The model a card of this code runs on ('ornith-35b'), or '' when the board names
+    none and the card runs its profile's own."""
+    args = lanes.model_args(code, manifest(), lane_model_opts(lane))
+    return args[args.index("--model") + 1] if "--model" in args else ""
+
+
+def concurrency_note(state, card):
+    """Which other cards were in flight beside this one, on the same model.
+
+    A model slot that serves one request at a time turns the lane's `TW ∥ C` fork into
+    two wall clocks: measured on is-even, 2026-09-16, both fork cards timed out at 1202s
+    of a 20m ceiling on a `--parallel 1` llama.cpp slot while the work itself was
+    minutes. The halt used to name only the card that tripped, which reads as a slow
+    model rather than a busy one."""
+    title = card.get("title") or ""
+    lane = card_id_lane(title)
+    if lane is None:
+        return ""
+    model = card_model(lanes.base_code(title.split(":")[0]), lane)
+    if not model:
+        return ""
+    others = sorted(t.split(":")[0] for t, c in state.items()
+                    if c.get("status") == "running" and c.get("id") != card["id"]
+                    and card_id_lane(t) is not None
+                    and card_model(lanes.base_code(t.split(":")[0]),
+                                   card_id_lane(t)) == model)
+    if not others:
+        return f" (on {model})"
+    return (f" (on {model}, sharing it with {', '.join(others)} — a model that serves one "
+            f"request at a time spends both cards' ceilings on the queue)")
 
 
 def stop_a_timeout(card, payload):

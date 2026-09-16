@@ -10,9 +10,9 @@
   "goal-cards": [
     "C"
   ],
-  "max-runtime": "10m",
+  "max-runtime": "12m",
   "max-reworks": 2,
-  "model": "qwen38-27b",
+  "model": "ornith-35b",
   "provider": "llama-swap",
   "model_override": "glm-5.3-flash",
   "provider_override": "opencode-go"
