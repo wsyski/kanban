@@ -121,3 +121,13 @@ def test_no_runs_is_not_an_error(tmp_path):
     r = subprocess.run([sys.executable, SCRIPT, "--runs", str(tmp_path / "nope")],
                        capture_output=True, text=True)
     assert r.returncode == 0 and "no runs" in r.stdout
+
+
+def test_the_timing_report_prints_the_end_state_not_every_status_entered():
+    """A finished 12-card board printed `{'blocked': 11, 'running': 6, 'done': 8, …}` —
+    28 entries — and read as a stuck board."""
+    import importlib.util, os, subprocess, sys, json
+    path = os.path.join(os.path.dirname(__file__), "..", "timing-report.py")
+    src = open(path).read()
+    assert "end status histogram" not in src
+    assert 'c["status"] for c in card_snaps[-1]["cards"].values()' in src

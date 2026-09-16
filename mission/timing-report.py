@@ -150,15 +150,18 @@ def main():
         snaps = snaps[last_b:]
         print("(report covers the latest run segment; earlier segments in the file)")
     t0, t1 = snaps[0]["epoch"], snaps[-1]["epoch"]
-    tr = transitions([s for s in snaps if "cards" in s])
-    statuses = collections.Counter()
-    for (title, status), _ in [(k, v) for k, v in tr.items() if len(k) == 2]:
-        statuses[status] += 1
+    card_snaps = [s for s in snaps if "cards" in s]
+    tr = transitions(card_snaps)
+    # The END state, one entry per card — not every status each card ever ENTERED, which
+    # is what this counted until 2026-09-16: a finished 12-card board printed
+    # `{'blocked': 11, 'running': 6, 'done': 8, …}`, 28 entries, and read as a stuck board.
+    statuses = collections.Counter(c["status"] for c in card_snaps[-1]["cards"].values()) \
+        if card_snaps else collections.Counter()
     print(f"== Timing report ==")
     print(f"window: {datetime.datetime.fromtimestamp(t0):%H:%M} → "
           f"{datetime.datetime.fromtimestamp(t1):%H:%M} "
           f"({(t1-t0)/60:.1f} min wall, {len(snaps)} driver ticks)")
-    print(f"end status histogram: {dict(statuses)}")
+    print(f"end status: {dict(statuses)}")
     print()
     print(f"{'card':<50} {'first_running':>13} {'done_at':>13} {'status':>8}")
     print("-" * 90)

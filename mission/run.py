@@ -19,6 +19,11 @@ ONCE = "--once" in sys.argv
 # gates close would make every new idea a terminal command again.
 SERVE = "--serve" in sys.argv
 POLL = 20
+# A board in motion usually has another transition due, and the full POLL between them is
+# dead time a person watching the board pays: measured on is-even (2026-09-16), eight
+# hand-offs each waited ~26 s, 3.5 min of a 5.5 min overhead. After a tick that CHANGED
+# something the driver looks again sooner; a quiet board keeps the slow cadence.
+POLL_BUSY = 5
 # How long a re-promotion waits for the blocked worker's pid to go away. The card is
 # blocked, so no runtime ceiling bounds the wait, and a pid the OS reused would
 # otherwise hold it for as long as that unrelated process lives.
@@ -260,7 +265,13 @@ def lane_model_opts(lane):
 CLI_TIMEOUT_S = 60
 
 
+READ_VERBS = ("show", "list", "attachments", "runs", "events")
+_MUTATIONS = [0]            # board writes this process has made; the tick cadence reads it
+
+
 def kb(*args, capture=True):
+    if args[:1] and args[0] not in READ_VERBS:
+        _MUTATIONS[0] += 1
     if args[:1] not in (("show",), ("list",)) and _SHOW_MEMO["cards"]:
         # A driver write changes the card it names: the next read in this tick fetches.
         for a in args:
@@ -3087,6 +3098,8 @@ def finish_run():
     false finding that reads exactly like a missing artefact. A summary that fails
     must not cost the banner: the run really did finish, and the warning says so.
     """
+    for lane in sorted(_TIMED):
+        write_timing_report(lane, final=True)
     try:
         write_summary(board())
     except Exception:
@@ -3437,7 +3450,7 @@ def adopt_and_refile(state):
     return True
 
 
-def write_timing_report(lane):
+def write_timing_report(lane, final=False):
     """Render the human-readable timing report when lane <lane> reaches its code
     gate — the end of the lane.
 
@@ -3449,8 +3462,11 @@ def write_timing_report(lane):
 
     Once per lane per driver run: gate_action runs every tick while a gate is
     held, and rewriting the report under the reader is worse than not having it.
+    `final=True` (the run's own finish) writes once more, because the gate copy stops two
+    minutes short of the end — it shows the code gate itself as `blocked`, which is true
+    when it is written and misleading afterwards.
     """
-    if lane in _TIMED:
+    if lane in _TIMED and not final:
         return
     _TIMED.add(lane)
     dst = os.path.join(RUN_DIR, f"timing-report-lane-{lane}.txt")
@@ -3597,6 +3613,7 @@ def main():
         if a.startswith("--timeout-min"):
             timeout = float(sys.argv[sys.argv.index(a) + 1]) * 60
     idle = False
+    before = _MUTATIONS[0]
     while True:
         if _HALTED["reason"]:
             # Recorded mid-tick (escalate): stop before an armed idea is adopted, or a
@@ -3640,7 +3657,10 @@ def main():
         if timeout is not None and time.time() - t0 > timeout:
             log("timeout — stopping driver")
             return 1
-        time.sleep(POLL)
+        # A tick that wrote to the board (unblocked, completed, attached, filed) is a board
+        # in motion: look again sooner instead of spending the full POLL on dead time.
+        moved, before = _MUTATIONS[0] != before, _MUTATIONS[0]
+        time.sleep(POLL_BUSY if moved else POLL)
 
 def board_removed_exit(exc, idle):
     """The exit code when `exc` says the Hermes board itself is gone, else None.

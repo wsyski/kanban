@@ -396,3 +396,24 @@ def test_patches_land_in_the_runs_own_directory_without_a_second_timestamp():
     src = inspect.getsource(r.preserve_artifacts)
     assert 'os.path.join(RUN_DIR, "patches")' in src
     assert "strftime" not in src
+
+
+def test_the_timing_report_is_written_again_when_the_run_finishes(monkeypatch, tmp_path):
+    """The gate copy stops two minutes short: it shows the code gate itself as `blocked`,
+    which is true when it is written and misleading afterwards."""
+    import inspect
+    import run as r
+    assert "write_timing_report(lane, final=True)" in inspect.getsource(r.finish_run)
+    written = []
+    monkeypatch.setattr(r, "RUN_DIR", str(tmp_path))
+    monkeypatch.setattr(r, "log", lambda m: None)
+    import subprocess
+    monkeypatch.setattr(subprocess, "run",
+                        lambda *a, **k: type("R", (), {"returncode": 0, "stdout": "report", "stderr": ""})())
+    r._TIMED.clear()
+    r.write_timing_report(1)
+    r.write_timing_report(1)                      # the gate holds for ticks; one copy only
+    assert open(tmp_path / "timing-report-lane-1.txt").read() == "report"
+    r.write_timing_report(1, final=True)          # the run's own end rewrites it
+    assert 1 in r._TIMED
+    r._TIMED.clear()
