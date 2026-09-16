@@ -5,12 +5,16 @@
   "lanes": 1,
   "unit-tests": true,
   "integration-tests": false,
-  "auto-gates": ["Gi","Gp","Gc"],
+  "auto-gates": [
+    "Gi",
+    "Gp",
+    "Gc"
+  ],
   "sequential": true,
   "goal-cards": [
     "C"
   ],
-  "max-runtime": "12m",
+  "max-runtime": "25m",
   "max-reworks": 2,
   "model": "qwen38-27b",
   "provider": "llama-swap",

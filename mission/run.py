@@ -1088,17 +1088,26 @@ def answer_early_verdicts(state, title, waiting):
                                 f"{GATE_READY_MARK} here when it is; comment again then.")
 
 
+def auto_gates():
+    """The gates the DRIVER completes, from the manifest.
+
+    Board-level, so it is read here and never from a lane's resolved options — which is
+    where it lived until 2026-09-16, and reading it there after the move raised
+    `KeyError: 'auto-gates'` every tick until the board halted."""
+    return manifest().get("auto-gates", board_schema.OPTIONS["auto-gates"][1])
+
+
 def gate_action(state, title, kind, lane):
     msg = _gate_action(state, title, kind, lane)
     if msg.startswith("waiting:") and not board_schema.gate_is_auto(
-            (lane_options(lane) or {}).get("auto-gates"), GATE_CODE_OF[kind]):
+            auto_gates(), GATE_CODE_OF[kind]):
         answer_early_verdicts(state, title, msg)
     return msg
 
 
 def _gate_action(state, title, kind, lane):
     opts = lane_options(lane) or {}
-    auto = board_schema.gate_is_auto(opts.get("auto-gates"), GATE_CODE_OF[kind])
+    auto = board_schema.gate_is_auto(auto_gates(), GATE_CODE_OF[kind])
     if kind == "gi":
         # No reviewer card precedes this gate — the refinement's check IS a
         # person reading it, which is the whole point of putting a gate here.
@@ -1389,13 +1398,13 @@ def open_lane(state, lane):
     wd_state, _ = write_workdir_state(lane, "open")
     idea_head = opts["idea"].splitlines()[0][:80] if opts["idea"] else ""
     log(f"LANE {lane} open: its={opts['integration-tests']} "
-        f"uts={opts['unit-tests']} auto-gates={opts['auto-gates']} "
+        f"uts={opts['unit-tests']} auto-gates={auto_gates()} "
         f"snapshot={snap} workdir={wd_state.split(' — ')[0]} idea={idea_head!r}")
     # The idea text is NOT posted to the board: raw ideas stay off it, and a
     # comment would be a second, mutable copy of the contract.
     kb("comment", state[lanes.card_title("I", lane)]["id"],
        f"lane {lane} opened: integration-tests={opts['integration-tests']} "
-       f"unit-tests={opts['unit-tests']} auto-gates={opts['auto-gates']}, "
+       f"unit-tests={opts['unit-tests']} auto-gates={auto_gates()}, "
        f"idea snapshot: {snap}")
     # The run's own beginning, on the record. The lane's inputs are on disk above and
     # the root is released next, so doc-chain's F3 ("a document older than the run is

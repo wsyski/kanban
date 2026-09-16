@@ -878,3 +878,17 @@ def test_an_idea_titled_like_a_card_is_not_a_partly_filed_run(monkeypatch, tmp_p
     _current_run(monkeypatch, tmp_path)
     idea = {"Idea2: screener": {"id": "t_idea", "status": "triage", "title": "Idea2: screener"}}
     assert run.empty_run_reason(idea) is None
+
+
+def test_auto_gates_is_read_from_the_manifest_not_the_lane_options(monkeypatch):
+    """It stopped being per-lane on 2026-09-16, and every read that still went through
+    `lane_options` raised `KeyError: 'auto-gates'` until the board halted."""
+    import inspect
+    import run as r
+    for fn in (r.open_lane, r._gate_action, r.gate_action, r.write_summary):
+        src = inspect.getsource(fn)
+        assert "opts['auto-gates']" not in src and 'opts.get("auto-gates")' not in src, fn.__name__
+    monkeypatch.setattr(r, "manifest", lambda: {"auto-gates": ["Gi"]})
+    assert r.auto_gates() == ["Gi"]
+    monkeypatch.setattr(r, "manifest", lambda: {})
+    assert r.auto_gates() == []

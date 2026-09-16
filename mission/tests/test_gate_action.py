@@ -344,7 +344,7 @@ def test_a_new_review_round_brings_a_new_gate_ready(held, card, monkeypatch):
 
 
 def test_auto_gates_ignore_comments_and_complete_on_evidence(monkeypatch, refined_file, card):
-    monkeypatch.setattr(run, "lane_options", lambda lane: {"auto-gates": ["Gi", "Gp", "Gc"]})
+    monkeypatch.setattr(run, "auto_gates", lambda: ["Gi", "Gp", "Gc"])
     refined_file.write_text(refined())
     run.gate_action(STATE, GI, "gi", 1)
     [done] = card.completed()
@@ -369,7 +369,7 @@ def test_a_waiting_gate_answers_only_what_came_after_the_drivers_last_word(held,
 def test_only_the_listed_gate_is_completed_by_the_driver(monkeypatch, refined_file, card):
     """`"auto-gates": ["Gi"]` — the driver opens the idea gate on its evidence and the
     plan and code gates still wait for a person."""
-    monkeypatch.setattr(run, "lane_options", lambda lane: {"auto-gates": ["Gi"]})
+    monkeypatch.setattr(run, "auto_gates", lambda: ["Gi"])
     refined_file.write_text(refined())
     run.gate_action(STATE, GI, "gi", 1)
     [done] = card.completed()
@@ -380,8 +380,7 @@ def test_only_the_listed_gate_is_completed_by_the_driver(monkeypatch, refined_fi
 
 def test_a_gate_not_in_the_list_still_asks_a_person(monkeypatch, held, card):
     state, _filed = held
-    monkeypatch.setattr(run, "lane_options",
-                        lambda lane: {"auto-gates": ["Gi"], "max-reworks": 2})
+    monkeypatch.setattr(run, "auto_gates", lambda: ["Gi"])
     run.gate_action(state, GP, "gp", 1)
     assert not card.completed()
     assert [c for c in card.driver_comments() if c.startswith(run.GATE_READY_MARK)]
