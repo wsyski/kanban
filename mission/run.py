@@ -665,6 +665,7 @@ def file_revision(state, lane, round_no, findings, base="P", reviewer_prefix="RV
 
 WORKDIR_FACTS = "workdir.json"          # written per run, beside its other state
 _DRIFT = set()                          # drift already reported, once per change
+_RUN_FINISHED = [False]                 # this run reached ALL GATES COMPLETE
 
 
 def workdir_facts():
@@ -785,11 +786,22 @@ def workdir_drift(state=None):
     for p in foreign_staged():
         out.append(f"staged in {exp['repo']} but not this lane's: {p} — it reaches "
                    f"every later `git diff --cached` and the gate's evidence")
+    # A serve-mode driver outlives the run it finished, and the human it was waiting for
+    # then commits the gate's work — which moves HEAD under an IDLE board. That is the
+    # authorization chain working, not drift: it is recorded as a note, and it does not
+    # enter `workdir_drift` in the summary, because the run it could invalidate is over.
+    # (Measured 2026-09-16: committing after ALL GATES COMPLETE turned a clean audit into
+    # two E2 errors, for doing exactly what the code gate asks.)
+    idle = _RUN_FINISHED[0]
     for finding in out:
         if finding not in _DRIFT:
+            if idle:
+                _DRIFT.add(finding)
+                log(f"note: {finding.replace('while this run was live', 'after this run finished')}")
+                continue
             _DRIFT.add(finding)
             log(f"WARNING: {finding}")
-    return out
+    return [] if idle else out
 
 
 def commit_target():
@@ -3104,6 +3116,7 @@ def finish_run():
         write_summary(board())
     except Exception:
         log("WARNING: summary generation failed (non-fatal)")
+    _RUN_FINISHED[0] = True
     log("ALL GATES COMPLETE — scenario finished")
 
 
@@ -3207,7 +3220,7 @@ def write_summary(state):
         "workdir": os.path.abspath(WORKDIR),
         "commit_target": commit_target(),
         "workdir_facts": expected_workdir_facts(),
-        "workdir_drift": sorted(_DRIFT),
+        "workdir_drift": sorted(_DRIFT) if not _RUN_FINISHED[0] else [],
     }
     with open(os.path.join(RUN_DIR, "run-summary.json"), "w") as f:
         json.dump(summary, f, indent=2)
@@ -3425,6 +3438,7 @@ def adopt_and_refile(state):
     _OPENED.clear()
     _TIMED.clear()
     _DRIFT.clear()
+    _RUN_FINISHED[0] = False
     _ANNOUNCED.clear()
     _REPORTED.clear()
     try:

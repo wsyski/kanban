@@ -138,3 +138,27 @@ def test_a_non_git_work_directory_reports_nothing(monkeypatch, tmp_path):
     plain.mkdir()
     _external_run(monkeypatch, tmp_path, plain)
     assert run.workdir_drift() == [] and run.foreign_staged() == []
+
+
+def test_a_commit_after_the_run_finished_is_a_note_not_a_warning(monkeypatch, tmp_path):
+    """The code gate asks a person to commit; a serve-mode driver is still running when
+    they do. Until 2026-09-16 that moved HEAD under an idle board, logged WARNING, and
+    turned a clean audit into two E2 errors for following the gate's own instruction."""
+    import run
+    lines = []
+    monkeypatch.setattr(run, "log", lines.append)
+    monkeypatch.setattr(run, "expected_workdir_facts",
+                        lambda: {"repo": "/r", "branch": "main", "head": "a" * 40})
+    monkeypatch.setattr(run, "workdir_facts",
+                        lambda: {"repo": "/r", "branch": "main", "head": "b" * 40})
+    monkeypatch.setattr(run, "foreign_staged", lambda: [])
+    run._DRIFT.clear()
+    run._RUN_FINISHED[0] = False
+    assert run.workdir_drift(), "mid-run, a moved HEAD is drift"
+    assert lines and lines[0].startswith("WARNING:")
+
+    lines.clear(); run._DRIFT.clear(); run._RUN_FINISHED[0] = True
+    assert run.workdir_drift() == [], "after the run finished it is the gate being obeyed"
+    assert lines and lines[0].startswith("note:") and "after this run finished" in lines[0]
+    run._RUN_FINISHED[0] = False
+    run._DRIFT.clear()
