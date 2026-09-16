@@ -74,9 +74,15 @@ researcher's to find — a worker's `python3` may not.
   so two cards on one slot need roughly twice it. `ornith-35b` runs `--parallel 2` (262144 context
   per session) and is the local model this lane shape fits. The alternative on a single-slot model
   is `"unit-tests": false`, which drops `TW` and leaves one worker card live at a time.
-- **Still unproven, not disproven:** whether these models can carry a card end to end now that
-    the copy is gone. Re-run `is-even` with `"model": "qwen38-27b"`, `"provider": "llama-swap"`
-    and `"max-runtime": "20m"`. The rig's configuration is in the KnowledgeBase note
+- **Proven 2026-09-16** (run `is-even-20260916-104755`, `qwen38-27b` on an EMPTY work tree):
+    `I1` 5.0 min, `P1` 23.2 min, `TW1` 2.6 min (4 tests staged, suite red — `ModuleNotFound`),
+    `C1` 2.7 min (`is_even.py`, 4 passed), `RVp1`/`RVa1` PASS on the cloud review pin, the three
+    gates auto-completed. Audit **0 errors, 0 warnings**; wall 40.4 min, agent 34.8 min. Three
+    INFO notes only: the model left `__pycache__` in `work/`, so it did not honour the contract's
+    `PYTHONDONTWRITEBYTECODE`. What made it work: the driver attaches the hand-offs (seven, none
+    lost), `"sequential": true` kept `TW1` and `C1` out of each other's way in qwen's single slot,
+    and `"max-runtime": "25m"` — `P1` used 23.2 of it, so 12m and 20m would both have halted the
+    board. The rig's configuration is in the KnowledgeBase note
     `docs/large-language-models/llama-server-configuration.md`.
 - **The goal judge is not the review pin.** `model_override`/`provider_override` moves the
   three review cards only; the goal judge is the auxiliary task `auxiliary.goal_judge`,
