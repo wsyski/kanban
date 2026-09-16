@@ -63,12 +63,12 @@ gate receives, and it waits on `TW` and `C` together.
 The plan gate releases `TW` and `C` together: `TW` writes the plan's tests (the spike test
 that stays in `LiferaySiteResolverTest`, `TestConfig`'s pinned `RestClient`,
 `LiferayEntityHandlerTest`) while `C` writes the handlers beside them, each staging its own
-files. `"goal": true` with `"goal-cards": ["C"]` and `"goal-max-turns": 80`: the goal judge
+files. `"goal-cards": ["C"]` with `"goal-max-turns": 80`: the goal judge
 runs on the implementation card only (there is no `TI` here), where a long attempt is most
 likely to end a turn without calling `kanban_complete`. The ceiling equals
 `agent.max_turns`, so the card loses no turns to it. The judge reads only the card's text,
 and a spent turn budget or a `blocked` verdict still ends the card's single attempt — if it
-does, set `"goal": false` and re-create the board.
+does, set `"goal-cards": []` and re-create the board.
 
 The plan is the specification and the card adds nothing to it. `### Done means` is what the
 code gate judges — every checkbox ticked in the plan file itself, every `mvn … test` the
@@ -116,7 +116,7 @@ that card and run `arm.sh` — `block`/`unblock` alone do not clear its assignee
 Never the dashboard's `specify` button: it rewrites the idea with an auxiliary LLM before
 the researcher reads it.
 
-`"auto-gates": false`, so three human gates stop the run and nothing downstream moves
+`"auto-gates": ["Gi"]`, so the plan and code gates stop the run and nothing downstream moves
 until a person completes the card (see §6 of the root README for gate discipline):
 
 - `Gi` — read `refined.md` against this idea; the result's first word is `PASS:` (opens
@@ -150,5 +150,5 @@ repository keeps the board's changes is decided with its own git.
 `mvn -pl federation-liferay,federated-search-service -am test`, is **33 s** with
 `BUILD SUCCESS` and every affected module's tests green — so the ceiling exists for card
 generation across 25 steps, not for Maven. The standalone `-Dtest=…` runs the plan repeats
-are a fraction of that. `"auto-gates": false`, so the three gates wait for a person: this
+are a fraction of that. `"auto-gates": ["Gi"]`, so the plan and code gates wait for a person: this
 board stages into another repository, and committing there is that repository's decision.

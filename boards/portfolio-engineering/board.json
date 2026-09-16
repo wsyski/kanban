@@ -5,13 +5,14 @@
   "lanes": 1,
   "default-workdir": "/home/wos/.hermes/profiles/trader",
   "integration-tests": false,
-  "auto-gates": false,
-  "max-reworks": 2,
-  "model_override": "glm-5.3-flash",
-  "provider_override": "opencode-go",
-  "goal": true,
+  "auto-gates": [
+    "Gi"
+  ],
   "goal-cards": [
     "C"
   ],
-  "goal-max-turns": 80
+  "goal-max-turns": 80,
+  "max-reworks": 2,
+  "model_override": "glm-5.3-flash",
+  "provider_override": "opencode-go"
 }

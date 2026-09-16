@@ -108,24 +108,24 @@ def test_a_halt_comment_tells_the_person_what_to_do(monkeypatch):
 
 def test_a_board_can_turn_the_goal_judge_off(monkeypatch):
     """A judge that is reachable but failing must not decide a card's fate."""
-    assert lanes.goal_args("C") == ["--goal", "--goal-max-turns", "40"]
-    assert lanes.goal_args("C", enabled=False) == []
-    assert lanes.goal_args("RVp", enabled=False) == []
-    monkeypatch.setattr(run, "board_defaults", lambda: {"goal": False})
+    assert lanes.goal_args("C", cards=["C"]) == ["--goal", "--goal-max-turns", "40"]
+    assert lanes.goal_args("C", cards=[]) == []
+    assert lanes.goal_args("RVp", cards=["RVp"]) == []
+    monkeypatch.setattr(run, "board_defaults", lambda: {"goal-cards": []})
     assert run._goal_args("coder", "C") == []
-    assert run._goal_args("coder", "TW") == []
     monkeypatch.setattr(run, "board_defaults", lambda: {})
     assert run._goal_args("coder", "C") == [], \
-        "goal mode is opt-in: no 'goal' key must not enable the judge"
-    monkeypatch.setattr(run, "board_defaults", lambda: {"goal": True})
+        "the judge is opt-in: no 'goal-cards' key arms nothing"
+    monkeypatch.setattr(run, "board_defaults", lambda: {"goal-cards": ["C"]})
     assert run._goal_args("coder", "C") == ["--goal", "--goal-max-turns", "40"]
+    assert run._goal_args("coder", "TW") == []
 
 
 def test_goal_args_on_worker_cards_only():
-    assert lanes.goal_args("P") == ["--goal", "--goal-max-turns", "40"]
-    assert lanes.goal_args("I") == ["--goal", "--goal-max-turns", "40"]
-    assert lanes.goal_args("TW") == ["--goal", "--goal-max-turns", "40"]
-    assert lanes.goal_args("C") == ["--goal", "--goal-max-turns", "40"]
+    assert lanes.goal_args("P", cards=["P"]) == ["--goal", "--goal-max-turns", "40"]
+    assert lanes.goal_args("I", cards=["I"]) == ["--goal", "--goal-max-turns", "40"]
+    assert lanes.goal_args("TW", cards=["TW"]) == ["--goal", "--goal-max-turns", "40"]
+    assert lanes.goal_args("C", cards=["C"]) == ["--goal", "--goal-max-turns", "40"]
 
 
 def test_goal_args_never_on_reviewers_or_gates():
@@ -625,7 +625,25 @@ def test_a_round_already_on_the_board_is_not_filed_again(monkeypatch):
 
 def test_a_revision_round_follows_goal_cards(monkeypatch):
     """Revision cards are filed with their base code, so `goal-cards` covers the rounds."""
-    monkeypatch.setattr(run, "board_defaults", lambda: {"goal": True, "goal-cards": ["C"]})
+    monkeypatch.setattr(run, "board_defaults", lambda: {"goal-cards": ["C"]})
     assert run._goal_args("coder", "C") == ["--goal", "--goal-max-turns", "40"]
     assert run._goal_args("coder", "TW") == []
     assert run._goal_args("researcher", "I") == []
+
+
+def test_the_plan_loop_holds_while_its_re_review_is_still_queued():
+    """is-even, 2026-09-16: `rework_hold` looked for `Gp1-r*`, a card the plan loop never
+    files — its re-check is `RVp1-r2`. With the revision done and the re-review queued the
+    hold read false, so the driver filed round 2 against a verdict already superseded
+    (09:46:03 revision done → 09:46:04 next round) and escalated with `RVp1-r3` in todo."""
+    st = {"P1-rev-1: plan revision round 1 - lane 1": card("P1-rev-1", status="done"),
+          "RVp1-r2: plan review round 2 - lane 1": card("RVp1-r2", status="ready")}
+    assert run.rework_hold(st, 1, "P", "RVp") is True
+    st["RVp1-r2: plan review round 2 - lane 1"]["status"] = "done"
+    assert run.rework_hold(st, 1, "P", "RVp") is False
+
+
+def test_the_idea_loop_still_holds_on_its_re_gate():
+    st = {"I1-rev-1: idea refinement round 1 - lane 1": card("I1-rev-1", status="done"),
+          "Gi1-r2: idea re-gate round 2 - lane 1": card("Gi1-r2", status="blocked")}
+    assert run.rework_hold(st, 1, "I", "Gi") is True

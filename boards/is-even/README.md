@@ -15,7 +15,7 @@ researcher's to find — a worker's `python3` may not.
 
 ## Options, and why
 
-- `"auto-gates": false` — each of the three gates waits for a person, who answers with a
+- `"auto-gates": []` — each of the three gates waits for a person, who answers with a
   `PASS` comment on the gate card (README, "Answering a gate from the card"). Set it to
   `true` for an unattended run: the driver completes the gates on the same evidence and
   commits nothing.
@@ -84,7 +84,7 @@ researcher's to find — a worker's `python3` may not.
   so a locally-run worker still gets its claim judged by a strong model. Without that pin the
   judge follows the worker's own model, i.e. it goes local too.
   No `"assignees"` map: the graph names its profiles directly.
-- `"goal": true` with `"goal-cards": ["C"]` — the goal judge runs on the implementation card
+- `"goal-cards": ["C"]` — the goal judge runs on the implementation card
   only. Drop `goal-cards` to put it back on every worker card, which is what makes this board the
   judge's canary after a `hermes update`. Worker cards under the judge, and because the judge is pinned
   machine-wide to `z-ai/glm-5.3-flash` on `openrouter` (see the bullet above) it stays

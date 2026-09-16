@@ -4,8 +4,12 @@
   "name": "Roman Evaluator JS",
   "lanes": 1,
   "integration-tests": false,
-  "auto-gates": true,
-  "goal": true,
+  "auto-gates": [
+    "Gi",
+    "Gp",
+    "Gc"
+  ],
+  "sequential": true,
   "goal-cards": [
     "C"
   ],

@@ -5,7 +5,7 @@ import lanes
 
 IDEA = """## Idea 1: a small thing
 <!-- integration-tests: false -->
-<!-- auto-gates: true -->
+<!-- unit-tests: true -->
 
 Build a fat-jar CLI reading stdin and printing a word count.
 """
@@ -13,7 +13,7 @@ Build a fat-jar CLI reading stdin and printing a word count.
 
 def test_parse_idea_extracts_headers_and_body():
     headers, body = lanes.parse_idea(IDEA)
-    assert headers == {"integration-tests": "false", "auto-gates": "true"}
+    assert headers == {"integration-tests": "false", "unit-tests": "true"}
     assert "fat-jar CLI" in body
     assert "integration-tests" not in body
 
@@ -28,18 +28,18 @@ def test_parse_idea_rejects_a_header_shaped_line_it_cannot_read():
     and would be kept as prose — the option silently ignored, and invisible in any
     rendered view. board_schema judges anything SHAPED like a header, so this is an
     error with the spelling to use."""
-    with pytest.raises(ValueError, match="write 'auto-gates'"):
-        lanes.parse_idea("## X\n<!-- auto_gates: true -->\n\ntext\n")
+    with pytest.raises(ValueError, match="write 'unit-tests'"):
+        lanes.parse_idea("## X\n<!-- unit_tests: true -->\n\ntext\n")
 
 
 def test_parse_idea_rejects_trailing_text_after_a_header():
     with pytest.raises(ValueError, match="whole line"):
-        lanes.parse_idea("## X\n<!-- auto-gates: true --> keep\n\ntext\n")
+        lanes.parse_idea("## X\n<!-- unit-tests: true --> keep\n\ntext\n")
 
 
 def test_parse_idea_rejects_a_bad_value_at_the_header():
     with pytest.raises(ValueError, match="expected true or false"):
-        lanes.parse_idea("## X\n<!-- auto-gates: yes -->\n\ntext\n")
+        lanes.parse_idea("## X\n<!-- unit-tests: yes -->\n\ntext\n")
 
 
 def test_parse_idea_rejects_a_board_level_option_as_a_header():
@@ -71,19 +71,19 @@ def test_read_idea_treats_missing_and_empty_alike(tmp_path):
 
 
 def test_resolve_prefers_header_over_board_default():
-    defaults = {"integration-tests": True, "auto-gates": False}
+    defaults = {"integration-tests": True, "unit-tests": False}
     opts = lanes.resolve_lane_options(
-        defaults, {"integration-tests": "false", "auto-gates": "true"})
+        defaults, {"integration-tests": "false", "unit-tests": "true"})
     assert opts == {"refinement": True, "max-reworks": 3,
                     "integration-tests": False, "unit-tests": True,
-                    "auto-gates": True, "model": None, "provider": None}
+                    "unit-tests": True, "model": None, "provider": None}
 
 
 def test_resolve_falls_back_to_board_default():
-    defaults = {"integration-tests": False, "auto-gates": True}
+    defaults = {"integration-tests": False, "unit-tests": True}
     opts = lanes.resolve_lane_options(defaults, {})
     assert opts["integration-tests"] is False
-    assert opts["auto-gates"] is True
+    assert opts["unit-tests"] is True
 
 
 def test_a_header_decides_a_test_level_whatever_the_board_said():
@@ -104,7 +104,7 @@ def test_bool_values_are_exactly_true_or_false():
     with pytest.raises(ValueError, match="expected true or false"):
         lanes.resolve_lane_options({}, {"integration-tests": "no"})
     with pytest.raises(ValueError, match="expected true or false"):
-        lanes.resolve_lane_options({}, {"auto-gates": "1"})
+        lanes.resolve_lane_options({}, {"unit-tests": "1"})
 
 
 def test_resolve_rejects_a_suite_header():
@@ -123,5 +123,5 @@ def test_read_idea_returns_parsed_content(tmp_path):
     f = tmp_path / "lane-1.md"
     f.write_text(IDEA)
     headers, body = lanes.read_idea(str(f))
-    assert headers["auto-gates"] == "true"
+    assert headers["unit-tests"] == "true"
     assert "fat-jar" in body

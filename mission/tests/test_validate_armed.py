@@ -64,7 +64,7 @@ def test_the_two_dashboard_gestures_are_both_read(monkeypatch, tmp_path):
 
 def test_a_clean_idea_passes(monkeypatch, tmp_path):
     _fixture(monkeypatch, tmp_path)
-    armed = [(1, "<!-- auto-gates: true -->\n## Idea\n\nbody\n\n"
+    armed = [(1, "<!-- unit-tests: true -->\n## Idea\n\nbody\n\n"
                  "### Done means\n\n- it works\n", "c1")]
     assert run.validate_armed(armed) is True
 
@@ -107,10 +107,10 @@ def test_editing_the_card_reports_again(monkeypatch, tmp_path):
 def test_a_broken_manifest_also_stops_the_arm(monkeypatch, tmp_path):
     """board.json is validated at both shell doors, then edited afterwards."""
     comments = _fixture(monkeypatch, tmp_path,
-                        manifest={"slug": "b", "lanes": 1, "goal": "false"})
+                        manifest={"slug": "b", "lanes": 1, "refinement": "false"})
     good = "## Idea\n\nbody\n\n### Done means\n\n- it works\n"
     assert run.validate_armed([(1, good, "c1")]) is False
-    assert "goal" in comments[0][2]
+    assert "refinement" in comments[0][2]
 
 
 def test_a_failing_comment_does_not_stop_the_driver(monkeypatch, tmp_path):

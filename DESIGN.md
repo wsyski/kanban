@@ -24,6 +24,7 @@ create and run a board, run records, operational rules, gate discipline — is
 | Every hand-off is a file, never a card comment | `runs/<run-id>/artifacts/lane-<k>/refined.md`, `…/plan.md`, patches — written to `runs/<run-id>/scratch/<card-id>/` and attached to their card BY THE DRIVER, never staged; the only thing a card stages is the lane's own work |
 | Every card's evidence is its `git diff --cached` patch, attached to the card — and on a lane the plan proves was already satisfied there is nothing to attach: `NO CHANGE:` in the result is the evidence, and the empty-patch ceremony is retired (doc chain F5) | card bodies; `mission/doc-chain.py` |
 | A worker never attaches: it writes its hand-off into its own scratch directory, and the driver attaches every `run.HANDOFF_NAMES` file it finds there once the card is done | `run.attach_hand_offs`, `_worker-contract.txt` — Hermes fences dispatcher-owned children, so `hermes kanban attach` is refused inside a worker, and the `kanban_attach` tool takes the bytes INLINE. That made a worker copy kilobytes of base64 out of its own tool output: on is-even (2026-09-13/15) four local-model cards wrote a correct `refined.md` and all four then died in that copy. An empty file is not attached, and a failed attach is retried on the next tick |
+| A card body never says whether the lane runs its fork or a chain: `sequential` moves an EDGE in `lanes.PARENTS`, and no body is written per mode | `lanes.lane_cards`, card bodies | a body is the contract with the worker about what to produce; the graph decides when it runs. Mode-aware bodies would make every scheduling change a card-contract change, need two wordings kept in step, and spend the goal judge's 2000-character window on text about scheduling. Lines that assume the fork (an index lock another card holds) stay true and simply never fire |
 | Verdicts go in the result field | review card bodies (`_result-field.txt`) |
 | The plan is judged on what it was told | `mission/card-bodies/_plan-checklist.txt` — the plan card's self-check and the plan review's only REJECT grounds |
 | Rules every worker shares exist once | `mission/card-bodies/_worker-contract.txt`, included as `<WORKER_CONTRACT>` (see [profiles](#profiles-and-the-worker-contract)) |
@@ -120,7 +121,7 @@ distinct as the profile behind it:
 | `researcher` | `I` and its revision rounds |
 | `coder` | every other work card: `P`, `TW`, `C`, `TI`, `RVp`, `RVa`, `RVc` and their rounds |
 | `trader` | no card — the domain authority `portfolio-engineering` builds into |
-| — | gates: a person answers them with a `PASS` comment (or completes them), or the driver when `auto-gates` is on |
+| — | gates: a person answers them with a `PASS` comment (or completes them), or the driver for each gate listed in `auto-gates` |
 
 One work profile is what you maintain; each job is kept apart by the CARD that names
 it — a review runs in its own session, from the plan alone, with its own patch —
@@ -254,9 +255,9 @@ polling would hide the stall.
 
 | rule | where | why |
 |---|---|---|
-| Goal mode is opt-in: `"goal"` is a board-level key, default `false`, read at filing | `board_schema.OPTIONS`, `file_lanes.file_board` → `lanes.goal_args` | a goal judge that cannot answer wedges every worker card ([the goal judge](#the-goal-judge)). Changing the key means re-creating the board. Restarting the driver does not change it |
+| Goal mode is opt-in and named: `"goal-cards"` lists the worker cards the judge runs on, board-level, default `[]` (none), read at filing | `board_schema.OPTIONS`, `file_lanes.file_board` → `lanes.goal_args` | a goal judge that cannot answer wedges every worker card it is armed for ([the goal judge](#the-goal-judge)). One array rather than a switch plus a list: there is no pair that can disagree. Changing it means re-creating the board; restarting the driver does not |
 | Goal flags go on worker cards only (I, P, TW, C, TI and their rounds), never on reviews or gates | `lanes.goal_args` | a goal judge can push a card whose success case is *blocking* into completing, which silently opens the gate it guards |
-| `goal-cards` narrows goal mode to listed worker codes; the gate/review refusal is checked before the list | `lanes.goal_args`, `board_schema` kind `cards` | a list is a per-board choice of *which* workers need the judge (long `C`/`TI` cards end turns without calling `kanban_complete`; short `I`/`P` cards rarely do), and a typo in it must not arm a gate |
+| `auto-gates` and `goal-cards` are ALWAYS arrays of codes — `[]`, `["Gi"]`, `["C", "TI"]` — never booleans, and neither is per-lane | `board_schema` kinds `gates` and `cards` | one shape per option: a boolean beside a per-lane array made the element type decide the meaning, and a switch beside a list made two keys that could disagree. The gate/review refusal in `lanes.goal_args` is checked before the list, so a typo in it cannot arm a gate |
 | A human gate reads a verdict only from a non-driver comment whose first word is `PASS`/`ACCEPT`/`REWORK` (alone or followed by `:` or a dash), posted after the driver's `GATE READY` for the gate's current readiness. A plan or code gate's `GATE READY` names the review card it rests on (`[RVp1-r2]`) | `run.apply_comment_verdict`, `answer_early_verdicts`, `gate_rework` | a comment is the one write every surface offers (the desktop app cannot complete a card). Reading only after `GATE READY` keeps an early `PASS` from opening a gate on input nobody judged, and the tag keeps a comment written under an earlier round from counting after the next one. The driver answers each verdict once (`NOT APPLIED` / `REWORK APPLIED (comment #n)`), keyed in the thread so a restart does not repeat it |
 | A person's `REWORK` at Gp/Gc files the round the gate's own loop files after a review `REJECT`, and leaves the gate held; at Gi it completes the gate with `REWORK: …` | `run.gate_rework` → `file_revision` / `file_code_revision` | one loop per gate, bounded by the same `max-reworks`. Completing Gp or Gc would release `TW` or the next lane, and the rework loops only run while the gate is parked |
 | Every card is bounded: the per-card `max-runtime` (default 60m), the global `agent.max_turns` (80), and under goal mode `goal-max-turns` (default 40). `max-retries` is pinned to 1 | `board_schema.OPTIONS`, `file_lanes.file_board` | nothing else bounds a worker. A card that reaches its ceiling has failed for good, and nothing retries it |
@@ -313,7 +314,7 @@ polling would hide the stall.
   judge's call carried `hermes-proc-<pid>-<hex>` and answered `{"verdict": "done"}`; with
   the fallback removed, the same call returned the 400. This is why goal mode is opt-in.
 - **Probing it.** There is no probe board, because goal mode is a manifest key. Before
-  arming a real board with `"goal": true`, set it on `boards/is-even` (it ships with it
+  arming a real board, set `"goal-cards"` on `boards/is-even` (it ships with it
   on; turn it off to run that board without the judge),
   re-create and run that board, then set it back. A working probe proves that the judge
   answers and can say `done`. It does not prove the judge checks the work.
@@ -328,7 +329,7 @@ polling would hide the stall.
   | every judge call fails `400 MissingSessionID` | the auxiliary request carries no `x-opencode-session` — the judge runs outside a turn, so nothing keys one | the checkout's out-of-turn affinity fallback, or a judge provider that is not the OpenCode relay (`auxiliary.goal_judge.provider`) |
   | the judge answers but never `done` | the model cannot follow the strict JSON verdict contract | `auxiliary.goal_judge.provider` / `.model` in the profile's `config.yaml` |
 
-  If the judge cannot be made to answer, the board keeps `"goal": false`.
+  If the judge cannot be made to answer, the board keeps `"goal-cards": []`.
 
 ### Block origins
 

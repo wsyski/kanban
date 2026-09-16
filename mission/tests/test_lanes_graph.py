@@ -124,3 +124,36 @@ def test_dropping_the_unit_tests_narrows_the_review_to_the_coder():
     by_code = {c["code"]: c for c in lanes.lane_cards(1, unit_tests=False)}
     assert "TW" not in by_code
     assert by_code["RVa"]["parents"] == ["C1"]
+
+
+# ---- sequential: the fork becomes a chain ------------------------------------
+
+def _parents(cards, code):
+    return [c["parents"] for c in cards if c["code"] == code][0]
+
+
+def test_the_fork_is_the_default():
+    cards = lanes.lane_cards(1)
+    assert _parents(cards, "TW") == ["Gp1"] and _parents(cards, "C") == ["Gp1"]
+    assert _parents(cards, "RVa") == ["TW1", "C1"]
+
+
+def test_sequential_makes_the_implementation_wait_for_the_unit_tests():
+    """One llama.cpp slot serves one request at a time, so the fork spends both cards'
+    ceilings on the queue (is-even, 2026-09-16: both fork cards timed out at 1202s)."""
+    cards = lanes.lane_cards(1, sequential=True)
+    assert _parents(cards, "TW") == ["Gp1"], "TW still starts at the plan gate"
+    assert _parents(cards, "C") == ["TW1"]
+    assert _parents(cards, "RVa") == ["TW1", "C1"], "the review still waits for both"
+
+
+def test_sequential_changes_nothing_on_a_lane_with_no_unit_tests():
+    plain = lanes.lane_cards(1, unit_tests=False)
+    seq = lanes.lane_cards(1, unit_tests=False, sequential=True)
+    assert [c["parents"] for c in plain] == [c["parents"] for c in seq]
+    assert _parents(seq, "C") == ["Gp1"]
+
+
+def test_sequential_does_not_change_which_cards_a_lane_files():
+    assert ([c["code"] for c in lanes.lane_cards(1)]
+            == [c["code"] for c in lanes.lane_cards(1, sequential=True)])

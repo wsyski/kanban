@@ -62,15 +62,15 @@ a reviewer has to re-run. The unit-tests level is on deliberately: the plan's ow
 *write the failing test, run it, make it pass*, and `c-body.txt` treats tests as the TW
 card's — *never edit the TW card's tests* — so archiving `TW` would leave the plan's
 unit-test steps with no owner and demand a green suite from a card whose `DONE WHEN` line
-says a green suite is not part of its finish. `"goal": true` with `"goal-cards": ["C", "TI"]`
+says a green suite is not part of its finish. `"goal-cards": ["C", "TI"]`
 and `"goal-max-turns": 80`: the goal judge runs on the implementation and integration cards
 only, where a long attempt is most likely to end a turn without calling `kanban_complete`,
 and nudges the worker to finish instead of losing the card. `I`, `P` and `TW` complete on
 their own evidence. The ceiling is 80, the same as `agent.max_turns`, so a goal card gets
 no fewer turns than a card without the judge. The cost stays: the judge reads only the
 card's text (title + body cut at 2000 characters, plus the claim), and a spent turn budget
-or a `blocked` verdict still ends that card's single attempt — if it does, set `"goal":
-false` and re-create the board. `boards/is-even` remains the post-`hermes update` canary
+or a `blocked` verdict still ends that card's single attempt — if it does, set `"goal-cards": []`
+and re-create the board. `boards/is-even` remains the post-`hermes update` canary
 for the judge's transport.
 
 The plan is the specification and the card adds nothing to it: it names
@@ -92,6 +92,6 @@ whether that repository keeps the board's changes is decided with its own git.
 
 `max-runtime` is 60 minutes per card, and `max-reworks` is 4: these cards work a real
 codebase with its own build, and an integration step that has to stand up Tomcat and
-Elasticsearch is not a 10-minute card. `"auto-gates": false`, so the three gates wait for a
+Elasticsearch is not a 10-minute card. `"auto-gates": ["Gi"]`, so the plan and code gates wait for a
 human — this board stages into someone else's repository, and committing there is that
 repository's decision.

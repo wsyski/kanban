@@ -482,3 +482,11 @@ def test_every_hand_off_file_a_body_names_is_one_the_driver_attaches():
         named |= set(re.findall(r"<RUNS>/scratch/<YOUR-CARD-ID>/([A-Za-z0-9._-]+)", text))
     assert named, "the bodies must name their hand-off files"
     assert named <= set(run.HANDOFF_NAMES), sorted(named - set(run.HANDOFF_NAMES))
+
+
+def test_no_card_body_knows_whether_the_lane_forks_or_chains():
+    """`sequential` moves an edge in the graph, not a word in a contract: a body that
+    described the schedule would turn every scheduling change into a card-contract
+    change, and the goal judge reads that text too."""
+    for name, text in all_texts():
+        assert "sequential" not in text.lower(), name

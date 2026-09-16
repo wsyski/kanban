@@ -7,8 +7,18 @@
     false,
     true
   ],
-  "auto-gates": true,
-  "goal": true,
+  "auto-gates": [
+    "Gi",
+    "Gp",
+    "Gc"
+  ],
+  "goal-cards": [
+    "I",
+    "P",
+    "TW",
+    "C",
+    "TI"
+  ],
   "max-runtime": "20m",
   "max-reworks": 3,
   "model_override": "glm-5.3-flash",

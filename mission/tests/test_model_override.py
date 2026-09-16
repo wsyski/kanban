@@ -362,7 +362,7 @@ def _board_dir(tmp_path, **cfg):
     cfg.setdefault("name", "B")
     cfg.setdefault("lanes", 1)
     cfg.setdefault("integration-tests", False)
-    cfg.setdefault("auto-gates", False)   # no default-workdir: the board's own work/
+    cfg.setdefault("auto-gates", [])   # no default-workdir: the board's own work/
     (d / "board.json").write_text(json.dumps(cfg))
     return d
 

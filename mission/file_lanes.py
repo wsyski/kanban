@@ -256,7 +256,7 @@ def _board_cfg(board_dir):
 
 
 def file_board(board, repo, workdir, lane_count, key_prefix, max_runtime=None,
-               max_retries=None, targets=None, goal_mode=None, run_id=None,
+               max_retries=None, targets=None, goal_cards=None, run_id=None,
                goal_max_turns=None, assignees=None):
     """File lane_count full lanes, every card parked. Returns id map.
 
@@ -294,20 +294,21 @@ def file_board(board, repo, workdir, lane_count, key_prefix, max_runtime=None,
     workdir = os.path.abspath(workdir)
     runtime = max_runtime or DEFAULT_MAX_RUNTIME
     max_retries = int(max_retries) if max_retries is not None else DEFAULT_MAX_RETRIES
-    # Filing is where a card's goal mode is decided, so the board's switch has to
+    # Filing is where a card's goal mode is decided, so the board's list has to
     # be read HERE, not only in run.py's rework/revision path: a manifest that
-    # says `"goal": false` and a card filed with --goal anyway is how
+    # names no goal card and a card filed with --goal anyway is how
     # 2026-09-11's run 10 wedged.
     try:
         board_cfg = _board_cfg(os.path.join(repo, "boards", board))
     except Exception:
         board_cfg = {}            # unreadable manifest: keep the documented defaults
-    if goal_mode is None:
-        goal_mode = bool(board_cfg.get("goal", board_schema.OPTIONS["goal"][1]))
+    if goal_cards is None:
+        goal_cards = board_cfg.get("goal-cards", board_schema.OPTIONS["goal-cards"][1])
     made = {}
     for lane in range(1, lane_count + 1):
         cards = lanes.lane_cards(lane, integration_tests=True,
-                                 assignees=assignees)
+                                 assignees=assignees,
+                                 sequential=bool(board_cfg.get("sequential")))
         for card in cards:
             body = render_body(card["body"], repo=repo, board=board, workdir=workdir,
                                lane=lane, targets=targets or (), run_id=run_id)
@@ -325,9 +326,8 @@ def file_board(board, repo, workdir, lane_count, key_prefix, max_runtime=None,
             # open_lane() re-points the lane's cards), and the review pin on the
             # review cards over it. Which cards get which is lanes.model_args.
             args += lanes.model_args(card["code"], board_cfg)
-            args += lanes.goal_args(card["code"], enabled=goal_mode,
-                                    max_turns=goal_max_turns,
-                                    cards=board_cfg.get("goal-cards"))
+            args += lanes.goal_args(card["code"], cards=goal_cards,
+                                    max_turns=goal_max_turns)
             cid = json.loads(kb(board, *args))["id"]
             made[card["id"]] = cid
         # edges last, so every card was parked when it was linked — a card that is
@@ -368,7 +368,7 @@ def _options_line(repo, board, lane, text, workdir=None):
         return f"Lane options: unavailable ({exc})"
     def _as_kind(key, raw):
         """One option value normalized for COMPARISON: a bool option reads as a bool,
-        everything else as its lowercased text — so `auto-gates: True` and `auto-gates: true`
+        everything else as its lowercased text — so `unit-tests: True` and `unit-tests: true`
         are the same value, and the conflict line below cannot invent one out of
         casing."""
         if board_schema.OPTIONS[key][0] == "bool":

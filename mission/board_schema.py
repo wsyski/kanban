@@ -7,9 +7,8 @@ still describe a board that cannot exist:
     "integration-tests": ["yes", "no"]   right length, both entries pass, resolve
                                          to the STRING "yes" — truthy — so BOTH
                                          lanes get integration cards
-    "goal": "false"                      bool("false") is True: the goal judge runs on
-                                         a board whose manifest says it must not,
-                                         which is the wedge-every-card failure
+    "goal-cards": "C"                    a bare string is not a list of card codes, so
+                                         the judge is armed for nothing, silently
     "max-runtime": "banana"              handed to --max-runtime; the auditor's
                                          <n><unit> parser reads it as 0 minutes
 
@@ -21,7 +20,7 @@ flag it becomes.
 
 NAMING. Every option that reaches Hermes keeps Hermes's spelling of its name —
 `max-runtime` because the flag is `--max-runtime`, `name` because it is `--name`,
-`goal` because it is `--goal`, `default-workdir` because it is
+`goal-max-turns` because it is `--goal-max-turns`, `default-workdir` because it is
 `--default-workdir`. A name we invent for a parameter Hermes already named is a
 name nobody can grep for. The template's own options (`slug`, `lanes`,
 `unit-tests`, `integration-tests`, `auto-gates`, `targets`) have no counterpart
@@ -68,11 +67,21 @@ OPTIONS = {
     "refinement":        ("bool",     True,  True,  None),
     "unit-tests":        ("bool",     True,  True,  None),
     "integration-tests": ("bool",     True,  True,  None),
-    "auto-gates":        ("bool",     False, True,  None),
-    "goal":              ("bool",     False, False, "--goal"),
-    # Which worker cards `goal` arms, by code. Unset = all of GOAL_CODES. A list of
-    # CARDS, not the per-lane form: `validate` treats this kind as one value.
-    "goal-cards":        ("cards",    None,  False, None),
+    # WHICH gates the driver completes itself, by code: [] is every gate human,
+    # ["Gi"] hands it the idea gate, ["Gi", "Gp", "Gc"] the whole board. An array
+    # always — one shape, nothing to disambiguate, and no per-lane form: which gates a
+    # person holds is a property of the BOARD, like who is watching it.
+    "auto-gates":        ("gates",    [],    False, None),
+    # The lane's ONE fork (TW ∥ C) becomes a chain: C waits for TW. Board-level,
+    # because it is a property of what SERVES the board — a llama.cpp slot with
+    # `--parallel 1` serialises the fork into two wall clocks and both cards spend
+    # their ceilings on the queue (is-even, 2026-09-16) — not of one lane's idea.
+    "sequential":        ("bool",     False, False, None),
+    # WHICH worker cards run under the goal judge, by code: [] is none (the judge is
+    # off), ["C"] the implementation card only, and the full list every worker card.
+    # The same array-always shape as `auto-gates`; there is no separate switch to
+    # contradict it.
+    "goal-cards":        ("cards",    [],    False, None),
     "max-runtime":       ("duration", "60m", False, "--max-runtime"),
     "max-retries":       ("count",    1,     False, "--max-retries"),
     "goal-max-turns":    ("count",    40,    False, "--goal-max-turns"),
@@ -122,6 +131,15 @@ ROLES = frozenset({"researcher", "coder", "human-gate"})
 # ROLES; `lanes.goal_args` still refuses gates and reviews whatever a list says.
 GOAL_CODES = ("I", "P", "TW", "C", "TI")
 
+# The gates a board may hand to the driver. Declared beside ROLES for the same reason:
+# a code that left the graph should fail this module's own test.
+GATE_CODES = ("Gi", "Gp", "Gc")
+
+
+def gate_is_auto(value, code):
+    """Does `auto-gates` hand gate `code` ('Gi') to the driver?"""
+    return code in (value or [])
+
 # Options whose VALUE the board's contract fixes, whatever their type allows. A
 # failed card is FINAL (user rule, 2026-09-12): the dispatcher's breaker blocks it
 # on that first failure and the driver halts the board. The only retry the board
@@ -167,10 +185,17 @@ def _kind_error(kind, value):
         if not isinstance(value, list) or not all(
                 isinstance(p, str) and p.strip() for p in value):
             return f"expected a list of non-empty paths, got {value!r}"
+    elif kind == "gates":
+        if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+            return (f"expected a list of gate codes {list(GATE_CODES)} — [] is every "
+                    f"gate human, got {value!r}")
+        unknown = sorted(set(value) - set(GATE_CODES))
+        if unknown:
+            return (f"unknown gate code(s) {unknown} — the lane's gates are "
+                    f"{list(GATE_CODES)}")
     elif kind == "cards":
-        if not isinstance(value, list) or not value or not all(
-                isinstance(c, str) for c in value):
-            return f"expected a non-empty list of card codes, got {value!r}"
+        if not isinstance(value, list) or not all(isinstance(c, str) for c in value):
+            return f"expected a list of card codes, got {value!r}"
         unknown = sorted(set(value) - set(GOAL_CODES))
         if unknown:
             return (f"unknown card code(s) {unknown} — the goal judge runs on "
@@ -240,6 +265,11 @@ def validate(cfg, *, where="board.json", only=None, lists=True):
         if key not in allowed:
             continue                            # already reported above
         kind, _default, per_lane, _flag = OPTIONS[key]
+        if kind in ("gates", "cards"):       # a list of CODES is one value, not per-lane
+            err = _kind_error(kind, value)
+            if err:
+                problems.append(f"{where}: {key!r} {err}")
+            continue
         if isinstance(value, list) and kind not in ("paths", "roles", "cards") and not lists:
             problems.append(f"{where}: {key!r} takes a single value here — an "
                             f"idea file is one lane, so a list has nothing to "
@@ -279,17 +309,14 @@ def validate(cfg, *, where="board.json", only=None, lists=True):
         if provider_key in allowed and cfg.get(provider_key) and not cfg.get(model_key):
             problems.append(f"{where}: {provider_key!r} requires {model_key!r} "
                             f"— a provider alone does not say which model to run")
-    if "goal-cards" in allowed and cfg.get("goal-cards") is not None and cfg.get("goal") is not True:
-        problems.append(f"{where}: 'goal-cards' requires \"goal\": true — without it no "
-                        f"card runs the goal judge and the list does nothing")
     return problems
 
 
 # Options that were called something else before the naming rule, so the error
 # message can name the replacement instead of only refusing. A rename is not a
 # typo and punctuation-blindness cannot find it.
-RENAMED = {"title": "name", "workdir": "default-workdir", "goal_mode": "goal",
-           "goal-mode": "goal"}
+RENAMED = {"title": "name", "workdir": "default-workdir", "goal_mode": "goal-cards",
+           "goal-mode": "goal-cards", "goal": "goal-cards"}
 
 
 def _near(key):
@@ -560,8 +587,10 @@ _KIND_SCHEMA = {
     "duration": {"type": "string", "pattern": "^(?:\\d+(?:\\.\\d+)?[hms])+$"},
     "abspath":  {"type": "string", "pattern": "^/"},
     "paths":    {"type": "array", "items": {"type": "string", "minLength": 1}},
-    "cards":    {"type": "array", "minItems": 1, "uniqueItems": True,
+    "cards":    {"type": "array", "uniqueItems": True,
                  "items": {"enum": list(GOAL_CODES)}},
+    "gates":    {"type": "array", "uniqueItems": True,
+                 "items": {"enum": list(GATE_CODES)}},
     "roles":    {"type": "object",
                  "propertyNames": {"enum": sorted(ROLES)},
                  "additionalProperties": {"type": "string", "minLength": 1}},

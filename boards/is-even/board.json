@@ -5,14 +5,14 @@
   "lanes": 1,
   "unit-tests": true,
   "integration-tests": false,
-  "auto-gates": false,
-  "goal": true,
+  "auto-gates": ["Gi","Gp","Gc"],
+  "sequential": true,
   "goal-cards": [
     "C"
   ],
   "max-runtime": "12m",
   "max-reworks": 2,
-  "model": "ornith-35b",
+  "model": "qwen38-27b",
   "provider": "llama-swap",
   "model_override": "glm-5.3-flash",
   "provider_override": "opencode-go"

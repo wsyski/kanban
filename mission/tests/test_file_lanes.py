@@ -90,9 +90,9 @@ def test_scratch_is_rendered_but_is_not_a_hand_off(monkeypatch, tmp_path):
 
 
 def test_a_board_can_file_without_the_goal_judge(monkeypatch, tmp_path):
-    """`goal: false` has to reach the FILING path: a card filed with --goal
+    """`goal-cards: []` has to reach the FILING path: a card filed with --goal
     anyway wedges on a judge that is reachable but transport-failing (O10)."""
-    fake = _file_one_lane(monkeypatch, tmp_path, goal_mode=False)
+    fake = _file_one_lane(monkeypatch, tmp_path, goal_cards=[])
     assert fake.created()
     assert not [a for a in fake.created() if "--goal" in a]
 
@@ -105,7 +105,7 @@ def test_the_goal_judge_is_off_by_default_for_a_worker_card(monkeypatch, tmp_pat
 
 
 def test_goal_flags_never_reach_a_review_or_gate_card(monkeypatch, tmp_path):
-    fake = _file_one_lane(monkeypatch, tmp_path, goal_mode=True)
+    fake = _file_one_lane(monkeypatch, tmp_path, goal_cards=["I", "P", "TW", "C", "TI"])
     assert [a for a in fake.created() if "--goal" in a], \
         "a worker card should be filed under the goal judge when goal mode is on"
     for a in fake.created():

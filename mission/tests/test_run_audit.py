@@ -12,7 +12,7 @@ spec.loader.exec_module(ra)
 import runs_util  # noqa: E402  (run-audit put mission/ on the path)
 
 BASE = datetime.datetime(2026, 9, 11, 21, 21, 0)
-GOOD_LOG = ["[21:21:04] LANE 1 open: its=True uts=True auto-gates=True snapshot=… idea='## Idea 1'",
+GOOD_LOG = ["[21:21:04] LANE 1 open: its=True uts=True auto-gates=['Gi', 'Gp', 'Gc'] snapshot=… idea='## Idea 1'",
             "[21:22:34] unblocked Gi1 (parents done)",
             "[21:22:35] GATE Gi1: auto-completed — nothing committed",
             "[21:33:30] artifact kept: boards/b/runs/artifacts/2026/t_x.patch",
@@ -39,8 +39,8 @@ def fixture(tmp_path, log=None, gates=None, cards=None, restarts=False,
     runs = board / "runs"
     runs.mkdir(parents=True, exist_ok=True)
     (board / "board.json").write_text(json.dumps(
-        {"slug": "b", "auto-gates": True, "max-runtime": ceiling} if ceiling
-        else {"slug": "b", "auto-gates": True}))
+        {"slug": "b", "auto-gates": ["Gi", "Gp", "Gc"], "max-runtime": ceiling} if ceiling
+        else {"slug": "b", "auto-gates": ["Gi", "Gp", "Gc"]}))
     (runs / "driver.log").write_text("\n".join(log if log is not None else GOOD_LOG) + "\n")
     summary = {
         "wall_min": 13.1, "agent_work_min": 5.6, "restarts_observed": restarts,
@@ -153,7 +153,7 @@ def test_a_held_gate_warns_on_an_auto_gated_board_but_not_a_human_one(tmp_path, 
     assert "E2" in codes(findings, "WARNING")
     runs = fixture(tmp_path / "second", log=log)
     (tmp_path / "second" / "boards" / "b" / "board.json").write_text(
-        json.dumps({"slug": "b", "auto-gates": False, "max-runtime": "4m"}))
+        json.dumps({"slug": "b", "auto-gates": [], "max-runtime": "4m"}))
     findings, _rows, _s = ra.audit(runs)
     assert "E2" in codes(findings, "INFO")
 
@@ -531,3 +531,19 @@ def test_a_worker_revision_with_an_empty_result_is_flagged():
     rows = [{"code": "C1-rev-1", "done": True, "result": ""},
             {"code": "RVa1-r2", "done": True, "result": ""}]
     assert [f[2] for f in ra.result_findings(rows)] == ["C1-rev-1 finished with an empty result"]
+
+
+def test_a_held_gate_is_judged_against_the_gates_that_are_automatic():
+    """`auto-gates: ["Gi"]` — a held Gp is a person doing their job; a held Gi is not."""
+    import importlib.util, os
+    spec = importlib.util.spec_from_file_location(
+        "run_audit", os.path.join(os.path.dirname(__file__), "..", "run-audit.py"))
+    ra = importlib.util.module_from_spec(spec); spec.loader.exec_module(ra)
+    log = ("[10:00:00] Gp1: waiting: plan review verdict\n"
+           "[10:00:00] Gi1: waiting: no refined idea\n"
+           "[10:00:01] ALL GATES COMPLETE — scenario finished\n")
+    sev = {t.split(":")[1].strip().split(":")[0]: s
+           for s, c, t in ra.driver_findings(log, ["Gi"])[0] if c == "E2"}
+    assert sev == {"Gp1": "INFO", "Gi1": "WARNING"}
+    both = {s for s, c, _t in ra.driver_findings(log, [])[0] if c == "E2"}
+    assert both == {"INFO"}, "nothing automatic: a held gate is always a person"

@@ -54,7 +54,7 @@ def card(monkeypatch):
 @pytest.fixture
 def refined_file(monkeypatch, tmp_path, card):
     monkeypatch.setattr(run, "RUN_DIR", str(tmp_path))
-    monkeypatch.setattr(run, "lane_options", lambda lane: {"auto-gates": False})
+    monkeypatch.setattr(run, "lane_options", lambda lane: {"auto-gates": []})
     monkeypatch.setattr(run, "log", lambda msg: None)
     run._ANNOUNCED.clear()
     d = tmp_path / "artifacts" / "lane-1"
@@ -263,7 +263,7 @@ GC = lanes.card_title("Gc", 1)
 @pytest.fixture
 def held(monkeypatch, card):
     """A plan and a code gate whose newest review passed, with a round recorder."""
-    monkeypatch.setattr(run, "lane_options", lambda lane: {"auto-gates": False, "max-reworks": 2})
+    monkeypatch.setattr(run, "lane_options", lambda lane: {"auto-gates": [], "max-reworks": 2})
     monkeypatch.setattr(run, "log", lambda msg: None)
     monkeypatch.setattr(run, "staged_files", lambda: [])
     monkeypatch.setattr(run, "write_timing_report", lambda lane: None)
@@ -344,7 +344,7 @@ def test_a_new_review_round_brings_a_new_gate_ready(held, card, monkeypatch):
 
 
 def test_auto_gates_ignore_comments_and_complete_on_evidence(monkeypatch, refined_file, card):
-    monkeypatch.setattr(run, "lane_options", lambda lane: {"auto-gates": True})
+    monkeypatch.setattr(run, "lane_options", lambda lane: {"auto-gates": ["Gi", "Gp", "Gc"]})
     refined_file.write_text(refined())
     run.gate_action(STATE, GI, "gi", 1)
     [done] = card.completed()
@@ -364,3 +364,24 @@ def test_a_waiting_gate_answers_only_what_came_after_the_drivers_last_word(held,
     run.gate_action(state, GP, "gp", 1)
     [reply] = [c for c in card.driver_comments() if c.startswith("NOT APPLIED")]
     assert "(comment #5)" in reply and not card.completed()
+
+
+def test_only_the_listed_gate_is_completed_by_the_driver(monkeypatch, refined_file, card):
+    """`"auto-gates": ["Gi"]` — the driver opens the idea gate on its evidence and the
+    plan and code gates still wait for a person."""
+    monkeypatch.setattr(run, "lane_options", lambda lane: {"auto-gates": ["Gi"]})
+    refined_file.write_text(refined())
+    run.gate_action(STATE, GI, "gi", 1)
+    [done] = card.completed()
+    assert "auto-gate" in done[done.index("--result") + 1]
+    assert not [c for c in card.driver_comments() if c.startswith(run.GATE_READY_MARK)], \
+        "an auto gate asks nobody"
+
+
+def test_a_gate_not_in_the_list_still_asks_a_person(monkeypatch, held, card):
+    state, _filed = held
+    monkeypatch.setattr(run, "lane_options",
+                        lambda lane: {"auto-gates": ["Gi"], "max-reworks": 2})
+    run.gate_action(state, GP, "gp", 1)
+    assert not card.completed()
+    assert [c for c in card.driver_comments() if c.startswith(run.GATE_READY_MARK)]

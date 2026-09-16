@@ -61,7 +61,7 @@ def _board_env(monkeypatch, tmp_path, calls, it=False, ut=True):
     monkeypatch.setattr(run, "halt_if_exhausted", lambda st: False)
     monkeypatch.setattr(run, "rework_rounds", lambda st: None)
     monkeypatch.setattr(run, "lane_options",
-                        lambda lane: {"integration-tests": it, "unit-tests": ut, "auto-gates": False,
+                        lambda lane: {"integration-tests": it, "unit-tests": ut, "auto-gates": [],
                                       "idea": "## Idea 1: is_even\n"})
     monkeypatch.setattr(run, "IDEAS_DIR", str(tmp_path))
     monkeypatch.setattr(run, "SNAP_DIR", str(tmp_path / "snapshots"))
@@ -128,7 +128,7 @@ def test_opening_a_lane_re_points_its_cards_at_the_lanes_model(monkeypatch, tmp_
         "model": "qwen38-27b", "provider": "llama-swap",
         "model_override": "glm-5.3-flash", "provider_override": "opencode-go"})
     monkeypatch.setattr(run, "lane_options", lambda lane: {
-        "integration-tests": False, "unit-tests": True, "auto-gates": False,
+        "integration-tests": False, "unit-tests": True, "auto-gates": [],
         "model": "muse-glimmer-30b", "provider": "llama-swap", "idea": "## Idea 1: is_even\n"})
     run.tick()
     sets = {c[1]: c[2:] for c in calls if c[0] == "set-model"}
@@ -151,7 +151,7 @@ def test_a_lane_without_a_pin_re_points_its_review_too(monkeypatch, tmp_path):
     monkeypatch.setattr(run, "manifest", lambda: {"model": "qwen38-27b",
                                                   "provider": "llama-swap"})
     monkeypatch.setattr(run, "lane_options", lambda lane: {
-        "integration-tests": False, "unit-tests": True, "auto-gates": False,
+        "integration-tests": False, "unit-tests": True, "auto-gates": [],
         "model": "muse-glimmer-30b", "provider": "llama-swap", "idea": "## Idea 1: is_even\n"})
     run.tick()
     sets = {c[1]: c[2:] for c in calls if c[0] == "set-model"}
@@ -208,7 +208,7 @@ def test_a_lane_that_prunes_its_idea_cards_releases_its_root_at_once(monkeypatch
     _board_env(monkeypatch, tmp_path, calls)
     monkeypatch.setattr(run, "lane_options",
                         lambda lane: {"integration-tests": False, "unit-tests": False,
-                                      "auto-gates": False, "refinement": False,
+                                      "auto-gates": [], "refinement": False,
                                       "idea": "## Idea 1: is_even\n"})
     live = _state(root_status="blocked")
 
@@ -754,7 +754,7 @@ def test_the_cards_a_lane_prunes_itself_are_not_missing(monkeypatch, tmp_path):
     _board_env(monkeypatch, tmp_path, calls)
     monkeypatch.setattr(run, "lane_options",
                         lambda lane: {"integration-tests": False, "unit-tests": False,
-                                      "refinement": False, "auto-gates": False,
+                                      "refinement": False, "auto-gates": [],
                                       "idea": "## Idea 1: is_even\n"})
     st = _state(root_status="done")
     for code in ("I", "Gi", "TW", "TI", "RVc"):

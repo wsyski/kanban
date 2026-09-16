@@ -420,10 +420,11 @@ with the CLI:
   TW, C, TI and their rounds) are filed with a turn ceiling and, with `goal` on, a goal
   judge that checks the body's `DONE WHEN:` line. A goal judge on a review or gate could
   complete a card whose success case is blocking. Goal mode is off unless `board.json`
-  sets `"goal": true`; see [the goal judge](DESIGN.md#the-goal-judge) before turning it on.
-  `"goal-cards"` narrows it to some worker cards, e.g. `["C", "TI"]` for the long
-  implementation cards; its rounds follow their base card. Unset means all of `I`, `P`,
-  `TW`, `C`, `TI`. Both keys are read at filing, so changing them means re-creating the board.
+  lists them in `"goal-cards"`; see [the goal judge](DESIGN.md#the-goal-judge) before arming it.
+  `"goal-cards"` names them, e.g. `["C", "TI"]` for the long implementation cards; its
+  rounds follow their base card, and `[]` (the default) is no judge at all. There is no
+  separate switch: the list IS the switch. It is read at filing, so changing it means
+  re-creating the board.
   Which model judges is not a board option: it is each worker profile's resolved
   `auxiliary.goal_judge` (the managed `/etc/hermes/config.yaml` pin wins), and
   `create-board.sh` prints it per profile in its pre-flight (`goal judge for C,TI (profile
@@ -472,7 +473,7 @@ into, and `run-summary.json` records the same as `commit_target`. You commit at 
 discretion, or not at all. `mission/` assets are committed freely by the operator
 between runs.
 
-With `auto-gates` on (board.json, or a `<!-- auto-gates: true -->` idea header) the
+With a gate listed in `auto-gates` (board.json: `["Gi"]`, or `["Gi", "Gp", "Gc"]` for all) the
 driver plays the gate-holder: it verifies the evidence, records it in the gate result,
 completes the gate — and still commits nothing; the files stand staged for you. Use it
 to smoke-test the machinery and for lanes whose human check is recorded outside the
@@ -540,7 +541,7 @@ by every board — nothing scenario-specific to write per idea. To run new work:
 1. Write the idea into `boards/<s>/lane-<k>.md` (or the Triage card) — free text, plus
    optional headers overriding the board's value for that lane only, e.g.
    `<!-- unit-tests: false -->`. The per-lane options, and so the whole header set,
-   are `refinement`, `unit-tests`, `integration-tests`, `auto-gates` and `max-reworks`
+   are `refinement`, `unit-tests`, `integration-tests` and `max-reworks`
    (`mission/board_schema.py --schema` prints the table); every other
    option is board-level. A header is a whole line, and
    anything shaped like one is judged as one, so a misspelling is an error rather than

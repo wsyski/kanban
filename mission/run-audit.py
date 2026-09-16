@@ -116,8 +116,13 @@ def read(path):
         return None
 
 
-def driver_findings(log, auto_gates):
-    """The driver log: terminal state, vocabulary, and held gates."""
+def driver_findings(log, auto_gates=()):
+    """The driver log: terminal state, vocabulary, and held gates.
+
+    `auto_gates` is the board's list of gate CODES the driver completes itself. Severity
+    is decided per gate, not per board: with `["Gi"]` a held `Gp` is a person doing their
+    job (INFO) while a held `Gi` is a defect (WARNING). Reading the option as one boolean
+    called every held gate a defect the moment any gate was automatic."""
     out = []
     if log is None:
         return [("ERROR", "E1", "no driver.log — the run never started")], {}
@@ -133,7 +138,8 @@ def driver_findings(log, auto_gates):
         if "waiting:" in body:
             # A gate waiting for a verdict is a defect on an auto-gated board and
             # normal on a human-gated one — worth saying either way.
-            sev = "WARNING" if auto_gates else "INFO"
+            code = body.split(":")[0].strip()
+            sev = "WARNING" if code.rstrip("0123456789") in (auto_gates or ()) else "INFO"
             out.append((sev, "E2", f"gate held: {body}"))
             continue
         if ERROR_VOCAB.search(body) and not any(b.search(body) for b in BENIGN):
@@ -394,7 +400,7 @@ def audit(runs_dir, board_dir=None):
     ceiling = ceiling_minutes(cfg.get("max-runtime"))
 
     findings, stats = driver_findings(read(os.path.join(runs_dir, "driver.log")),
-                                     bool(cfg.get("auto-gates")))
+                                     cfg.get("auto-gates") or ())
     if any(c == "E1" and "did not finish" in t for _s, c, t in findings):
         # Mid-flight: one line beats a cascade of E4/E7/E12 that all mean the
         # same thing (the auditor was run too early), and the cause is a person

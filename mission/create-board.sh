@@ -49,9 +49,9 @@ same set:
       "lanes": 2,
       "unit-tests": true,
       "integration-tests": [false, true],
-      "auto-gates": false,
-      "goal": false,
-      "goal-cards": ["C", "TI"],                 # optional: goal only on these worker cards
+      "auto-gates": [],                          # [] = every gate human; ["Gi"] hands the
+                                                 #   idea gate to the driver
+      "goal-cards": ["C", "TI"],                 # the goal judge on these worker cards; [] = none
       "max-runtime": "60m",
       # no retry key: every card — first filing and revision alike — gets ONE attempt
       "goal-max-turns": 40,
@@ -402,8 +402,8 @@ made = file_lanes.file_board(slug, repo, workdir, lanes_n, key,
                          targets=cfg.get("targets"), run_id=key,
                          goal_max_turns=cfg.get("goal-max-turns"),
                          assignees=cfg.get("assignees"),
-                         # filing is where a card's goal_mode is decided
-                         goal_mode=cfg.get("goal"))
+                         # filing is where a card's goal cards are decided
+                         goal_cards=cfg.get("goal-cards"))
 print(f"filed {len(made)} cards in {lanes_n} lane(s), all parked "
       f"(max-runtime: {cfg.get('max-runtime') or file_lanes.DEFAULT_MAX_RUNTIME})")
 ideas_filed = file_lanes.file_ideas(slug, repo, board_dir, lanes_n, key, run_id=key,

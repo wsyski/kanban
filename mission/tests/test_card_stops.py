@@ -1202,3 +1202,34 @@ def test_a_board_that_names_no_model_says_nothing_about_one(monkeypatch):
     monkeypatch.setattr(run, "lane_model_opts", lambda lane: {})
     st = _fork_state()
     assert run.concurrency_note(st, st["TW1: unit tests - lane 1"]) == ""
+
+
+def test_the_timeout_halt_reason_carries_the_model_note(monkeypatch):
+    """The whole path, not just the helper: is-even's 10:27 halt read `elapsed 720s >
+    limit 720s` with no model named, though `concurrency_note` returns one for that
+    board."""
+    st = {"P1: implementation plan - lane 1":
+          {"id": "t_p1", "status": "blocked", "title": "P1: implementation plan - lane 1"},
+          "TW1: unit tests - lane 1":
+          {"id": "t_tw", "status": "blocked", "title": "TW1: unit tests - lane 1"}}
+    monkeypatch.setattr(run, "BOARD", "is-even")
+    monkeypatch.setattr(run, "log", lambda m: None)
+    monkeypatch.setattr(run, "lane_graph", lambda s: [])
+    monkeypatch.setattr(run, "card_stall", lambda *a, **k: None)
+    monkeypatch.setattr(run, "card_record", lambda cid: {"events": []})
+    monkeypatch.setattr(run, "_exhaustion_event",
+                        lambda cid, ev: {"kind": "timed_out", "at": 1,
+                                         "reason": "elapsed 720s > limit 720s"}
+                        if cid == "t_p1" else None)
+    monkeypatch.setattr(run, "driver_block", lambda *a, **k: None)
+    monkeypatch.setattr(run, "provider_hits", lambda cid: 0)
+    monkeypatch.setattr(run, "kb", lambda *a, **k: "")
+    monkeypatch.setattr(run, "manifest", lambda: {"model": "qwen38-27b", "provider": "llama-swap"})
+    monkeypatch.setattr(run, "lane_model_opts", lambda lane: {})
+    monkeypatch.setattr(run, "record_halt", lambda reason, where=None: run._HALTED.update(reason=reason))
+    run._HALTED["reason"] = None
+    try:
+        run.halt_if_exhausted(st)
+        assert "(on qwen38-27b)" in run._HALTED["reason"], run._HALTED["reason"]
+    finally:
+        run._HALTED["reason"] = None

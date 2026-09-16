@@ -140,7 +140,7 @@ def manifest():
         # its manifest degrades to the documented shape rather than silently
         # growing integration cards nobody asked for.
         return {"default-workdir": os.path.join(BOARD_DIR, "work"), "lanes": 1,
-                "integration-tests": False, "auto-gates": False}
+                "integration-tests": False, "auto-gates": []}
 
 
 def board_defaults():
@@ -175,7 +175,8 @@ def lane_graph(state):
         # an exact-title match reads a relabelled card as missing — and a card read as
         # missing is dropped from its children's parent lists below.
         present = []
-        for c in lanes.lane_cards(lane, integration_tests=True):
+        for c in lanes.lane_cards(lane, integration_tests=True,
+                                  sequential=bool(manifest().get("sequential"))):
             t, live = title_of_prefix(state, f"{c['id']}:")
             if live:
                 present.append({**c, "title": t})
@@ -424,15 +425,13 @@ def card_id(state, title):
 def _goal_args(assignee, code):
     """Delegates to lanes.goal_args — single source of the worker-only rule.
 
-    The board decides whether its workers run under the goal judge: machine
-    without a working auxiliary model sets `"goal": false` in board.json
-    and its cards complete on their own evidence (reviewers and gates still
-    judge the work).
+    The board decides WHICH of its workers run under the goal judge, by listing their
+    codes in `goal-cards`; `[]` (the default) is none, and those cards complete on
+    their own evidence (reviewers and gates still judge the work).
     """
     cfg = board_defaults()
-    return lanes.goal_args(code, enabled=bool(cfg.get("goal", board_schema.OPTIONS["goal"][1])),
-                           max_turns=cfg.get("goal-max-turns"),
-                           cards=cfg.get("goal-cards"))
+    return lanes.goal_args(code, cards=cfg.get("goal-cards"),
+                           max_turns=cfg.get("goal-max-turns"))
 
 
 def latest_verdict_card(state, lane, reviewer_prefix, final_code=None):
@@ -482,10 +481,18 @@ def latest_verdict(state, lane, reviewer_prefix, final_code=None):
     return latest_verdict_card(state, lane, reviewer_prefix, final_code)[1]
 
 
-def rework_hold(state, lane, base, gate_code):
-    """True while a revision/re-gate card of this loop is live (not done)."""
+def rework_hold(state, lane, base, recheck_code):
+    """True while a revision or its RE-CHECK card is live (not done).
+
+    `recheck_code` is the card that judges the revision: `RVp` for the plan loop (the
+    re-review), `Gi` for the idea loop (the re-gate — no reviewer sits before an idea
+    gate). The plan loop passed `Gp` here until 2026-09-16, and `Gp{lane}-r` is a card
+    that never exists: with the revision done and its re-review still queued the hold
+    read false, so the driver judged the loop on the SUPERSEDED verdict — it filed
+    round 2 one second after round 1's revision finished (is-even, 09:46:03/09:46:04)
+    and then escalated with the round-2 re-review still in `todo`."""
     for t, c in state.items():
-        if (t.startswith(f"{base}{lane}-rev") or t.startswith(f"{gate_code}{lane}-r")) \
+        if (t.startswith(f"{base}{lane}-rev") or t.startswith(f"{recheck_code}{lane}-r")) \
                 and c["status"] not in ("done", "archived"):
             return True
     return False
@@ -916,6 +923,7 @@ GATE_READY_MARK = "GATE READY"
 _VERDICT_RE = re.compile(r"\s*(PASS|ACCEPT|REWORK)\s*(?:[:—–-]\s*(.*?))?\s*$",
                          re.IGNORECASE | re.DOTALL)
 GATE_NAMES = {"gi": "idea gate", "gp": "plan gate", "gc": "code gate"}
+GATE_CODE_OF = {"gi": "Gi", "gp": "Gp", "gc": "Gc"}
 _GATE_TAG = {}          # gate code -> the review card its current readiness rests on
 
 
@@ -1082,14 +1090,15 @@ def answer_early_verdicts(state, title, waiting):
 
 def gate_action(state, title, kind, lane):
     msg = _gate_action(state, title, kind, lane)
-    if msg.startswith("waiting:") and not (lane_options(lane) or {}).get("auto-gates"):
+    if msg.startswith("waiting:") and not board_schema.gate_is_auto(
+            (lane_options(lane) or {}).get("auto-gates"), GATE_CODE_OF[kind]):
         answer_early_verdicts(state, title, msg)
     return msg
 
 
 def _gate_action(state, title, kind, lane):
     opts = lane_options(lane) or {}
-    auto = bool(opts.get("auto-gates"))
+    auto = board_schema.gate_is_auto(opts.get("auto-gates"), GATE_CODE_OF[kind])
     if kind == "gi":
         # No reviewer card precedes this gate — the refinement's check IS a
         # person reading it, which is the whole point of putting a gate here.
@@ -1408,7 +1417,7 @@ def rework_rounds(st):
         # --- plan loop: Gp parked, newest plan-review verdict REJECT ---
         _, gp_card = title_of_prefix(st, f"Gp{lane}:")
         if gp_card and gp_card["status"] in ("blocked", "ready", "todo") \
-                and not rework_hold(st, lane, "P", "Gp"):
+                and not rework_hold(st, lane, "P", "RVp"):
             v_card, v = latest_verdict_card(st, lane, "RVp")
             if verdict_token(v) == "REJECT":
                 cap = lanes.max_reworks(lane_options(lane))

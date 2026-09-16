@@ -125,11 +125,10 @@ def card_title(code, lane):
     return f"{code}{lane}: {LABELS[code]} - lane {lane}"
 
 
-def goal_args(code, enabled=True, max_turns=None, cards=None):
+def goal_args(code, cards=(), max_turns=None):
     """`--goal` flags for a WORKER card at filing time; [] for gates/reviewers.
 
-    ``enabled=False`` — a board whose manifest sets ``"goal": false`` —
-    files none of them. The goal judge is a worker self-check that needs a
+    ``cards`` is the board's ``goal-cards``; ``[]`` (the default) files none of them. The goal judge is a worker self-check that needs a
     REACHABLE auxiliary model; a goal judge that is reachable but failing returns
     its transport error as the verdict ``continue`` ("not done yet"), which
     makes every goal-mode card uncompletable and the lane unwinnable (the
@@ -148,13 +147,12 @@ def goal_args(code, enabled=True, max_turns=None, cards=None):
     agent.max_turns (80) is untouched — goal-mode workers measure against the
     goal ceiling, not the agent one.
 
-    ``cards`` (the board's `goal-cards`) narrows it to those worker codes; None is
-    every worker card. The gate/review refusal comes first, so a list cannot arm one.
+    The gate/review refusal comes first, so a list naming one cannot arm it.
     """
     c = code.lower()
-    if not enabled or c.startswith("g") or c.startswith("rv"):
+    if c.startswith("g") or c.startswith("rv"):
         return []
-    if cards is not None and code not in cards:
+    if code not in (cards or ()):
         return []
     turns = max_turns or board_schema.OPTIONS["goal-max-turns"][1]
     return ["--goal", "--goal-max-turns", str(turns)]
@@ -196,7 +194,7 @@ def goal_profiles(cfg):
                         unit_tests=any_lane(cfg.get("unit-tests", True)),
                         refinement=any_lane(cfg.get("refinement", True)),
                         assignees=cfg.get("assignees")):
-        if goal_args(c["code"], enabled=cfg.get("goal") is True, cards=cfg.get("goal-cards")):
+        if goal_args(c["code"], cards=cfg.get("goal-cards")):
             out.setdefault(c["assignee"], []).append(c["code"])
     return out
 
@@ -283,7 +281,7 @@ def model_args(code, cfg, lane_cfg=None):
 
 
 def lane_cards(lane, integration_tests=True, unit_tests=True, assignees=None,
-               refinement=True):
+               refinement=True, sequential=False):
     """The card graph for one lane, in filing order (parents before children).
 
     A dropped card's child is reparented by the `prev_id` walk below, so
@@ -300,10 +298,16 @@ def lane_cards(lane, integration_tests=True, unit_tests=True, assignees=None,
             and (unit_tests or r[0] not in UT_CODES)
             and (refinement or r[0] not in REFINEMENT_CODES)]
     codes = {r[0] for r in rows}
+    # `sequential` (board option): the implementation waits for the unit tests instead
+    # of running beside them, so one model slot serves one card at a time. It restores
+    # the RED observation as a side effect, and costs the lane the fork's overlap.
+    declared_parents = dict(PARENTS)
+    if sequential and "TW" in codes:
+        declared_parents["C"] = ("TW",)
     cards = []
     prev_id = None
     for code, body, assignee, _parent_code, skill in rows:
-        declared = PARENTS.get(code)
+        declared = declared_parents.get(code)
         if declared:
             parents = [f"{p}{lane}" for p in declared if p in codes]
         else:
@@ -391,8 +395,10 @@ def _as_value(kind, raw, fallback):
     text into the option's own type.
     """
     text = str(raw).strip()
-    if kind == "bool":
-        return _as_bool(text, fallback)
+    if kind in ("bool", "gates"):
+        # A HEADER is one lane's answer, so it is the boolean form: a lane cannot name
+        # a different gate set than the board it belongs to.
+        return _as_bool(text, fallback if isinstance(fallback, bool) else False)
     if kind == "count":
         if not text.isdigit() or int(text) < 1:
             raise ValueError(f"expected a positive integer, got {raw!r}")

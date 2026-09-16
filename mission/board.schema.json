@@ -23,31 +23,23 @@
       "type": "object"
     },
     "auto-gates": {
-      "oneOf": [
-        {
-          "default": false,
-          "type": "boolean"
-        },
-        {
-          "description": "one entry per lane, in lane order",
-          "items": {
-            "default": false,
-            "type": "boolean"
-          },
-          "minItems": 1,
-          "type": "array"
-        }
-      ]
+      "default": [],
+      "items": {
+        "enum": [
+          "Gi",
+          "Gp",
+          "Gc"
+        ]
+      },
+      "type": "array",
+      "uniqueItems": true
     },
     "default-workdir": {
       "pattern": "^/",
       "type": "string"
     },
-    "goal": {
-      "default": false,
-      "type": "boolean"
-    },
     "goal-cards": {
+      "default": [],
       "items": {
         "enum": [
           "I",
@@ -57,7 +49,6 @@
           "TI"
         ]
       },
-      "minItems": 1,
       "type": "array",
       "uniqueItems": true
     },
@@ -178,6 +169,10 @@
           "type": "array"
         }
       ]
+    },
+    "sequential": {
+      "default": false,
+      "type": "boolean"
     },
     "slug": {
       "pattern": "^[a-z0-9][a-z0-9-]*$",

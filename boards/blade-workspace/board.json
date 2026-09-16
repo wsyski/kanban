@@ -6,8 +6,9 @@
   "default-workdir": "/home/playground/liferay/workspaces/blade-workspace",
   "unit-tests": true,
   "integration-tests": true,
-  "auto-gates": false,
-  "goal": true,
+  "auto-gates": [
+    "Gi"
+  ],
   "goal-cards": [
     "C",
     "TI"
