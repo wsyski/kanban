@@ -17,7 +17,7 @@ Reproduce, do not skim: every PASS is re-derived, every REJECT carries reproduct
 VERDICT — the result field's first word is the verdict:
 - PASS: `hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "PASS: (a)-(f) hold — build <ok>, unit <totals>"`
 - REJECT: `hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "REJECT: <numbered findings, each with reproduction steps> OWNER: <C|TW|TI>"` — the driver files ONE revision round (up to the board's rework cap, then a human) for the card that OWNS the fix, so name it: `OWNER: C` when the implementation is wrong, `OWNER: TW` when a unit test is wrong, `OWNER: TI` when an integration test is wrong. The C card corrects a TW test only under the conditions check (e) names, so a test defect it did not correct belongs to the TW card: the round goes to the card you name, and a verdict with no usable owner line goes to the C card.
-Write the full review to `<RUNS>/scratch/<YOUR-CARD-ID>/review.md` and attach it: `hermes kanban --board <BOARD> attach <YOUR-CARD-ID> <RUNS>/scratch/<YOUR-CARD-ID>/review.md`. If you cannot complete every check, the verdict is `REJECT: incomplete review — <what is unchecked>`, never a PASS with caveats.
+Write the full review to `<RUNS>/scratch/<YOUR-CARD-ID>/review.md` — the driver attaches it when your card is done, and you never attach anything yourself. If you cannot complete every check, the verdict is `REJECT: incomplete review — <what is unchecked>`, never a PASS with caveats.
 
 <RESULT_FIELD>
 

@@ -377,3 +377,70 @@ def test_a_worker_card_records_what_was_staged(monkeypatch, tmp_path):
     monkeypatch.setattr(run, "staged_files", lambda: {"work/a.py"})
     run.record_chain_done(st)
     assert [r for r in _recs(tmp_path) if r["event"] == "done"][0]["staged"] == ["work/a.py"]
+
+
+# ---- the driver attaches the hand-off, not the worker ------------------------
+
+def _handoff_state(tmp_path, monkeypatch, name="refined.md", body="x", status="done"):
+    import run as r
+    monkeypatch.setattr(r, "RUN_DIR", str(tmp_path))
+    monkeypatch.setattr(r, "log", lambda m: None)
+    d = tmp_path / "scratch" / "t_i1"
+    d.mkdir(parents=True)
+    (d / name).write_text(body)
+    r._ATTACHED.clear()
+    title = "I1: idea refinement - lane 1"
+    return {title: {"id": "t_i1", "status": status, "title": title}}
+
+
+def test_the_driver_attaches_a_finished_cards_hand_off(tmp_path, monkeypatch):
+    """`hermes kanban attach` is refused inside a worker, and the inline-bytes tool made
+    the model copy the file by hand — which is where every local-model run died."""
+    import run as r
+    state = _handoff_state(tmp_path, monkeypatch)
+    calls = []
+    monkeypatch.setattr(r, "kb", lambda *a, **k: calls.append(a) or "")
+    monkeypatch.setattr(r, "card_show", lambda cid: {"events": []})
+    r.attach_hand_offs(state)
+    assert calls == [("attach", "t_i1", str(tmp_path / "scratch" / "t_i1" / "refined.md"))]
+    r.attach_hand_offs(state)
+    assert len(calls) == 1, "once per card, not once per tick"
+
+
+def test_an_empty_or_missing_hand_off_is_not_attached(tmp_path, monkeypatch):
+    import run as r
+    state = _handoff_state(tmp_path, monkeypatch, name="patch.diff", body="")
+    calls = []
+    monkeypatch.setattr(r, "kb", lambda *a, **k: calls.append(a) or "")
+    monkeypatch.setattr(r, "card_show", lambda cid: {"events": []})
+    r.attach_hand_offs(state)
+    assert calls == [], "an empty patch is a lane that changed nothing, not a hand-off"
+
+
+def test_a_file_the_worker_already_attached_is_not_attached_twice(tmp_path, monkeypatch):
+    import run as r
+    state = _handoff_state(tmp_path, monkeypatch, name="review.md", body="verdict")
+    calls = []
+    monkeypatch.setattr(r, "kb", lambda *a, **k: calls.append(a) or "")
+    monkeypatch.setattr(r, "card_show",
+                        lambda cid: {"events": [{"kind": "attached",
+                                                 "payload": {"filename": "review.md"}}]})
+    r.attach_hand_offs(state)
+    assert calls == []
+
+
+def test_a_card_still_running_hands_off_nothing(tmp_path, monkeypatch):
+    import run as r
+    state = _handoff_state(tmp_path, monkeypatch, status="running")
+    calls = []
+    monkeypatch.setattr(r, "kb", lambda *a, **k: calls.append(a) or "")
+    monkeypatch.setattr(r, "card_show", lambda cid: {"events": []})
+    r.attach_hand_offs(state)
+    assert calls == []
+
+
+def test_attaching_runs_before_the_chain_records_what_a_card_produced():
+    import inspect
+    import run as r
+    src = inspect.getsource(r._tick)
+    assert src.index("attach_hand_offs(st)") < src.index("record_chain_done(st)")

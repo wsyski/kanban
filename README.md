@@ -454,7 +454,7 @@ with the CLI:
 The authorization chain per lane, with `auto-gates` off:
 
 ```
-workers stage (git add own paths) + attach per-card patch
+workers stage (git add own paths) + write per-card patch to scratch/ (the driver attaches it)
         ↓
 reviewer verifies the STAGED diff (not the worktree)
         ↓

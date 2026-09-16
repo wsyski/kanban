@@ -19,9 +19,9 @@ researcher's to find — a worker's `python3` may not.
   `PASS` comment on the gate card (README, "Answering a gate from the card"). Set it to
   `true` for an unattended run: the driver completes the gates on the same evidence and
   commits nothing.
-- `"max-runtime": "10m"` — a ceiling, not a target: a cloud run needs about 4m a card. A
-  local model needs `"20m"`, because it loads cold (~48 s on the 24 GB rig) and decodes at
-  ~27 t/s (see the work-model bullet below). On an idea
+- `"max-runtime": "10m"` — a ceiling, not a target: a cloud run needs about 4m a card. **A
+  local run needs `"20m"`**: the model loads cold (~48 s on the 24 GB rig) and decodes at ~26 t/s,
+  and the 2026-09-15 attempts hit exactly this ceiling (`elapsed 601s > limit 600s`). On an idea
   this small a card that needs longer is doing work the
   idea does not ask for, so the ceiling also checks the card bodies. A timed-out card is a
   hard failure: the driver halts the board, and only a review that REJECTS sends work
@@ -30,46 +30,56 @@ researcher's to find — a worker's `python3` may not.
 - `"model_override": "glm-5.3-flash"`, `"provider_override": "opencode-go"` — as on
   every shipped board, the review cards (`RVp`, `RVa` and their rounds) run on a
   different model from the coder's default, so the review model is independent of the author. This is the cheap place to see the pin working.
-- No `"model"`/`"provider"` — no work-model flag is filed, so every card runs its profile's
-  own (cloud) model, the reviews excepted (they carry the pin above). To run the lane on the
-  local rig, add `"model": "qwen38-27b"`, `"provider": "llama-swap"` and raise
-  `"max-runtime"` to `"20m"`; the runs below used exactly that. `"provider"` is not
-  optional: a bare model is resolved against the profile's provider, which does not serve it.
-- **The 2026-09-15 local run: the model did the work and failed the hand-off.** `qwen38-27b` on
-  `llama-swap`, `"max-runtime": "20m"`: lane 1 opened 08:03:18, `I1` was unblocked a second later, and
-  `refined.md` was on disk by **08:06** — 6383 B and all eight sections, the work the 2026-09-13 probe
-  could not do at all. It then attached a **truncated** copy of it (3192 B, five of the eight sections,
-  byte-identical for its first 20 lines and cut there), produced no further tool call for eleven minutes,
-  and at 08:23:34 the driver halted the board — `elapsed 1201s > limit 1200s`, state left at
-  `runs/is-even-20260915-080245`. **The ceiling was not the constraint**: three of those twenty minutes
-  were the work, and the rest went on re-emitting a 6.4 KB artifact as a tool argument — a hand-off this
-  card's contract asks for and the harness does not need, since it reads the artifact by path. A worker
-  that writes the file and then truncates the attachment is a tooling problem, not a model-quality one;
-  the measured analysis is in the KnowledgeBase note
-  `docs/large-language-models/llama-server-configuration.md`.
-- **The 2026-09-13 local run halted. That is the measurement, not an engine fault.** With
-  `ornith-35b` on `llama-swap` the board filed and dispatched correctly — the worker
-  really ran `hermes -p researcher --cli … -m ornith-35b --provider llama-swap` — and
-  `I1` wrote a correct `artifacts/lane-1/refined.md` (3036 B) within ~90 s. Then it could
-  not finish the card: it reproduced the file from memory instead of attaching it (the
-  411-byte attachment reads `## Proa␦em`, `returns \`nrue\``), burned the turn on
-  `kanban_attach: content_base64 is required`, `kanban_attach_url: unsupported URL
-  scheme ''`, an illegal nested CLI mutation and a blocked `execute_code`, emitted the
-  same `read_file` **eight times in one millisecond**, and then sat in a single
-  generation for ~6 minutes until the ceiling. `I1` is the heaviest card in the lane; a
-  reasoning model on a 24 GB rig does not hold the worker contract on it yet. Evidence:
-  `runs/is-even-20260913-233501/` and the worker's own log,
-  `~/.hermes/profiles/researcher/logs/agent.log` — the per-card file
-  `~/.hermes/kanban/boards/is-even/logs/<card>.log` stays EMPTY, because a worker logs to
-  its profile. **Kept as the illustration of the limit**: re-run it when the 44 GB card
-  lands, or on a lighter card than `I1`.
+- `"model": "qwen38-27b"`, `"provider": "llama-swap"` — the WORK model: every card the board
+  files runs on the local rig, the reviews excepted (they carry the pin above). **This board is
+  the worked example of the option.** `"provider"` is not optional: a bare model is resolved
+  against the profile's provider, which does not serve it. For a cloud-only run delete both keys
+  — nothing is then filed and every card runs its profile's own model. Note the ceiling below:
+  the local runs needed more than `"10m"`.
+- **Four local-model runs, one cause: the hand-off, not the work.** `ornith-35b` (2026-09-13)
+  and `qwen38-27b` (2026-09-15, three attempts) each filed and dispatched correctly — the worker
+  really ran `hermes -p researcher --cli … -m <model> --provider llama-swap` — and each wrote a
+  correct `artifacts/lane-1/refined.md` (3036-6383 B, every section) in 1.5-6 minutes. All four
+  then died handing that file to the card, and none reached `kanban_complete`:
+  - The card contract said to attach with `hermes kanban … attach`. **The CLI refuses that inside a
+    worker**: Hermes fences dispatcher-owned children (`delegate_task child contexts cannot mutate
+    Kanban tasks via the CLI`). `execute_code`, `python3 -c` and `dd` were blocked too.
+  - That left `kanban_attach`, which takes the bytes INLINE, so the model had to copy ~8500 base64
+    characters out of its own tool output. qwen attached exactly the first half (4256 chars → a
+    clean 3192 B prefix), then generated for ten more minutes; ornith attached 616 chars of
+    mis-copied base64 (`## Proa?em`) and then ran ~21.6K tokens for a copy needing ~3K. Each run
+    ended at its ceiling (`elapsed 601s/1201s > limit`) or was killed mid-stream.
+  - **What was NOT wrong:** every tool call was valid JSON (77 across the four sessions), no
+    `<tool_call>` or `<think>` leaked into content, every `finish_reason` was `tool_calls`, there
+    were no HTTP errors, and at most 46K of 131K context was used. Base64 decodes at ~12 t/s
+    against ~26 t/s on prose, which is why the ceilings arrived.
+  - **Quantization is not the cause.** The rig's own perplexity measurements put qwen's IQ4_XS +
+    q8_0 cache at +0.004 from the f16 reference, inside the ±0.049 error bar. ornith runs at
+    temperature 0.6 and qwen at 1.0, and both failed identically, so sampling is not it either.
+  - **Fixed in the engine, 2026-09-16:** workers no longer attach at all. Each writes its hand-off
+    into `runs/<run>/scratch/<card-id>/` and the driver — which is not fenced — attaches it
+    (`run.attach_hand_offs`). Cloud models had been passing this step by running
+    `env -u HERMES_DELEGATED_CHILD_CONTEXT hermes kanban … attach`, i.e. by defeating the fence.
+  - Evidence: `runs/is-even-20260913-233501/`, `runs/is-even-20260915-080245/` (and the 07:49 and
+    18:25 runs), plus the workers' own sessions — `~/.hermes/profiles/researcher/logs/agent.log`
+    and `hermes -p researcher sessions list --source kanban`. The per-card file
+    `~/.hermes/kanban/boards/is-even/logs/<card>.log` stays EMPTY, because a worker logs to its
+    profile. A correction to the earlier note here: the eight `read_file` calls "in one
+    millisecond" were eight DIFFERENT chunk files the model had just made with `cut`, read in one
+    parallel call — not a loop.
+  - **Still unproven, not disproven:** whether these models can carry a card end to end now that
+    the copy is gone. Re-run `is-even` with `"model": "qwen38-27b"`, `"provider": "llama-swap"`
+    and `"max-runtime": "20m"`. The rig's configuration is in the KnowledgeBase note
+    `docs/large-language-models/llama-server-configuration.md`.
 - **The goal judge is not the review pin.** `model_override`/`provider_override` moves the
   three review cards only; the goal judge is the auxiliary task `auxiliary.goal_judge`,
   pinned machine-wide in `/etc/hermes/config.yaml` to `z-ai/glm-5.3-flash` on `openrouter`,
   so a locally-run worker still gets its claim judged by a strong model. Without that pin the
   judge follows the worker's own model, i.e. it goes local too.
   No `"assignees"` map: the graph names its profiles directly.
-- `"goal": true` — worker cards run under the goal judge, and because the judge is pinned
+- `"goal": true` with `"goal-cards": ["C"]` — the goal judge runs on the implementation card
+  only. Drop `goal-cards` to put it back on every worker card, which is what makes this board the
+  judge's canary after a `hermes update`. Worker cards under the judge, and because the judge is pinned
   machine-wide to `z-ai/glm-5.3-flash` on `openrouter` (see the bullet above) it stays
   strong when the work runs locally. This is the goal-judge probe
   ([DESIGN.md, *The goal judge*](../../DESIGN.md#the-goal-judge), probe bullet); set it

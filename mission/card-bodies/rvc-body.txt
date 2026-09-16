@@ -14,7 +14,7 @@ TASK: the last check before the gate, against the plan at <PLAN> and the contrac
 VERDICT — the result field's first word is the verdict:
 - PASS: `hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "PASS: build <ok|failed — why>, unit <totals>, integration <totals>, <n> lane files staged"`
 - REJECT: `hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "REJECT: <numbered findings, each with reproduction steps> OWNER: <C|TI>"` — name the card that OWNS the fix: `OWNER: TI` for an integration test, for ANY red test at this review — unit or integration, because the integration card may change any file and this review requires green — *or any change the integration card made outside its own tests* (check (e)); `OWNER: C` for an implementation defect no test shows. The TW card is not routed from this review. The driver files ONE revision round (up to the board's rework cap, then a human) for that card, and its re-review repeats this final review. No usable owner line means the C card.
-Write the full review to `<RUNS>/scratch/<YOUR-CARD-ID>/review.md` and attach it: `hermes kanban --board <BOARD> attach <YOUR-CARD-ID> <RUNS>/scratch/<YOUR-CARD-ID>/review.md`. If you cannot complete every check, the verdict is `REJECT: incomplete review — <what is unchecked>`, never a PASS with caveats.
+Write the full review to `<RUNS>/scratch/<YOUR-CARD-ID>/review.md` — the driver attaches it when your card is done, and you never attach anything yourself. If you cannot complete every check, the verdict is `REJECT: incomplete review — <what is unchecked>`, never a PASS with caveats.
 
 <RESULT_FIELD>
 

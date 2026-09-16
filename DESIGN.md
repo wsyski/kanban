@@ -21,8 +21,9 @@ create and run a board, run records, operational rules, gate discipline — is
 | Nobody commits before the gate — not even the driver | gate cards; `auto-gates` completes gates with "NOTHING COMMITTED" |
 | Lane N+1's root is parented to lane N's code gate | `mission/lanes.py` — the board itself is the sequencer, no orchestrator |
 | The plan card never sees an unreviewed idea | `lanes.py` — `I` is the lane root and `Gi` stands between it and `P`. With `refinement: false` the plan card is the root and plans from the raw idea (see [refinement](#refinement-off)) |
-| Every hand-off is a file, never a card comment | `runs/<run-id>/artifacts/lane-<k>/refined.md`, `…/plan.md`, patches — attached to their card, never staged; the only thing a card stages is the lane's own work |
+| Every hand-off is a file, never a card comment | `runs/<run-id>/artifacts/lane-<k>/refined.md`, `…/plan.md`, patches — written to `runs/<run-id>/scratch/<card-id>/` and attached to their card BY THE DRIVER, never staged; the only thing a card stages is the lane's own work |
 | Every card's evidence is its `git diff --cached` patch, attached to the card — and on a lane the plan proves was already satisfied there is nothing to attach: `NO CHANGE:` in the result is the evidence, and the empty-patch ceremony is retired (doc chain F5) | card bodies; `mission/doc-chain.py` |
+| A worker never attaches: it writes its hand-off into its own scratch directory, and the driver attaches every `run.HANDOFF_NAMES` file it finds there once the card is done | `run.attach_hand_offs`, `_worker-contract.txt` — Hermes fences dispatcher-owned children, so `hermes kanban attach` is refused inside a worker, and the `kanban_attach` tool takes the bytes INLINE. That made a worker copy kilobytes of base64 out of its own tool output: on is-even (2026-09-13/15) four local-model cards wrote a correct `refined.md` and all four then died in that copy. An empty file is not attached, and a failed attach is retried on the next tick |
 | Verdicts go in the result field | review card bodies (`_result-field.txt`) |
 | The plan is judged on what it was told | `mission/card-bodies/_plan-checklist.txt` — the plan card's self-check and the plan review's only REJECT grounds |
 | Rules every worker shares exist once | `mission/card-bodies/_worker-contract.txt`, included as `<WORKER_CONTRACT>` (see [profiles](#profiles-and-the-worker-contract)) |
@@ -139,12 +140,14 @@ carry it, author cards run the work model, and the shipped boards pin `glm-5.3-f
 `opencode-go` so the model that reviews is not the model that wrote the work. Neither is
 required: omit both and no flag is filed, every card running its profile's own model.
 
-Measured 2026-09-13 (`boards/is-even` README has the full record): a board on a local
-`ornith-35b`/`llama-swap` filed and dispatched correctly and the worker process really
-carried `-m ornith-35b --provider llama-swap`, but the model could not hold the worker
-contract on the refinement card — hallucinated the attachment, malformed tool calls,
-duplicated calls in one turn, one generation stalled at the ceiling. The knobs work; the
-24 GB rig is not yet a worker. `board_schema` refuses a provider without a model beside it in the same scope, as the
+Measured 2026-09-13 and 2026-09-15 (`boards/is-even` README has the full record): four
+cards on local models (`ornith-35b`, then `qwen38-27b`) filed and dispatched correctly,
+each worker really carried its `-m … --provider llama-swap`, and each wrote a correct
+`refined.md` in minutes. All four then died handing that file to the card, in the
+inline-base64 copy the old contract forced — not on the work, and not on tool-call
+formatting, which was valid JSON in every one of the 77 calls. The driver-side attach
+above removes that copy, so a local model as a worker is unproven again rather than
+disproven. `board_schema` refuses a provider without a model beside it in the same scope, as the
 engine does, and reports (never refuses) a board that names a work model and no pin —
 its reviews have quietly become the author's model. `lanes.model_args` is the single
 lookup for the whole precedence, so filing, the rework rounds and the lane-open re-point
@@ -600,7 +603,12 @@ Each is current behaviour, with what to do about it.
 - **A leaked child-context marker blocks every card mutation.** With
   `HERMES_DELEGATED_CHILD_CONTEXT=1` in the environment the kanban CLI refuses
   `create`, `attach`, `complete`, `unblock`. The scripts unset it; launch anything else
-  as `env -u HERMES_DELEGATED_CHILD_CONTEXT -u HERMES_HOME mission/…`.
+  as `env -u HERMES_DELEGATED_CHILD_CONTEXT -u HERMES_HOME mission/…`. **A worker is fenced
+  on purpose** — it is a dispatcher-owned child — so no card body may tell it to `env -u`
+  its way out: a strong model that finds the trick passes the card by defeating a Hermes
+  guard (cloud runs on is-even did exactly that until 2026-09-16), and a weaker one does
+  not. A worker mutates its card through the kanban TOOLS, and hands files over through
+  its scratch directory for the driver to attach.
 - **`python3` on the PATH is the Hermes venv and has no pytest.** Run the suite as
   `mission/test.sh`; a plan whose Run steps say bare `python3 -m pytest` fails before
   collecting.

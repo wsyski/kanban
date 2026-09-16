@@ -604,7 +604,8 @@ def file_revision(state, lane, round_no, findings, base="P", reviewer_prefix="RV
     rbody = render(rev_body_file)
     rbody += (f"\nREVISION ROUND {round_no} of {max_rounds} (max {max_rounds}, then human "
               f"escalation).\n\n{sender} sent this back. Address EXACTLY:\n{findings}\n"
-              f"Fix only these, re-stage, re-attach, complete with a change summary.\n")
+              f"Fix only these, re-stage, re-write the hand-off file in your scratch "
+              f"directory, complete with a change summary.\n")
     rbody += _full_verdict_pointer(verdict_card_id)
     remap = manifest().get("assignees")
     args = ["create", rev_title, "--body", rbody,
@@ -1741,6 +1742,52 @@ def record_chain_starts(state):
             record_chain_start(card, lane, observed=True)
 
 
+# The hand-off files a card leaves in `<RUN_DIR>/scratch/<card-id>/`. The DRIVER attaches
+# them, not the worker: `hermes kanban attach` is refused inside a dispatcher-owned worker
+# (Hermes fences delegated children), and the only tool left, `kanban_attach`, takes the
+# bytes INLINE — so a worker had to copy kilobytes of base64 out of its own tool output by
+# hand. Measured on is-even, 2026-09-13/15: four local-model cards wrote a correct
+# refined.md in minutes, then all four died in that copy (half a file attached, base64
+# mis-copied, or 10 minutes of generation until the card's ceiling). The driver runs
+# outside the fence and copies nothing.
+HANDOFF_NAMES = ("refined.md", "plan.md", "patch.diff", "patch-code.diff", "test-fix.diff",
+                 "review.md")
+_ATTACHED = set()
+
+
+def attach_hand_offs(state):
+    """Attach every finished card's hand-off files, once each.
+
+    An empty file is skipped: a lane the plan proves already satisfied leaves an EMPTY
+    patch, and an empty attachment reads as a hand-off that happened. Attaching is
+    best-effort per card — a failure is logged and retried on the next tick, because
+    the chain record and every reviewer read these attachments."""
+    for card in state.values():
+        if card["status"] != "done" or card["id"] in _ATTACHED:
+            continue
+        if card_id_lane(card["title"]) is None:
+            continue
+        d = os.path.join(RUN_DIR, "scratch", card["id"])
+        want = [n for n in HANDOFF_NAMES
+                if os.path.isfile(os.path.join(d, n)) and os.path.getsize(os.path.join(d, n))]
+        if not want:
+            _ATTACHED.add(card["id"])
+            continue
+        try:
+            have = {e.get("payload", {}).get("filename")
+                    for e in card_show(card["id"]).get("events", [])
+                    if e.get("kind") == "attached"}
+            for name in want:
+                if name in have:
+                    continue
+                kb("attach", card["id"], os.path.join(d, name))
+                log(f"attached {name} to {card['title'].split(':')[0]} (driver)")
+        except RuntimeError as e:
+            log(f"WARNING: attaching {card['title'].split(':')[0]}'s hand-off failed ({e})")
+            continue
+        _ATTACHED.add(card["id"])
+
+
 def record_chain_done(state):
     """One record per card the moment it finishes: what it attached, and the
     staged set at that moment (the lane's visible hand-off)."""
@@ -2092,6 +2139,8 @@ def _tick():
     # 1b. the document chain: a start record for every card that left the parked
     #     state, then one record per card as it finishes.
     record_chain_starts(st)
+    # Before the chain record: it reads the card's attachments as what the card produced.
+    attach_hand_offs(st)
     record_chain_done(st)
     # 2. rework loops — FILE FIRST, so a round's cards are in the graph before
     #    promotion runs on the next card.
@@ -2182,7 +2231,8 @@ def file_code_revision(state, lane, round_no, findings, owner="C", max_rounds=2,
     rbody = render(body_file)
     rbody += (f"\nREVISION ROUND {round_no} of {max_rounds} (max {max_rounds}, then human "
               f"escalation).\n\n{sender} returned the work. Address EXACTLY:\n{findings}\n"
-              f"Fix only these, re-stage your files, re-attach, and complete with a result that "
+              f"Fix only these, re-stage your files, re-write your patch file, and complete "
+              f"with a result that "
               f"says what changed and names every test still failing.\n")
     rbody += _full_verdict_pointer(verdict_card_id)
     args = ["create", rev_title, "--body", rbody,

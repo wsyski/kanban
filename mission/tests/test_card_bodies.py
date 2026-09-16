@@ -431,19 +431,19 @@ def test_no_body_hardcodes_a_rework_cap():
     assert offenders == [], offenders
 
 
-def test_attach_takes_its_bytes_from_the_file_and_an_empty_diff_attaches_nothing():
-    """`is-even`, 2026-09-15. RVp1 attached a fabricated `<?php ` stub: the `kanban_attach`
-    tool takes `content_base64` INLINE, and a worker that has not read the file invents
-    filler — it then base64'd the real bytes and attached them again as `review (1).md`.
-    TW1, on a lane the plan proved was already satisfied, wrote 1789 bytes of prose inside
-    `patch.diff` because an empty diff looked like nothing to attach; C1 attached nothing
-    for the same reason and the doc chain calls that valid (F5). So the shared rule names
-    the path form, the size check, and the empty-diff case."""
+def test_the_contract_hands_off_by_file_and_an_empty_diff_hands_off_nothing():
+    """`is-even`, 2026-09-15. RVp1 attached a fabricated `<?php ` stub: `kanban_attach`
+    takes `content_base64` INLINE, and a worker that has not read the file invents filler
+    — it then base64'd the real bytes and attached them again as `review (1).md`; the four
+    local-model I1 cards died in that same copy. TW1, on a lane the plan proved was already
+    satisfied, wrote 1789 bytes of prose inside `patch.diff` because an empty diff looked
+    like nothing to hand over; C1 handed over nothing for the same reason and the doc chain
+    calls that valid (F5). So the shared rule names the scratch path, forbids attaching,
+    and keeps the empty-diff case."""
     text = read("_worker-contract.txt")
-    assert "attach <YOUR-CARD-ID> <path>" in text
-    assert "attachments <YOUR-CARD-ID>" in text
-    assert "bytes inline" in text
-    assert "EMPTY" in text and "attach nothing" in text and "NO CHANGE:" in text
+    assert "<RUNS>/scratch/<YOUR-CARD-ID>/" in text
+    assert "never paste a file's bytes into a tool" in text
+    assert "EMPTY" in text and "an empty file is not attached" in text and "NO CHANGE:" in text
     assert "never put prose inside a `.diff` file" in text
 
 
@@ -459,3 +459,26 @@ def test_every_gate_body_tells_a_person_how_to_answer_from_the_card():
     for body in ("gp-body.txt", "gc-body.txt"):
         assert "new GATE READY" in read(body), body
     assert "OWNER: TW" in read("gc-body.txt")
+
+
+def test_no_worker_body_asks_a_worker_to_attach_anything():
+    """`hermes kanban attach` is refused inside a dispatcher-owned worker, and the
+    `kanban_attach` tool takes the bytes inline — which made every local-model card copy
+    its own file out of tool output by hand and lose it. The driver attaches instead."""
+    for name, text in all_texts():
+        low = text.lower()
+        assert "kanban_attach" not in low or "never" in low, name
+        assert "board <board> attach" not in low, name
+    contract = read("_worker-contract.txt")
+    assert "NEVER attach anything yourself" in contract
+    assert "the DRIVER attaches" in contract
+
+
+def test_every_hand_off_file_a_body_names_is_one_the_driver_attaches():
+    import re
+    import run
+    named = set()
+    for _name, text in all_texts():
+        named |= set(re.findall(r"<RUNS>/scratch/<YOUR-CARD-ID>/([A-Za-z0-9._-]+)", text))
+    assert named, "the bodies must name their hand-off files"
+    assert named <= set(run.HANDOFF_NAMES), sorted(named - set(run.HANDOFF_NAMES))
