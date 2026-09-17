@@ -16,8 +16,8 @@
   ],
   "max-runtime": "25m",
   "max-reworks": 2,
-  "model": "qwen38-27b",
-  "provider": "llama-swap",
+  "model": "deepseek-v4.1-flash",
+  "provider": "opencode-go",
   "model_override": "glm-5.3-flash",
   "provider_override": "opencode-go"
 }

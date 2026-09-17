@@ -1,4 +1,10 @@
-# is-even — the cheap board, run locally
+# is-even — the cheap board
+
+Current run configuration: work and review cards both use `union-alpha` via
+`opencode-go`, per user request. Gates `Gi`, `Gp`, and `Gc` are automatic;
+`sequential` remains enabled, the per-card ceiling is `25m`, and the auxiliary
+goal-judge configuration is unchanged. Local-model measurements below describe
+previous runs, not the current model selection.
 
 The smallest idea that still travels the whole lane. It exercises the machinery — arm
 an idea, watch the researcher refine it, see the three gates, the staged work and a
