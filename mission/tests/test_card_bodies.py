@@ -3,6 +3,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+import card_render
 import file_lanes
 import lanes
 import run
@@ -17,10 +18,10 @@ def allowed_placeholders():
     placeholder is added, and it drifts SILENTLY — the check below then passes for a
     name nothing resolves.
     """
-    values = file_lanes.render_body_values(repo="/r", board="b", workdir="/w",
+    values = card_render.render_body_values(repo="/r", board="b", workdir="/w",
                                            lane=1, targets=(), run_id="r1")
-    return set(values) | set(file_lanes.FRAGMENTS) | run.LEFT_FOR_THE_WORKER
-FRAGMENT_FILES = sorted(file_lanes.FRAGMENTS.values())
+    return set(values) | set(card_render.FRAGMENTS) | run.LEFT_FOR_THE_WORKER
+FRAGMENT_FILES = sorted(card_render.FRAGMENTS.values())
 
 
 def read(name):
@@ -85,7 +86,7 @@ def test_every_lane_card_has_a_body_file():
 def test_every_fragment_exists_and_includes_no_fragment():
     for name in FRAGMENT_FILES:
         text = read(name)
-        assert not any(ph in text for ph in file_lanes.FRAGMENTS), name
+        assert not any(ph in text for ph in card_render.FRAGMENTS), name
 
 
 def test_bodies_carry_no_scenario_specific_language():
@@ -310,7 +311,7 @@ def judge_window(code, body):
     """What the goal judge reads: title + body, cut at 2000 chars from the start
     (`_goal_gate` → `goals._truncate(goal, 2000)`). A rule past the cut is invisible
     to it: every rendered DONE WHEN: line sits beyond 3700 chars."""
-    text = file_lanes.render_body(body, repo=REPO, board="b", workdir="/w", lane=1,
+    text = card_render.render_body(body, repo=REPO, board="b", workdir="/w", lane=1,
                                   run_id="r1")
     return f"{lanes.card_title(code, 1)}\n\n{text}"[:2000]
 

@@ -7,6 +7,7 @@ the lane ROOT as about the prune: I is the root when the lane refines, P when it
 does not, and every root lookup has to be told which.
 """
 
+import card_render
 import json
 import os
 import sys
@@ -133,7 +134,7 @@ def test_the_chain_does_not_expect_a_refined_document_that_cannot_exist(monkeypa
     what the card was given, not the lane's shape as a missing hand-off."""
     import run
     paths = {"<REFINED>": "/r/refined.md", "<PLAN>": "/r/plan.md", "<IDEA>": "/r/idea.md"}
-    monkeypatch.setattr(run.file_lanes, "lane_paths", lambda *a, **k: paths)
+    monkeypatch.setattr(run.card_render, "lane_paths", lambda *a, **k: paths)
     monkeypatch.setattr(run, "_read_current_run", lambda: "run-1")
     monkeypatch.setattr(run, "lane_options", lambda lane: {"refinement": False})
     # the parser matches the RENDERED paths, which is what a filed body carries

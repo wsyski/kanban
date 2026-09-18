@@ -2,6 +2,7 @@ import json
 import sys, os
 import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+import card_render
 import file_lanes
 import run
 
@@ -12,7 +13,7 @@ def test_read_board_defaults_slug_from_directory_name(tmp_path):
     d = tmp_path / "my-board"
     d.mkdir()
     (d / "board.json").write_text('{"title": "My Board", "lanes": 2}\n')
-    cfg = file_lanes.read_board(str(d))
+    cfg = card_render.read_board(str(d))
     assert cfg["slug"] == "my-board"
     assert cfg["lanes"] == 2
 
@@ -21,14 +22,14 @@ def test_read_board_keeps_an_explicit_slug(tmp_path):
     d = tmp_path / "dir-name"
     d.mkdir()
     (d / "board.json").write_text('{"slug": "explicit", "lanes": 1}\n')
-    assert file_lanes.read_board(str(d))["slug"] == "explicit"
+    assert card_render.read_board(str(d))["slug"] == "explicit"
 
 
 def test_read_board_without_a_manifest_is_an_error(tmp_path):
     d = tmp_path / "no-manifest"
     d.mkdir()
     with pytest.raises(FileNotFoundError):
-        file_lanes.read_board(str(d))
+        card_render.read_board(str(d))
 
 
 class FakeKb:
@@ -83,10 +84,10 @@ def test_scratch_is_rendered_but_is_not_a_hand_off(monkeypatch, tmp_path):
     directory that changes while a card works would read to the chain as a
     document written after the card started."""
     repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    body = file_lanes.render_body("c-body.txt", repo=repo, board="b",
+    body = card_render.render_body("c-body.txt", repo=repo, board="b",
                                   workdir=str(tmp_path), lane=1)
     assert "<RUNS>" not in body and "/boards/b/runs/scratch/" in body
-    assert "<RUNS>" not in file_lanes.lane_paths("/repo", "b", 1)
+    assert "<RUNS>" not in card_render.lane_paths("/repo", "b", 1)
 
 
 def test_a_board_can_file_without_the_goal_judge(monkeypatch, tmp_path):

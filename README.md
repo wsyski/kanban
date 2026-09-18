@@ -385,6 +385,16 @@ with the CLI:
 
 ## 5. Operational rules
 
+- **One driver per board, of either kind.** A board can also be run by
+  [`bots/`](bots/README.md), which drives the same cards through Hermes bots so the
+  work is visible live in Desktop's Bots tab. Both drivers share THAT board's `work/`
+  tree and its `runs/` directory and take its `runs/driver.lock`, so one board is
+  driven one way at a time. The scope is the board, not the machine: other boards run
+  concurrently exactly as before, in either mode. What they share across boards is
+  model capacity — the same profiles and the same backend serve every board at once
+  (`sequential`, and Desktop's Warm Bot Backends, are the knobs for that). Run the bot
+  driver to WATCH a board; `mission/run.py` is the one whose record `run-audit.py`
+  proves.
 - **One driver per board.** Duplicates idle silently and interleave log output. Kill
   all, start one. A restart is safe: it rejoins this run's lanes and the one-shot
   allowances the run already spent, and recovers a driver that stopped without a halt.

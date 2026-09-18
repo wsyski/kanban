@@ -4,7 +4,7 @@ A dated record, in order: what ran, what the numbers were, what each run surface
 changed because of it. This is a log, not a description of the template —
 [README.md](README.md) and [DESIGN.md](DESIGN.md) are the current state, and where they
 disagree with this file, they win. Sections 1–6 are the 2026-09-13 session; §7 is the
-2026-09-15 run.
+2026-09-15 run; §11 is the 2026-09-18 session, where a second driver joined the template.
 
 Every number here comes from the run directories under `boards/<slug>/runs/`, which are
 never deleted. Re-derive any of it with:
@@ -342,3 +342,37 @@ error, one generation in flight — the 2026-09-14 shape again, so the run was k
 2 min 33 s. The board's shipped parameters (`auto-gates: true`, the local-rig pair) are
 restored, so the harness flips are not left behind on the cheap board.
 
+
+## 11. The same board, driven two ways — `is-even`, 2026-09-18
+
+Both drivers ran `is-even` end to end, one after the other, on the same `work/` tree:
+`mission/run.py` over `hermes kanban`, and [`bots/`](bots/README.md), which runs the same
+cards as Hermes bot sessions.
+
+| | kanban `is-even-20260918-091004` | bots `bots-20260918-092039` |
+|---|---|---|
+| verdicts | RVp1, Gp1, RVa1, Gc1 all PASS | RVp1, RVa1 PASS; 3 auto gates |
+| outcome | no staged change — the tree as it found it | `NO CHANGE` on every card |
+| audit | `run-audit.py` exit 0, 0 errors / 0 warnings | `bots/audit.py` exit 0 |
+| cost | wall 10.8 min, agent 4.0 min of a 25 m ceiling | 12 min 14 s of model time |
+
+Both concluded the committed `is_even.py` already satisfied the idea — the lane's
+`NO CHANGE` path, on both drivers.
+
+**The review model is the lane, not the fork.** Per card under bots: I1 39 s, P1 52 s,
+RVp1 164 s, TW1 39 s, C1 48 s, RVa1 392 s — the two cards pinned to `glm-5.3-flash` are
+76% of the run. The same RVa1 takes 58 s under kanban, where the worker has the board's
+tooling and the goal judge; the bot review re-derives everything from files in one turn.
+The fork (TW ∥ C) overlaps under bots and saves ~32 s against that, so on this board the
+review model is the lever that matters. Every bot run's `timing.jsonl` carries these
+numbers and the driver's last line totals them.
+
+**Two audit rules this pair pinned:**
+
+- A tool cache in `work/` is charged to the run that created it. `work/__pycache__` here
+  is dated 2026-09-16, older than either run: `mission/run-audit.py` reports it INFO E16
+  "left in place" and `bots/audit.py` B7 reports it INFO for the same reason, because the
+  board never deletes what it did not put there.
+- A run is auditable while its driver serves. `start-board.sh` stays up after
+  `ALL GATES COMPLETE`, and `run-audit.py` exits 0 on this run with the driver alive; the
+  mid-flight E1 line is about the RUN's banner, not about the process.

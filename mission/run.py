@@ -32,6 +32,7 @@ REPROMOTE_WAIT_S = 5 * 60
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import board_schema
 import lanes
+import card_render
 import file_lanes
 import runs_util
 
@@ -555,7 +556,7 @@ def _round_settings(lane):
     targets = cfg.get("targets") or ()
 
     def render(body_file):
-        return file_lanes.render_body(body_file, repo=REPO, board=BOARD, workdir=WORKDIR,
+        return card_render.render_body(body_file, repo=REPO, board=BOARD, workdir=WORKDIR,
                                       run_id=_read_current_run(),
                                       lane=lane, targets=targets)
     return runtime, render
@@ -698,7 +699,7 @@ def write_workdir_state(lane, when="open"):
     `-at-<when>` in the name on purpose, and in SNAP_DIR: the chain must not read
     either as a hand-off document.
     """
-    wd_state = file_lanes.workdir_state(WORKDIR, BOARD_DIR)
+    wd_state = card_render.workdir_state(WORKDIR, BOARD_DIR)
     path = os.path.join(SNAP_DIR, f"lane-{lane}-workdir-at-{when}.md")
     tmp = path + ".tmp"
     with open(tmp, "w") as f:
@@ -1646,7 +1647,7 @@ def lane_paths_agree(state, lane):
     body = card.get("body")
     if not body:
         return True                      # unreadable body is not evidence of drift
-    expected = file_lanes.lane_paths(REPO, BOARD, lane, _read_current_run())["<IDEA>"]
+    expected = card_render.lane_paths(REPO, BOARD, lane, _read_current_run())["<IDEA>"]
     if expected in body:
         return True
     log(f"REFUSING to open lane {lane}: {title} was filed against a different run — "
@@ -1684,7 +1685,7 @@ def chain_inputs(body, lane):
     # comparing against the run-less form matches nothing — the chain would record
     # every card as having been given no documents at all.
     given = {role.strip("<>"): path for role, path
-             in file_lanes.lane_paths(REPO, BOARD, lane,
+             in card_render.lane_paths(REPO, BOARD, lane,
                                       _read_current_run()).items() if path in body}
     # A body is rendered from ONE file per code for EVERY lane shape, so the plan
     # card's text always mentions the refined idea — it names the raw one as the
@@ -3355,7 +3356,7 @@ def validate_armed(armed):
     it and letting the next tick re-read it is the whole recovery.
     """
     problems = []
-    cfg = file_lanes.read_board(BOARD_DIR)
+    cfg = card_render.read_board(BOARD_DIR)
     manifest_problems = board_schema.validate(cfg, where="board.json")
     for lane, text, cid in armed:
         found = [f"lane {lane}: {p}" for p in
@@ -3400,7 +3401,7 @@ def adopt_and_refile(state):
         return False
     if not validate_armed(armed):
         return False
-    cfg = file_lanes.read_board(BOARD_DIR)
+    cfg = card_render.read_board(BOARD_DIR)
     lanes_n = cfg.get("lanes", 1)
     over = [l for l, _, _ in armed if l > lanes_n]
     if over:

@@ -368,7 +368,7 @@ cd "$REPO"
 python3 - "$SLUG" "$WORKDIR" "$LANES" "$BOARD_DIR" <<'PY'
 import os, sys
 sys.path.insert(0, os.path.join(os.getcwd(), "mission"))
-import file_lanes
+import card_render, file_lanes
 
 slug, workdir, lanes_n, board_dir = sys.argv[1:5]
 lanes_n = int(lanes_n)
@@ -389,7 +389,7 @@ key = file_lanes.next_run_key(repo, slug)
 if reused:
     print(f"reusing run {reused} — filed before, and no driver ever started in it")
 cfg = file_lanes._board_cfg(board_dir)
-run_dir = file_lanes.run_dir(repo, slug, key)
+run_dir = card_render.run_dir(repo, slug, key)
 os.makedirs(run_dir, exist_ok=True)
 current = os.path.join(os.path.dirname(run_dir), "current")
 tmp = current + ".tmp"

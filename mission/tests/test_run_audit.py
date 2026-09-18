@@ -231,12 +231,17 @@ def test_a_clean_run_exits_zero(tmp_path, monkeypatch, capsys):
 
 
 def test_an_unfinished_run_reports_one_line_not_a_cascade(tmp_path, monkeypatch):
+    """And the line is about the RUN, not about the driver: a live driver is the reason
+    to wait rather than the thing in the way — a serve-mode driver stays up after the
+    banner and a finished run audits underneath it."""
     monkeypatch.setattr(ra, "board_findings", lambda slug, runs: [])
     runs = fixture(tmp_path, log=GOOD_LOG[:3], chain_recs=worker_chain(result=""))
     (tmp_path / "boards" / "b" / "runs" / "driver.lock").write_text(str(os.getpid()))
     findings, rows, _s = ra.audit(runs)
     assert [c for _s2, c, _t in findings] == ["E1"], findings
-    assert "still in flight" in findings[0][2]
+    text = findings[0][2]
+    assert "this run has not finished yet" in text and "Wait for the banner" in text
+    assert "may keep serving" in text        # never "stop the driver"
     assert rows == []
 
 

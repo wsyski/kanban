@@ -33,6 +33,7 @@ import time
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+import card_render
 import file_lanes
 
 SLUG = "b"
@@ -84,7 +85,7 @@ def test_a_filing_that_succeeds_twice_still_holds_one_run(tmp_path):
     """The retry this exists for: the second filing of the same board."""
     repo = _repo(tmp_path)
     first = file_lanes.next_run_key(repo, SLUG, now=datetime.datetime(2026, 9, 12, 9, 0, 0))
-    os.makedirs(file_lanes.run_dir(repo, SLUG, first))          # what create-board.sh does
+    os.makedirs(card_render.run_dir(repo, SLUG, first))          # what create-board.sh does
     (tmp_path / "boards" / SLUG / "runs" / "current").write_text(first + "\n")
     assert file_lanes.next_run_key(repo, SLUG, now=LATER) == first
 
@@ -160,7 +161,7 @@ def test_create_board_mints_through_the_decision():
     the only way a shell heredoc's logic is reachable from the suite."""
     src = open(CREATE).read()
     assert "file_lanes.next_run_key(" in src
-    assert "strftime" not in src.split("run_dir = file_lanes.run_dir")[0]
+    assert "strftime" not in src.split("run_dir = card_render.run_dir")[0]
     # And the reuse is announced: a filing that quietly drops its own fresh run id
     # reads exactly like one that minted (the driver log is the only other place a
     # run id appears).

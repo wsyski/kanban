@@ -405,9 +405,18 @@ def audit(runs_dir, board_dir=None):
         # Mid-flight: one line beats a cascade of E4/E7/E12 that all mean the
         # same thing (the auditor was run too early), and the cause is a person
         # reading a board that is still working.
+        #
+        # The refusal is about THIS RUN, never about the driver: a serve-mode driver
+        # stays up after `ALL GATES COMPLETE` by design, and a finished run audits
+        # perfectly well underneath it. A live driver is the good case here — it says the
+        # run will finish — so the line names the run's state and gives the driver as the
+        # reason to WAIT. Naming the process first reads as "kill it to audit", which is
+        # never the answer and throws away a driver that was about to write the banner.
         alive, pid = _driver_alive(runs_root(runs_dir))
-        wording = ("the run is still in flight (a driver is alive) — audit after "
-                   "the finish banner" if alive
+        wording = (f"this run has not finished yet — no ALL GATES COMPLETE in its "
+                   f"driver.log, and the board's driver (pid {pid}) is still working. "
+                   f"Wait for the banner, then audit; the driver may keep serving."
+                   if alive
                    else f"the driver died without a halt or the finish banner — no live "
                         f"process holds runs/driver.lock (pid {pid or 'none'}); restart "
                         f"it with start-board.sh")

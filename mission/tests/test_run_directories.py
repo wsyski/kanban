@@ -19,13 +19,14 @@ import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+import card_render
 import file_lanes
 import run
 
 
 def test_a_lanes_hand_offs_live_under_its_own_run():
-    a = file_lanes.lane_paths("/repo", "b", 1, "b-20260912-090000")
-    z = file_lanes.lane_paths("/repo", "b", 1, "b-20260912-100000")
+    a = card_render.lane_paths("/repo", "b", 1, "b-20260912-090000")
+    z = card_render.lane_paths("/repo", "b", 1, "b-20260912-100000")
     assert a["<REFINED>"] != z["<REFINED>"]
     assert "/runs/b-20260912-090000/" in a["<REFINED>"]
     for key in ("<IDEA>", "<REFINED>", "<PLAN>"):
@@ -37,8 +38,8 @@ def test_a_run_id_is_never_resolved_through_current():
     through it, a worker orphaned by run N would write into run N+1's directory
     the moment it was repointed — the overwrite this layout prevents (F2) — and
     `git diff --cached -- runs/...` would not match through the alias (E14)."""
-    body_paths = list(file_lanes.lane_paths("/repo", "b", 1, "rid").values())
-    body_paths.append(file_lanes.run_dir("/repo", "b", "rid"))
+    body_paths = list(card_render.lane_paths("/repo", "b", 1, "rid").values())
+    body_paths.append(card_render.run_dir("/repo", "b", "rid"))
     assert all("current" not in p for p in body_paths), body_paths
 
 
@@ -275,7 +276,7 @@ def test_a_restart_lands_on_the_paths_already_in_the_card_bodies(tmp_path):
     what a filed card was told to read have to be the same path."""
     import file_lanes
     _board(tmp_path, current="r1", runs=["r1"])
-    in_body = file_lanes.lane_paths(str(tmp_path), "b", 1, "r1")["<REFINED>"]
+    in_body = card_render.lane_paths(str(tmp_path), "b", 1, "r1")["<REFINED>"]
     driver = _probe(tmp_path, "b",
                     'os.path.join(run.RUN_DIR, "artifacts", "lane-1", "refined.md")')
     assert driver == in_body
@@ -306,7 +307,7 @@ def test_an_empty_or_blank_current_is_no_run(tmp_path):
 
 def _lane_state(run_mod, lane, run_id, repo, board):
     import file_lanes
-    idea = file_lanes.lane_paths(repo, board, lane, run_id)["<IDEA>"]
+    idea = card_render.lane_paths(repo, board, lane, run_id)["<IDEA>"]
     title = __import__("lanes").card_title("I", lane)
     return {title: {"id": f"id-I{lane}", "status": "ready", "title": title,
                     "body": f"INPUT: the raw idea at {idea}"}}

@@ -1,3 +1,4 @@
+import card_render
 import json
 import os
 import sys
@@ -169,7 +170,7 @@ def test_chain_inputs_match_a_body_filed_under_its_own_run(monkeypatch, tmp_path
     monkeypatch.setattr(run, "BOARD", "b")
     monkeypatch.setattr(run, "CURRENT_RUN", str(tmp_path / "current"))
     (tmp_path / "current").write_text("r1\n")
-    paths = file_lanes.lane_paths(str(tmp_path), "b", 1, "r1")
+    paths = card_render.lane_paths(str(tmp_path), "b", 1, "r1")
     body = f"read {paths['<IDEA>']} then write {paths['<REFINED>']}"
     found = run.chain_inputs(body, 1)
     assert found.get("IDEA") == paths["<IDEA>"]
@@ -199,7 +200,7 @@ def test_every_placeholder_in_every_shipped_body_is_either_rendered_or_the_worke
     for path in sorted(glob.glob(os.path.join(here, "card-bodies", "*.txt"))):
         if os.path.basename(path).startswith("_"):
             continue                      # a fragment, spliced into a body
-        text = file_lanes.render_body(os.path.basename(path), repo=here + "/..",
+        text = card_render.render_body(os.path.basename(path), repo=here + "/..",
                                       board="b", workdir=here, lane=1, run_id="r1")
         assert run.unresolved_placeholders(text) == [], path
 

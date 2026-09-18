@@ -1,3 +1,4 @@
+import card_render
 import json
 import os
 import sys
@@ -571,7 +572,7 @@ def test_a_refile_that_fails_midway_leaves_no_state_from_the_previous_run(monkey
     monkeypatch.setattr(run, "BOARD", "b")
     monkeypatch.setattr(run, "armed_ideas", lambda st: [(1, "## Idea 1: x\n", "t_idea")])
     monkeypatch.setattr(run, "validate_armed", lambda armed: True)
-    monkeypatch.setattr(file_lanes, "read_board", lambda d: {"lanes": 1})
+    monkeypatch.setattr(card_render, "read_board", lambda d: {"lanes": 1})
     monkeypatch.setattr(run, "board", lambda: {})
     monkeypatch.setattr(run, "mint_run", lambda key, armed: None)
 
@@ -604,7 +605,7 @@ def test_a_refile_that_fails_after_minting_halts_naming_the_empty_run(monkeypatc
     monkeypatch.setattr(run, "_RUN_DIR_SEEN", {"path": None})
     monkeypatch.setattr(run, "armed_ideas", lambda st: [(1, "## Idea 1: x\n", "t_idea")])
     monkeypatch.setattr(run, "validate_armed", lambda armed: True)
-    monkeypatch.setattr(file_lanes, "read_board", lambda d: {"lanes": 1})
+    monkeypatch.setattr(card_render, "read_board", lambda d: {"lanes": 1})
     monkeypatch.setattr(run, "board", lambda: {})
 
     def fail(*a, **k):
