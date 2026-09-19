@@ -290,8 +290,21 @@ print(" ".join(lanes.required_profiles(
     integration_tests=lanes.any_lane(cfg.get("integration-tests")))))
 PY
 ) || exit 1
+# Existence is the filesystem's answer, not a CLI run's. `hermes profile list` is display
+# output: a CLI that fails (a lock, a config error, a mid-update receipt) prints nothing, and
+# the old one-liner read that as "profile not available" — a silent failure dressed as a
+# missing profile, which is exactly how a board refused to file with all three profiles
+# present. The profiles root is HOME-anchored, the same root the core resolves, so test it
+# directly and let the CLI's own view be a note when the two disagree.
 for p in $REQUIRED; do
-  hermes profile list | grep -q " $p " || { echo "profile $p not available" >&2; exit 1; }
+  if [ "$p" != default ] && [ ! -d "$HOME/.hermes/profiles/$p" ]; then
+    echo "profile $p not available — no $HOME/.hermes/profiles/$p" >&2; exit 1
+  fi
+done
+PROFILE_LIST=$(hermes profile list 2>/dev/null) || PROFILE_LIST=""
+for p in $REQUIRED; do
+  printf '%s\n' "$PROFILE_LIST" | grep -q "[[:space:]]$p[[:space:]]" || \
+    echo "note: 'hermes profile list' did not name $p (it is on disk; the CLI's view may be stale)" >&2
 done
 
 # Which model judges the goal-mode cards. Not a board option: it is each worker
