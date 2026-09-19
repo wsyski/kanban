@@ -3,7 +3,7 @@
 **A coding-team kanban board.** Hermes profiles build real work on a kanban board from a
 generic lane template, instantiated per board: the researcher refines the idea, the
 coder plans, writes tests, implements and reviews, and a human gate authorizes each
-step. The driver (`mission/run.py`) sequences the cards and never commits.
+step. The driver (`driver/run.py`) sequences the cards and never commits.
 
 A **lane** is one full instance of the card graph executing one idea. Lanes are
 capacity, ideas are demand: file N lanes, enter ideas, and the board runs them in
@@ -21,8 +21,8 @@ how its runs went is not kept here — the runs describe themselves (§4).
 
 | board | idea | lanes | gates, per-card ceiling |
 |---|---|---|---|
-| `is-even` | one Python function (`is_even`) and its tests — the cheap smoke board, no build tool, no dependencies. Was `minimal-development` until 2026-09-13. It runs on the profiles' cloud models with the goal judge on every worker card (the canary for the judge after a `hermes update`); its README says how to point it at the local rig, and records the local-model runs | 1 | human, 10 min |
-| `roman-evaluator-js` | a browser page: `roman-evaluator.html`, a DOM-free parsing module with unit tests, `run.sh`, two launch modes | 1 | auto, 10 min |
+| `is-even` | one Python function (`is_even`) and its tests — the cheap smoke board, no build tool, no dependencies. Was `minimal-development` until 2026-09-13. It runs on the profiles' cloud models with the goal judge on `C` only (the canary for the judge after a `hermes update`); its README says how to point it at the local rig, and records the local-model runs | 1 | auto, 25 min |
+| `roman-evaluator-js` | a browser page: `roman-evaluator.html`, a DOM-free parsing module with unit tests, `run.sh`, two launch modes | 1 | auto, 20 min |
 | `roman-evaluator-java` | the same problem twice: a roman CLI (`roman-cli/`) then a spec-first Spring Boot service (`roman-service/`) consuming lane 1's rule; needs JDK 17, Maven, a warm `~/.m2` | 2 | auto, 20 min |
 | `portfolio-engineering` | a GPW small-cap research pipeline built into the Hermes `trader` profile (external `default-workdir`) | 1 | human, 60 min (default) |
 | `blade-workspace` | implements a committed plan, task by task, in an **external** repository (`default-workdir`): refinement, unit and integration tests on, the goal judge on `C` and `TI` only, human gates | 1 | human, 60 min |
@@ -36,23 +36,40 @@ independent of the author. Every other card runs its profile's own model: `"mode
 from an idea header, and the pin wins over them on the reviews. Neither key has a default,
 so a board that wants either says so.
 
+The engine is **two layers and the drivers**. `template/` holds what BOTH drivers import —
+the card graph, the option declaration, the body renderer, the board lock, the card bodies
+and the role souls. `driver/` holds the kanban driver's own: `run.py` and its tools, reports
+and `.sh` entry points. `bots/` is the second driver, which imports `template/` only. `tests/`
+is one suite over both layers, run by `./test.sh`, and `tests/test_layer_boundary.py` is what
+keeps the layers apart.
+
 What the template consists of:
 
 | file | role |
 |---|---|
-| `mission/lanes.py` | card graph and idea parsing |
-| `mission/board_schema.py` | the board's options: one declaration, and the validator all three doors run |
-| `mission/create-board.sh` | board instantiation |
-| `mission/start-board.sh` | driver launch |
-| `mission/run.py` | the driver |
-| `mission/card-bodies/` | what each card tells its worker |
-| `mission/roles/` | the profiles' SOULs |
-| `mission/run-audit.py` | the per-run auditor (§4) |
-| `mission/doc-chain.py` | what each card was given and produced |
-| `mission/timing-report.py` | per-card agent time vs dispatch gap |
-| `mission/runs-report.py` | what `runs/` holds and costs — reports, deletes nothing |
-| `mission/review-package.sh` | one task's scoped commits + diff, for a review |
-| `mission/test.sh` | the suite, through an interpreter that has pytest (the shell's `python3` does not) |
+| `template/lanes.py` | card graph and idea parsing |
+| `template/board_schema.py` | the board's options: one declaration, and the validator all three doors run |
+| `template/card_render.py` | what a card body SAYS, and where a lane's hand-offs live — shared by both drivers |
+| `template/driver_lock.py` | the board's one driver lock: stale holder taken over, live holder refused |
+| `driver/file_lanes.py` | the kanban filing half (`hermes kanban create`, the idea cards, the run-id mint) |
+| `driver/create-board.sh` | board instantiation |
+| `driver/start-board.sh` | driver launch |
+| `driver/arm.sh` | the go signal from a shell: files the idea as a `blocked`, unassigned card |
+| `driver/reset.sh` | archive the cards, unstage leftovers, stop this board's driver |
+| `driver/driver-pid.sh` | the live-driver question `reset.sh` and `create-board.sh` both ask |
+| `driver/run.py` | the driver |
+| `template/card-bodies/` | what each card tells its worker |
+| `template/roles/` | the profiles' SOULs |
+| `driver/run-audit.py` | the per-run auditor (§4) |
+| `driver/doc-chain.py` | what each card was given and produced |
+| `driver/render-flow.py` | the diagrams, checked against `LANE_CARDS` |
+| `driver/runs_util.py` | `runs/` and the ledger, read by the auditor and the driver |
+| `driver/timing-report.py` | per-card agent time vs dispatch gap |
+| `driver/runs-report.py` | what `runs/` holds and costs — reports, deletes nothing |
+| `driver/review-package.sh` | one task's scoped commits + diff, for a review |
+| `test.sh` | the suite, through an interpreter that has pytest (the shell's `python3` does not) |
+| `template/board.schema.json` | the generated JSON Schema (write it with `board_schema.py --write-schema`) |
+| `bots/` | the second driver: the same cards, run as visible bot sessions ([bots/README.md](bots/README.md)) |
 
 ---
 
@@ -90,7 +107,7 @@ still works a card. Only *notification* delivery needs a running gateway: the
 
 Gates have no profile — a person completes them, or the driver does with `auto-gates`.
 `create-board.sh` derives the profiles a board needs from its manifest. The SOULs, the
-drift check and the install commands are in [mission/roles/](mission/roles/README.md);
+drift check and the install commands are in [template/roles/](template/roles/README.md);
 why one work profile is enough is in [DESIGN.md](DESIGN.md#profiles-and-the-worker-contract).
 
 **Toolchains belong to boards, not here.** The card graph never mentions a language or
@@ -101,13 +118,13 @@ a build tool, and a board is as likely to be Python or Rust as Java. Each board'
 ## 3. Creating and running a board
 
 A board is a **directory**. Everything specific to one board lives in it, and nothing
-about it lives under `mission/`:
+about it lives under `template/` or `driver/`:
 
     boards/<slug>/
         README.md             this board's preconditions and toolchain
-        board.json            the board's options — `mission/board_schema.py --schema`
+        board.json            the board's options — `template/board_schema.py --schema`
                               prints the set. Carries `$schema` →
-                              mission/board.schema.json (generated), so an editor
+                              template/board.schema.json (generated), so an editor
                               validates the manifest as you write it
         lane-1.md             the idea for lane 1 — the one copy, edited in place
         work/                 what the lane builds — tracked
@@ -125,14 +142,14 @@ about it lives under `mission/`:
 Create and serve:
 
     $EDITOR boards/<s>/lane-1.md              # optional: prefill the idea
-    mission/create-board.sh --board boards/<s>
+    driver/create-board.sh --board boards/<s>
     hermes kanban boards switch <s>           # create registers the board but does NOT
                                               # make it current — without this the cards
                                               # file and no worker ever spawns
-    mission/start-board.sh --slug <s>         # serves; releases nothing yet
-    mission/arm.sh <s> [lane]                 # the go signal — prefer it to the drag, see below
+    driver/start-board.sh --slug <s>         # serves; releases nothing yet
+    driver/arm.sh <s> [lane]                 # the go signal — prefer it to the drag, see below
 
-`mission/create-board.sh --help` is authoritative (including the empty board you get
+`driver/create-board.sh --help` is authoritative (including the empty board you get
 with `--slug`/`--title` instead of `--board`). There is no import step: `lane-1.md` is
 filed onto the Triage card as the LIVE copy of the idea, and arming adopts the CARD and
 writes it back over the file — so edit the card, not the file, until the lane is
@@ -151,7 +168,7 @@ board from `http://127.0.0.1:9119/kanban`:
 
 1. Write the idea into the board's Triage card — edit it right there.
 2. **Drag it from Triage to Todo.** That is the go signal — a shell makes the same one with
-   `mission/arm.sh <slug> [lane]`, which creates an unassigned card carrying the idea
+   `driver/arm.sh <slug> [lane]`, which creates an unassigned card carrying the idea
    (`armed_ideas` reads either, because what it tests is that an unassigned card has left
    Triage). **When `kanban.default_assignee` names a profile, prefer `arm.sh`:** the
    dispatcher assigns an unassigned `ready` card and spawns a worker on it within seconds,
@@ -175,7 +192,7 @@ idea with an auxiliary LLM before the researcher reads it. Drag it.
 it is safe as a cron entry that keeps a board up across reboots:
 
     hermes --profile <p> cron add --name kanban-<slug> --schedule '* * * * *' \
-        --script mission/start-board.sh --args '--slug <slug>'
+        --script driver/start-board.sh --args '--slug <slug>'
 
 `--once` releases lane 1 immediately and exits when the gates close. It is for tests
 and recovery, not daily use.
@@ -202,7 +219,7 @@ never corrects — a switch, a commit or a foreign staged path (E17); see
 **Nothing deletes anything** — not `work/`, not a run directory, not the caches a
 worker leaves in `work/` (reported as note E16). There is no flag that clears either
 tree; `rm` them yourself. `scratch/<card-id>/` is the part that grows without bound;
-`mission/runs-report.py --board <slug>` prints each run's size and age and the `rm` for
+`driver/runs-report.py --board <slug>` prints each run's size and age and the `rm` for
 the finished ones, without running it — and names a run that never opened a lane, which is
 what a filing the arm superseded leaves behind (only `runs/<run-id>/driver.log` is written,
 so nothing ever reads it as a stalled run).
@@ -227,10 +244,10 @@ disagreement loudly — the header is an HTML comment, invisible in a rendered v
 
 Re-create a board after engine changes:
 
-    mission/reset.sh --board boards/<slug> --batch  # stop driver + workers, archive cards, unstage
+    driver/reset.sh --board boards/<slug> --batch  # stop driver + workers, archive cards, unstage
     hermes kanban boards rm <slug>                  # reset archives cards, not the board
-    mission/create-board.sh --board boards/<slug>
-    mission/start-board.sh --slug <slug>            # then arm it: mission/arm.sh <slug>
+    driver/create-board.sh --board boards/<slug>
+    driver/start-board.sh --slug <slug>            # then arm it: driver/arm.sh <slug>
 
 Run `reset.sh` first, not `boards rm` alone: `create-board.sh` refuses (exit 6) while the
 board's driver is still running, because a serving driver reads a half-filed run as a
@@ -239,12 +256,12 @@ removed (`BOARD REMOVED` in `driver.log`); mid-run, a removed board halts it at 
 
 ### How it flows (diagram)
 
-Both pictures below are GENERATED from `mission/lanes.py` by `mission/render-flow.py`,
+Both pictures below are GENERATED from `template/lanes.py` by `driver/render-flow.py`,
 so they cannot drift from the card graph — run it after touching `LANE_CARDS`;
-`--check` fails if anything is stale. The editable copy is `mission/flow.drawio`
+`--check` fails if anything is stale. The editable copy is `driver/flow.drawio`
 (colour per profile, thick borders = gates).
 
-<!-- BEGIN generated: mission/render-flow.py -->
+<!-- BEGIN generated: driver/render-flow.py -->
 
 ```mermaid
 flowchart LR
@@ -307,7 +324,7 @@ flowchart LR
   class Gi1,Gp1,Gc1,Gi2,Gp2,Gc2 gate;
 ```
 
-*Generated from `mission/lanes.py` by `mission/render-flow.py`; editable copy in `mission/flow.drawio`.*
+*Generated from `template/lanes.py` by `driver/render-flow.py`; editable copy in `driver/flow.drawio`.*
 
 <!-- END generated -->
 
@@ -326,8 +343,10 @@ ASCII fallback:
 
 **Rework.** A review that REJECTS files a revision card and a re-review; the idea gate
 does the same when completed with `REWORK: <answers>`. Each of the three loops (plan,
-code, idea) allows `max-reworks` rounds — default 3; every shipped board sets 2 except
-`roman-evaluator-java` (3) — then escalates and halts the board. There is no rework loop on `I`
+code, idea) allows `max-reworks` rounds — default 3; the shipped boards vary:
+`is-even`, `portfolio-engineering` and `roman-evaluator-js` set 2, `roman-evaluator-java` 3,
+and the two external-repo boards (`blade-workspace`, `arena-federated-search`) 4 — then
+escalates and halts the board. There is no rework loop on `I`
 by default: the idea gate is the loop, and you are it — edit `refined.md` at `Gi`
 rather than sending the card back. Mechanics in [DESIGN.md](DESIGN.md#rework-loops).
 
@@ -343,11 +362,11 @@ Each run's state lives in `boards/<slug>/runs/<run-id>/`, never rewritten by the
 and never deleted. No summary of runs is kept here — a hand-maintained copy ages on every
 run — so read the runs themselves:
 
-    mission/run-audit.py   --runs boards/<slug>/runs              # the current run
-    mission/run-audit.py   --runs boards/<slug>/runs/<run-id>     # any earlier one
-    mission/doc-chain.py   --runs boards/<slug>/runs [--history]
-    mission/timing-report.py --board <slug>
-    mission/runs-report.py --board <slug>                      # what runs/ holds, newest first
+    driver/run-audit.py   --runs boards/<slug>/runs              # the current run
+    driver/run-audit.py   --runs boards/<slug>/runs/<run-id>     # any earlier one
+    driver/doc-chain.py   --runs boards/<slug>/runs [--history]
+    driver/timing-report.py --board <slug>
+    driver/runs-report.py --board <slug>                      # what runs/ holds, newest first
 
 `--runs boards/<slug>/runs` reads the run `runs/current` names;
 `--runs boards/<slug>/runs/<run-id>` reads that one.
@@ -393,15 +412,15 @@ with the CLI:
   concurrently exactly as before, in either mode. What they share across boards is
   model capacity — the same profiles and the same backend serve every board at once
   (`sequential`, and Desktop's Warm Bot Backends, are the knobs for that). Run the bot
-  driver to WATCH a board; `mission/run.py` is the one whose record `run-audit.py`
+  driver to WATCH a board; `driver/run.py` is the one whose record `run-audit.py`
   proves.
 - **One driver per board.** Duplicates idle silently and interleave log output. Kill
   all, start one. A restart is safe: it rejoins this run's lanes and the one-shot
   allowances the run already spent, and recovers a driver that stopped without a halt.
-  It does not undo a halt that rests on the board's record — only `mission/reset.sh`
+  It does not undo a halt that rests on the board's record — only `driver/reset.sh`
   clears that ([restart and reset](DESIGN.md#restart-and-reset)).
 - **Re-filing mid-run is forbidden.** `create-board.sh` refuses if the board exists.
-  To start over, `mission/reset.sh --board boards/<slug>`: it stops this board's
+  To start over, `driver/reset.sh --board boards/<slug>`: it stops this board's
   driver (the pid in `runs/driver.lock`), unstages its leftover index entries, then stops
   its workers and archives its cards — one board only,
   nothing deleted, no `git reset`, no force-push. Orphaned workers otherwise burn full
@@ -480,7 +499,7 @@ human comments PASS (or completes the card) → next lane's root unblocks
 history except through a gate commit, and the deliverable is tracked, so that commit
 really carries it. Each gate's result names the repository, branch and HEAD it staged
 into, and `run-summary.json` records the same as `commit_target`. You commit at your
-discretion, or not at all. `mission/` assets are committed freely by the operator
+discretion, or not at all. `template/` and `driver/` (the engine) are committed freely by the operator
 between runs.
 
 With a gate listed in `auto-gates` (board.json: `["Gi"]`, or `["Gi", "Gp", "Gc"]` for all) the
@@ -545,24 +564,24 @@ move is silently dropped — answer with a comment instead (above), or use a bro
 
 ## 7. Filing a new idea (genericity)
 
-The card graph (`mission/lanes.py`) and card bodies (`mission/card-bodies/`) are shared
+The card graph (`template/lanes.py`) and card bodies (`template/card-bodies/`) are shared
 by every board — nothing scenario-specific to write per idea. To run new work:
 
 1. Write the idea into `boards/<s>/lane-<k>.md` (or the Triage card) — free text, plus
    optional headers overriding the board's value for that lane only, e.g.
    `<!-- unit-tests: false -->`. The per-lane options, and so the whole header set,
    are `refinement`, `unit-tests`, `integration-tests` and `max-reworks`
-   (`mission/board_schema.py --schema` prints the table); every other
+   (`template/board_schema.py --schema` prints the table); every other
    option is board-level. A header is a whole line, and
    anything shaped like one is judged as one, so a misspelling is an error rather than
    prose silently ignored. Write paths relative to the board's work directory, so the
    idea stays portable between boards.
-2. Create the board (§3): `mission/create-board.sh --board boards/<s>`.
+2. Create the board (§3): `driver/create-board.sh --board boards/<s>`.
 3. Make it current: `hermes kanban boards switch <s>` — creating registers the board but
    does **not** make it current, and the dispatcher follows the current board.
-4. `mission/start-board.sh --slug <s>` launches the driver; arm it with `mission/arm.sh <s>`
+4. `driver/start-board.sh --slug <s>` launches the driver; arm it with `driver/arm.sh <s>`
    (or drag the Triage card — see §3 for the `default_assignee` race).
 
-Only touch `mission/card-bodies/` or `mission/lanes.py` when the card graph itself must
+Only touch `template/card-bodies/` or `template/lanes.py` when the card graph itself must
 change (a new role, a new gate) — that changes every board, not just one idea. See
 `boards/` for six worked examples.

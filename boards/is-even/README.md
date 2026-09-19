@@ -1,15 +1,17 @@
 # is-even — the cheap board
 
-Current run configuration: work and review cards both use `union-alpha` via
-`opencode-go`, per user request. Gates `Gi`, `Gp`, and `Gc` are automatic;
-`sequential` remains enabled, the per-card ceiling is `25m`, and the auxiliary
-goal-judge configuration is unchanged. Local-model measurements below describe
-previous runs, not the current model selection.
+Current run configuration, read off `board.json`: every card the driver files uses the
+work model `deepseek-v4.1-flash` on `opencode-go`, and the three review cards are
+re-pointed by `model_override`/`provider_override` to `glm-5.3-flash` on the same
+provider. Gates `Gi`, `Gp`, and `Gc` are automatic; `sequential` is enabled, the
+per-card ceiling is `25m`, and `"goal-cards": ["C"]` puts the goal judge on the
+implementation card only. Local-model measurements below describe previous runs, not
+the current model selection.
 
 The smallest idea that still travels the whole lane. It exercises the machinery — arm
 an idea, watch the researcher refine it, see the three gates, the staged work and a
 timing report — for as close to nothing as a full run can cost. Run it after any change
-to `mission/`, and before trusting a real board.
+to `template/` or `driver/`, and before trusting a real board.
 
 Everything about the idea is chosen for speed: one function, four test cases, no build
 tool, no dependencies, no ambiguity for any card to resolve. `integration-tests` is
@@ -21,13 +23,14 @@ researcher's to find — a worker's `python3` may not.
 
 ## Options, and why
 
-- `"auto-gates": []` — each of the three gates waits for a person, who answers with a
-  `PASS` comment on the gate card (README, "Answering a gate from the card"). Set it to
-  `true` for an unattended run: the driver completes the gates on the same evidence and
-  commits nothing.
-- `"max-runtime": "10m"` — a ceiling, not a target: a cloud run needs about 4m a card. **A
-  local run needs `"20m"`**: the model loads cold (~48 s on the 24 GB rig) and decodes at ~26 t/s,
-  and the 2026-09-15 attempts hit exactly this ceiling (`elapsed 601s > limit 600s`). On an idea
+- `"auto-gates": ["Gi", "Gp", "Gc"]` — all three gates are the driver's; it completes each on
+  its own evidence and commits nothing. To keep a gate for a person, name the ones to hold
+  instead: `"auto-gates": []` stops the run at every gate, and the holder answers with a `PASS`
+  comment on the gate card (README, "Answering a gate from the card").
+- `"max-runtime": "25m"` — a ceiling, not a target: a cloud run needs about 4m a card, and the
+  local rig needs the larger number (**`"qwen38-27b"` loads cold for ~48 s on the 24 GB rig and
+  decodes at ~26 t/s**, and the 2026-09-15 attempts hit a 10m ceiling exactly —
+  `elapsed 601s > limit 600s`). On an idea
   this small a card that needs longer is doing work the
   idea does not ask for, so the ceiling also checks the card bodies. A timed-out card is a
   hard failure: the driver halts the board, and only a review that REJECTS sends work
@@ -36,11 +39,12 @@ researcher's to find — a worker's `python3` may not.
 - `"model_override": "glm-5.3-flash"`, `"provider_override": "opencode-go"` — as on
   every shipped board, the review cards (`RVp`, `RVa` and their rounds) run on a
   different model from the coder's default, so the review model is independent of the author. This is the cheap place to see the pin working.
-- `"model": "qwen38-27b"`, `"provider": "llama-swap"` — the WORK model: every card the board
-  files runs on the local rig, the reviews excepted (they carry the pin above). **This board is
-  the worked example of the option.** `"provider"` is not optional: a bare model is resolved
-  against the profile's provider, which does not serve it. For a cloud-only run delete both keys
-  — nothing is then filed and every card runs its profile's own model. Note the ceiling below:
+- `"model": "deepseek-v4.1-flash"`, `"provider": "opencode-go"` — the WORK model: every card the
+  board files uses it, the reviews excepted (they carry the pin above); `"provider"` is not
+  optional, because a bare model is resolved against the profile's provider. **The local-rig
+  variant swaps this pair for `"model": "qwen38-27b"` on `"provider": "llama-swap"`** — the board is
+  the worked example of the option, and the four local runs above measure it. For a cloud-only run
+  with the profiles' own models, delete both keys: nothing is then filed. Note the ceiling above:
   the local runs needed more than `"10m"`.
 - **Four local-model runs, one cause: the hand-off, not the work.** `ornith-35b` (2026-09-13)
   and `qwen38-27b` (2026-09-15, three attempts) each filed and dispatched correctly — the worker
@@ -108,6 +112,14 @@ researcher's to find — a worker's `python3` may not.
 
 See §3 of the root README; the board-specific commands are:
 
-    mission/create-board.sh --board boards/is-even
-    mission/start-board.sh --slug is-even                       # then drag Triage → Todo
-    mission/run-audit.py --runs boards/is-even/runs             # exits 0 only at 0 errors, 0 warnings
+    driver/create-board.sh --board boards/is-even
+    hermes kanban boards switch is-even                         # create files the board
+                                                                # but leaves it NON-current
+    driver/start-board.sh --slug is-even                       # serve; then drop the
+                                                                # seeded Triage card in Todo
+    driver/run-audit.py --runs boards/is-even/runs             # exits 0 only at 0 errors, 0 warnings
+
+Serving releases nothing: the go signal is the seeded Triage card dropped in the **Todo**
+column, or `driver/arm.sh is-even 1` from a shell. A drop in **Ready** loses to
+`kanban.default_assignee` (`coder`), which assigns and spawns the card before the driver can
+read it as the idea — the lane then sits parked with every card `blocked`.

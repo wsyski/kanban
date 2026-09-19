@@ -86,11 +86,11 @@ URLs onto the incoming request's base URL — the endpoint the companion plan in
 
 See §3 of the root README for the loop; the board-specific commands are:
 
-    mission/create-board.sh --board boards/arena-federated-search
+    driver/create-board.sh --board boards/arena-federated-search
     hermes kanban boards switch arena-federated-search      # create files the board
                                                             # but leaves it NON-current
-    mission/start-board.sh --slug arena-federated-search    # serves; releases nothing
-    mission/run-audit.py --runs boards/arena-federated-search/runs   # 0/0 is the pass
+    driver/start-board.sh --slug arena-federated-search    # serves; releases nothing
+    driver/run-audit.py --runs boards/arena-federated-search/runs   # 0/0 is the pass
 
 `create-board.sh` files eleven parked cards — the complete `LANE_CARDS` set — and the
 driver prunes `TI1`/`RVc1` down to the nine-card lane when the lane opens (see *Lane
@@ -99,13 +99,13 @@ shape*). The board is IT-complete at filing; the integration level is dropped at
 **The go signal is the arm card.** Serve mode releases nothing on its own. Arm lane 1
 from a shell — this is the reliable gesture and the one to use:
 
-    mission/arm.sh arena-federated-search 1
+    driver/arm.sh arena-federated-search 1
 
 `arm.sh` files the idea as a **`blocked`, unassigned** card, which the driver's
 `armed_ideas()` reads and the dispatcher never claims, and it archives the board's own
 seeded Triage card (whose title it would otherwise duplicate).
 
-**Do not drag the seeded Triage card to Todo on this machine.** `kanban.default_assignee`
+**Do not drag the seeded Triage card into the Ready column on this machine.** `kanban.default_assignee`
 is set to `coder`, so a drag leaves the card unassigned-but-`ready` and the dispatcher
 assigns it and spawns a worker within seconds; `armed_ideas()` then skips it (it ignores
 any card with an assignee, `run.py:2980`), so the driver can never read the idea again —
@@ -137,7 +137,7 @@ The driver never commits and never moves a branch; the workspace index is the ha
 
 ## Cleaning up
 
-    mission/reset.sh --board boards/arena-federated-search
+    driver/reset.sh --board boards/arena-federated-search
 
 Archives the cards and unstages what the last run left in the index. Nothing in the template
 deletes a work directory, so pointing one at another repository costs nothing; whether that

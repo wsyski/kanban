@@ -37,7 +37,7 @@ unstaged, because the board does not throw away pending work outside the lane's 
 
 ## Cleaning up
 
-    mission/reset.sh --board boards/portfolio-engineering
+    driver/reset.sh --board boards/portfolio-engineering
 
 Archives the cards and unstages what a dead run left in the index. **It does not touch
 the profile** — nothing in the template clears a work directory, which matters most
@@ -49,5 +49,13 @@ is git, in that repository.
 Toolchain: Python 3 and a reachable local LLM endpoint (the profile's
 `shared_lib/llm.py` points at `http://localhost:8081/v1`). The profile brings the rest.
 
-    mission/create-board.sh --board boards/portfolio-engineering
-    mission/start-board.sh --slug portfolio-engineering
+    driver/create-board.sh --board boards/portfolio-engineering
+    hermes kanban boards switch portfolio-engineering     # create files the board
+                                                          # but leaves it NON-current
+    driver/start-board.sh --slug portfolio-engineering
+    driver/run-audit.py --runs boards/portfolio-engineering/runs   # 0/0 is the pass
+
+Serving releases nothing: the go signal is the seeded Triage card dropped in the **Todo**
+column, or `driver/arm.sh portfolio-engineering 1` from a shell. A drop in **Ready** loses
+to `kanban.default_assignee` (`coder`) — the dispatcher assigns and spawns the card before the
+driver can read it as the idea, and the lane stays parked.

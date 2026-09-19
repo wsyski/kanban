@@ -13,21 +13,21 @@ create and run a board, run records, operational rules, gate discipline — is
 |---|---|
 | Workers STAGE only (`git add -- own paths`), never commit or push | card bodies' HARD RULES; checked by the reviews. The commit is the human's authorization record (§6) |
 | Per-card patch = OWN paths only (`git diff --cached -- <own paths>`) | card bodies — a bare diff bundles every earlier card's staged files |
-| The board's only git writes are stage and unstage | `mission/run.py`: `git add` by workers, `restore --staged` for its own leftovers. Never commit, branch, checkout, reset or push: a work directory that moves under a live run is REPORTED, not corrected (see [work directory pinning](#work-directory-pinning)) |
-| Nothing is deleted — not `work/`, not a run directory | `mission/reset.sh` archives cards and unstages; deleting either tree is a human's own `rm`. `work/` may be the input of a follow-up fix, and an old run is the evidence for why something wedged — no tool has an opinion about when either stops being useful |
+| The board's only git writes are stage and unstage | `driver/run.py`: `git add` by workers, `restore --staged` for its own leftovers. Never commit, branch, checkout, reset or push: a work directory that moves under a live run is REPORTED, not corrected (see [work directory pinning](#work-directory-pinning)) |
+| Nothing is deleted — not `work/`, not a run directory | `driver/reset.sh` archives cards and unstages; deleting either tree is a human's own `rm`. `work/` may be the input of a follow-up fix, and an old run is the evidence for why something wedged — no tool has an opinion about when either stops being useful |
 | One run, one directory — `runs/<run-id>/`, minted when an idea is armed | `run.py` `mint_run`; `runs/current` names the live run. `create-board.sh` mints the run it files into and REUSES one a previous filing left unstarted (`file_lanes.next_run_key`) rather than adding a second; a directory any driver has written into is never reused. A fresh directory cannot hold a previous run's hand-off, so stale-document safety is a property of the paths rather than of a deletion someone must remember |
 | A run's directory disappearing stops the board | `run.py` — nothing here removes one, so a missing `runs/<run-id>/` is someone else's `rm`: the driver halts instead of recording into a fresh directory and pointing `current` at evidence that is gone |
-| Options are validated before anything is filed — manifest and idea headers alike | `mission/board_schema.py`, at all three doors: `create-board.sh`, `start-board.sh`, and the driver when a Triage card is armed (findings go back as a comment on that card). One declaration of the option set, because a second one drifts |
+| Options are validated before anything is filed — manifest and idea headers alike | `template/board_schema.py`, at all three doors: `create-board.sh`, `start-board.sh`, and the driver when a Triage card is armed (findings go back as a comment on that card). One declaration of the option set, because a second one drifts |
 | Nobody commits before the gate — not even the driver | gate cards; `auto-gates` completes gates with "NOTHING COMMITTED" |
-| Lane N+1's root is parented to lane N's code gate | `mission/lanes.py` — the board itself is the sequencer, no orchestrator |
+| Lane N+1's root is parented to lane N's code gate | `template/lanes.py` — the board itself is the sequencer, no orchestrator |
 | The plan card never sees an unreviewed idea | `lanes.py` — `I` is the lane root and `Gi` stands between it and `P`. With `refinement: false` the plan card is the root and plans from the raw idea (see [refinement](#refinement-off)) |
 | Every hand-off is a file, never a card comment | `runs/<run-id>/artifacts/lane-<k>/refined.md`, `…/plan.md`, patches — written to `runs/<run-id>/scratch/<card-id>/` and attached to their card BY THE DRIVER, never staged; the only thing a card stages is the lane's own work |
-| Every card's evidence is its `git diff --cached` patch, attached to the card — and on a lane the plan proves was already satisfied there is nothing to attach: `NO CHANGE:` in the result is the evidence, and the empty-patch ceremony is retired (doc chain F5) | card bodies; `mission/doc-chain.py` |
+| Every card's evidence is its `git diff --cached` patch, attached to the card — and on a lane the plan proves was already satisfied there is nothing to attach: `NO CHANGE:` in the result is the evidence, and the empty-patch ceremony is retired (doc chain F5) | card bodies; `driver/doc-chain.py` |
 | A worker never attaches: it writes its hand-off into its own scratch directory, and the driver attaches every `run.HANDOFF_NAMES` file it finds there once the card is done | `run.attach_hand_offs`, `_worker-contract.txt` — Hermes fences dispatcher-owned children, so `hermes kanban attach` is refused inside a worker, and the `kanban_attach` tool takes the bytes INLINE. That made a worker copy kilobytes of base64 out of its own tool output: on is-even (2026-09-13/15) four local-model cards wrote a correct `refined.md` and all four then died in that copy. An empty file is not attached, and a failed attach is retried on the next tick |
 | A card body never says whether the lane runs its fork or a chain: `sequential` moves an EDGE in `lanes.PARENTS`, and no body is written per mode | `lanes.lane_cards`, card bodies | a body is the contract with the worker about what to produce; the graph decides when it runs. Mode-aware bodies would make every scheduling change a card-contract change, need two wordings kept in step, and spend the goal judge's 2000-character window on text about scheduling. Lines that assume the fork (an index lock another card holds) stay true and simply never fire |
 | Verdicts go in the result field | review card bodies (`_result-field.txt`) |
-| The plan is judged on what it was told | `mission/card-bodies/_plan-checklist.txt` — the plan card's self-check and the plan review's only REJECT grounds |
-| Rules every worker shares exist once | `mission/card-bodies/_worker-contract.txt`, included as `<WORKER_CONTRACT>` (see [profiles](#profiles-and-the-worker-contract)) |
+| The plan is judged on what it was told | `template/card-bodies/_plan-checklist.txt` — the plan card's self-check and the plan review's only REJECT grounds |
+| Rules every worker shares exist once | `template/card-bodies/_worker-contract.txt`, included as `<WORKER_CONTRACT>` (see [profiles](#profiles-and-the-worker-contract)) |
 
 ## Lane shape
 
@@ -49,7 +49,7 @@ code (the checklist forbids a TBD), so the coder never waits on a test file, and
 "the tests are green" is not the lane's done criterion — the review verdict is, and it
 re-derives the suite itself. The RED observation (a test failing while the
 implementation does not exist) is a prediction in the plan, re-derived by `RVa` from
-the two patches (`mission/card-bodies/rva-body.txt`, check f).
+the two patches (`template/card-bodies/rva-body.txt`, check f).
 
 Three gates per lane, in the order the cost of being wrong falls: `Gi` (is this the
 right idea?), `Gp` (the right plan?), `Gc` (the right code?). Fixing an idea costs one
@@ -170,12 +170,12 @@ card runs at its profile's configured effort.
 `kanban_show` or the CLI, no branches/commits/follow-up cards, no questions, a block
 only for a missing decision or tool and never `--kind dependency`, no caches
 in `work/`, full sentences, no memory/skill/config writes, end the card as the body
-says — live once in `mission/card-bodies/_worker-contract.txt`, included by every
+says — live once in `template/card-bodies/_worker-contract.txt`, included by every
 worker and verdict body as `<WORKER_CONTRACT>`. The profile SOUL's `## Kanban Cards`
 is only a short precedence paragraph: the card wins. Reasons: only kanban sessions pay
 the tokens for the rules; there is one copy to maintain; and precedence has to sit in
 the system prompt, because the card body arrives as a tool result. SOUL maintenance is
-in [mission/roles/README.md](mission/roles/README.md).
+in [template/roles/README.md](template/roles/README.md).
 
 **Worker sessions** are tagged `source=kanban` and hidden by Hermes Desktop; §4 shows
 how to read them.
@@ -493,9 +493,9 @@ later failure and label every later halt.
   `reset_attempt_budgets` clears only the engine's failure counter; the events remain.
   A gate wait halts again after another `GATE_WAIT_S`, and a tick exception halts again
   only if it repeats. So a restart recovers a driver that stopped without a halt, and
-  only `mission/reset.sh` clears a halt (README's Resetting sequence).
+  only `driver/reset.sh` clears a halt (README's Resetting sequence).
 - **`reset.sh` stops the driver first.** The pid comes from `runs/driver.lock`, and the
-  script acts on it only when it is a live process running this repo's `mission/run.py`.
+  script acts on it only when it is a live process running this repo's `driver/run.py`.
   If that process does not stop, the script stops too. Stopping the driver matters
   because a driver left serving reads the archived board as a failed filing and halts
   with the wrong cause, or drives the cards `create-board.sh` files next. Only then does
@@ -530,7 +530,7 @@ later failure and label every later halt.
   rework adds a `rework` record (gate, round, cards filed, findings).
 - **Verdict ledger** — `runs/<run-id>/verdicts.jsonl`: every verdict, rework and
   escalation.
-- `mission/doc-chain.py --runs boards/<slug>/runs` checks the chain against the
+- `driver/doc-chain.py --runs boards/<slug>/runs` checks the chain against the
   filesystem and exits 1 on: a named document that is missing (F1); one a card reads
   but that was written after it started (F2); one written before the run began — a
   previous run's leftover (F3); an unresolved placeholder in a filed body (F4); a
@@ -554,7 +554,7 @@ Each is current behaviour, with what to do about it.
   once it is out of `triage` and unassigned (`armed_ideas`), which the dashboard offers
   as the panel's `→ ready` button or a drag to Todo — but `hermes kanban promote` refuses
   a `triage` card, and so do `block` and `schedule`, so no subcommand can make that
-  gesture. `mission/arm.sh <slug> [lane]` reaches the state the other way round: it
+  gesture. `driver/arm.sh <slug> [lane]` reaches the state the other way round: it
   archives the board's seeded Triage card and creates an unassigned card in `blocked`
   whose body is the lane's idea in the shape `file_ideas` writes — `blocked` because a
   `ready` card is claimed by the dispatcher (`kanban.default_assignee`) and WORKED while
@@ -569,7 +569,7 @@ Each is current behaviour, with what to do about it.
 - **Blocking a card is not a hard stop.** A block event carries no actor, so a human
   blocking a gate — or a worker blocking its card — gets one re-promotion before the
   second block halts the board ([block origins](#block-origins)). To stop a card dead,
-  reset the board (`mission/reset.sh`): that is the human brake.
+  reset the board (`driver/reset.sh`): that is the human brake.
 - **Never unlink, archive or re-parent a card while the dispatcher is claiming it.**
   The worker spawns holding the pre-change view and fights a board that has moved.
   Board surgery is safe on a parked lane.
@@ -612,14 +612,14 @@ Each is current behaviour, with what to do about it.
 - **A leaked child-context marker blocks every card mutation.** With
   `HERMES_DELEGATED_CHILD_CONTEXT=1` in the environment the kanban CLI refuses
   `create`, `attach`, `complete`, `unblock`. The scripts unset it; launch anything else
-  as `env -u HERMES_DELEGATED_CHILD_CONTEXT -u HERMES_HOME mission/…`. **A worker is fenced
+  as `env -u HERMES_DELEGATED_CHILD_CONTEXT -u HERMES_HOME driver/…`. **A worker is fenced
   on purpose** — it is a dispatcher-owned child — so no card body may tell it to `env -u`
   its way out: a strong model that finds the trick passes the card by defeating a Hermes
   guard (cloud runs on is-even did exactly that until 2026-09-16), and a weaker one does
   not. A worker mutates its card through the kanban TOOLS, and hands files over through
   its scratch directory for the driver to attach.
 - **`python3` on the PATH is the Hermes venv and has no pytest.** Run the suite as
-  `mission/test.sh`; a plan whose Run steps say bare `python3 -m pytest` fails before
+  `test.sh`; a plan whose Run steps say bare `python3 -m pytest` fails before
   collecting.
 - **A Hermes command's first stderr lines can be a stale-update banner**, printed while
   the last `hermes update` receipt is partial. It is not the error:
@@ -651,7 +651,7 @@ Each is current behaviour, with what to do about it.
   sharing the clock never read as negative overhead. A timed-out attempt counts as
   worked time, or its minutes reappear as overhead and the audit passes a run that
   burned its budget.
-- `mission/timing-report.py --board <slug>` prints the same report on demand (latest
+- `driver/timing-report.py --board <slug>` prints the same report on demand (latest
   segment): the per-card table, a per-lane breakdown when there is more than one lane,
   and a per-role share showing how wall time divides between reviewing and working.
   Roles come from `lanes.LANE_CARDS`, so the report cannot disagree with the graph.

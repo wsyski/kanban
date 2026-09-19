@@ -1,5 +1,5 @@
 {
-  "$schema": "../../mission/board.schema.json",
+  "$schema": "../../template/board.schema.json",
   "slug": "roman-evaluator-js",
   "name": "Roman Evaluator JS",
   "lanes": 1,

@@ -45,12 +45,12 @@ block; and the judge's verdict depends on how the claim is worded, not on the fa
 
 ### 1. `goal` defaults to `false` (opt-in)
 
-- `mission/board_schema.py:72` — default `True` → `False`. Regenerate
-  `mission/board.schema.json` with `mission/board_schema.py --write-schema`.
-- `mission/file_lanes.py:249` needs no change (it reads the schema default).
-- `mission/run.py:376` (`_goal_args`, rework/revision cards) hardcodes `cfg.get("goal", True)`:
+- `template/board_schema.py:72` — default `True` → `False`. Regenerate
+  `template/board.schema.json` with `template/board_schema.py --write-schema`.
+- `driver/file_lanes.py:249` needs no change (it reads the schema default).
+- `driver/run.py:376` (`_goal_args`, rework/revision cards) hardcodes `cfg.get("goal", True)`:
   read `board_schema.OPTIONS["goal"][1]` instead, so there is one default.
-- `mission/tests/test_file_lanes.py:100` `test_the_goal_judge_is_the_default_for_a_worker_card`
+- `tests/test_file_lanes.py:100` `test_the_goal_judge_is_the_default_for_a_worker_card`
   inverts: a board with no `goal` key files no `--goal`. Keep the "never on RV/G cards"
   assertion in a test that passes `goal_mode=True`.
 - Boards that got the judge by omission now say `"goal": true` explicitly
@@ -60,7 +60,7 @@ block; and the judge's verdict depends on how the claim is worded, not on the fa
 
 ### 2. Worker bodies: never block over a wrong test; the goal judge must read that as done
 
-`mission/card-bodies/c-body.txt` hard rule 3 today: "if a test is wrong, say so in your result
+`template/card-bodies/c-body.txt` hard rule 3 today: "if a test is wrong, say so in your result
 and stop". "Stop" reads as block, and the goal gate pushes the same way. With item 7 the wrong
 test has an owner-approved path, so C always finishes. The judge cannot be switched off for
 this case; it can only be given a `DONE WHEN:` that the finish satisfies and a claim that shows it.
@@ -101,7 +101,7 @@ carries the worker's words; the goal loop's blocks carry fixed prefixes:
 | anything else | worker's own block | unchanged |
 
 Do **not** halt immediately on "unachievable": lane 2 recovered through a retry and review.
-Tests go in `mission/tests/test_card_stops.py`, one per row.
+Tests go in `tests/test_card_stops.py`, one per row.
 
 Engine facts this must respect (verified):
 - The goal loop blocks with **no kind** (`cli.py:4087`), so `deadman_check` (which counts
@@ -146,7 +146,7 @@ review RVa runs anyway is the check when C is wrong.
 
 The C2 defect started in the plan (RVa2: "plan Task 3 Step 2"), which RVp2 passed.
 
-- `mission/card-bodies/_plan-checklist.txt` (RVp): every property a test step asserts is
+- `template/card-bodies/_plan-checklist.txt` (RVp): every property a test step asserts is
   achievable with the plan's named toolchain.
 - `c-body.txt` hard rule 3: C may change a TW test only when **all** hold — TW is `done`
   (no parallel edit); C shows evidence the assertion is unsatisfiable; the replacement keeps the
@@ -159,7 +159,7 @@ The C2 defect started in the plan (RVa2: "plan Task 3 Step 2"), which RVp2 passe
 
 ### 8. Review fixes for commit 3868f99
 
-`mission/test.sh` is green (440). Findings, by severity:
+`test.sh` is green (440). Findings, by severity:
 
 1. Goal-loop blocks re-promoted — item 3.
 2. **"Blocked twice" message unreachable for same-kind blocks.** The engine routes the second
@@ -199,7 +199,7 @@ with a message naming the cause** — never an unbounded wait or retry.
 | 9.7 | **Lane/run mismatch refused every tick**, never halts | V: `lane_paths_agree` in `open_lanes` | log once, then halt | 3 |
 | 9.8 | **Filing fails after archive + `mint_run`** — `current` points at an empty run, `tick()` idles forever | I: `run.py:2519-2552`; empty `minimal-goal-mode-20260913-134352/` | wrap filing; on error halt naming the empty run | 2 |
 | 9.9 | **Restart resets one-shot limits** | V (code) | item 8.3 | 2 |
-| 9.10 | **Restart after an exhaustion halt halts again** on the same event; README says restart recovers | I | document: an exhaustion halt needs `mission/reset.sh` | 3 |
+| 9.10 | **Restart after an exhaustion halt halts again** on the same event; README says restart recovers | I | document: an exhaustion halt needs `driver/reset.sh` | 3 |
 | 9.11 | **Non-zero crash in a provider storm** halts instead of one re-queue (`"protocol violation"` required, `run.py:1946`) | V | also re-queue once on `crashed` with ≥3 hits in this run's lines (8.4) and no terminal call | 3 |
 | 9.12 | **Repeated stale-claim reclaim** — back to `ready`, no failure counted | I: `release_stale_claims` | 2 `reclaimed` events on a card → halt | 3 |
 | 9.13 | **Driver dies without halt** — nothing notices | V: `roman-evaluator-java-20260912-235127` log ends 00:15:51 "unblocked P2", cause unknown | `start-board.sh` / run-audit: a run with no halt and no `ALL GATES COMPLETE` whose driver pid is gone is reported as dead | 3 |
@@ -212,15 +212,15 @@ Suggested order: 9.1, 9.2, item 3, 9.3, then 8.2–8.6, then the rest.
 
 ## Verification
 
-    mission/test.sh
-    python3 mission/render-flow.py --check
-    mission/board_schema.py --schema            # goal default shows false
+    test.sh
+    python3 driver/render-flow.py --check
+    template/board_schema.py --schema            # goal default shows false
     grep -rn minimal-goal-mode --exclude-dir=runs --exclude-dir=.git .   # PLAN.md, TIMELINE.md only
 
     # the item 5 probe: "goal": true on minimal-development, then revert it
-    mission/create-board.sh --board boards/minimal-development
-    mission/start-board.sh --slug minimal-development
-    mission/run-audit.py --runs boards/minimal-development/runs         # exits 0
+    driver/create-board.sh --board boards/minimal-development
+    driver/start-board.sh --slug minimal-development
+    driver/run-audit.py --runs boards/minimal-development/runs         # exits 0
 
 Also re-create one board from item 1's table with its chosen value and confirm from the
 filed cards (`hermes kanban --board <slug> show <id>`) that `--goal` is present only when

@@ -1,5 +1,5 @@
 {
-  "$schema": "../../mission/board.schema.json",
+  "$schema": "../../template/board.schema.json",
   "slug": "portfolio-engineering",
   "name": "Portfolio Engineering",
   "lanes": 1,

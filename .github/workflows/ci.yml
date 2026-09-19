@@ -1,0 +1,46 @@
+name: engine
+
+# The same commands the README's receipts name, so CI and a human run one thing. The suite
+# is seconds, and the diagram check is what catches a card-graph edit that forgot its
+# pictures — both were previously run only when someone remembered.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Actions → "Run workflow" → pick any branch: a refactor branch wants the same suite
+  # before it is merged, and that is exactly when a push trigger cannot help.
+  workflow_dispatch:
+
+jobs:
+  suite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: pytest (test.sh runs it, and the suite needs an interpreter that has it)
+        run: python3 -m pip install --quiet pytest
+
+      # PYTHON pins the interpreter: test.sh otherwise probes /usr/bin/python3 first, which
+      # on a runner is the system python without pytest.
+      - name: engine suite
+        env:
+          PYTHON: python3
+        run: ./test.sh
+
+      - name: diagrams still match the card graph
+        run: python3 driver/render-flow.py --check
+
+      - name: every shipped board validates against the option schema
+        run: |
+          for b in boards/*/board.json; do
+            python3 template/board_schema.py "$b"
+          done
+
+      # Renders every card of a shipped board without spawning a session, so a template body
+      # or an adapter that stopped resolving fails here instead of at a board's first card.
+      - name: the bot driver still renders every card (dry run)
+        run: python3 bots/run-board.py --board boards/is-even --dry-run

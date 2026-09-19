@@ -26,7 +26,7 @@ previous version of this module** and this idea's input. Read it before planning
 if the service exists, this idea is a request to improve or fix it, and the
 smallest correct change beats a rewrite. Nothing is deleted to "start clean" —
 least of all lane 1's module, which this lane depends on. Clearing the work
-directory is a human decision (`mission/reset.sh`).
+directory is a human decision (`driver/reset.sh`).
 
 The two modules must not drift apart on a rule they are supposed to share.
 Lane 1 was asked to make its evaluation rule callable from another module;

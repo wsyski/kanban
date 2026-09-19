@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Judge one bot run: exit 0 only when the run is sound.
 
-`mission/run-audit.py` is what makes a kanban run DONE — a driver that reached the
+`driver/run-audit.py` is what makes a kanban run DONE — a driver that reached the
 end is not the same claim as a run that holds together. This is that check for a
 bot run, over the evidence a bot run actually leaves: the prompts, the results and
 the tree the cards built. Same convention as the kanban audit — every finding at
@@ -19,7 +19,7 @@ import re
 import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(REPO, "mission"))
+sys.path.insert(0, os.path.join(REPO, "template"))
 
 import card_render
 
@@ -28,7 +28,7 @@ import lanes  # noqa: E402
 # Left in a work directory by a tool, never by an idea. The worker contract forbids
 # them (`work/` holds only what a human receives), so one THIS RUN left is the contract
 # breaking. One that predates the run is not: the board never deletes what it did not
-# put there, and `mission/run-audit.py` reports those as E16 "left in place" rather than
+# put there, and `driver/run-audit.py` reports those as E16 "left in place" rather than
 # failing the run for inherited litter. Graded the same way here, by mtime.
 CACHE_NAMES = ("__pycache__", ".pytest_cache", ".ruff_cache", ".mypy_cache", "node_modules")
 

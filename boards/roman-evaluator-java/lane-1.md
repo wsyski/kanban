@@ -32,7 +32,7 @@ directory is empty, build it from nothing. Both are this idea.
 A sibling `roman-service/` from lane 2 may also be present. It is not this
 lane's, and it is not litter either — leave it alone. Nothing is deleted to
 "start clean": clearing the work directory is a human decision
-(`mission/reset.sh`), and a card that removes what it did not plan to replace
+(`driver/reset.sh`), and a card that removes what it did not plan to replace
 destroys the only copy of the last run's work.
 
 This lane exists to exercise the board end to end on a problem small enough

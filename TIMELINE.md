@@ -9,12 +9,12 @@ disagree with this file, they win. Sections 1–6 are the 2026-09-13 session; §
 Every number here comes from the run directories under `boards/<slug>/runs/`, which are
 never deleted. Re-derive any of it with:
 
-    mission/run-audit.py --runs boards/<slug>/runs/<run-id>     # table, timings, findings
-    mission/timing-report.py --board <slug>
+    driver/run-audit.py --runs boards/<slug>/runs/<run-id>     # table, timings, findings
+    driver/timing-report.py --board <slug>
 
 The session covered five boards in sequence, and eight attempts at
 `minimal-development` before its run was clean. Boards are driven one at a time
-(`mission/start-board.sh --slug <s> --once`), each from a fresh `reset.sh` → `boards rm` →
+(`driver/start-board.sh --slug <s> --once`), each from a fresh `reset.sh` → `boards rm` →
 `create-board.sh`.
 
 ## 1. The five boards — final runs
@@ -99,11 +99,11 @@ run's).
 | **Lanes are parked at birth** (`create --initial-status blocked`) — run 4 | 2 × `E3 F2`: `P1` started before `IDEA`/`REFINED` existed | run 7 clean; the parking brake is what promotion releases, and it is released before the card is linked |
 | **Read a review's verdict where it landed** — run 6 | `Gc1` held for ever on a run whose review had PASSed | verdict read from `result`, falling back to the closing run's summary; the review bodies also carry an explicit `<RESULT_FIELD>` section |
 | **A worker's own block is honoured once** (this session) | measured on `roman-evaluator-java`: `C2` blocked itself 15:52:41, promotion undid it 15:52:47 — the stop existed only as a comment | re-promoted once with the reason commented on the card; the second block escalates and halts naming it. `run.block_origin` / `should_repromote` / `stop_reason`; 10 new tests |
-| **Provider starvation is re-queued once** (this session) | run 2: one 400 storm halted the whole board (6 findings) | ≥3 upstream 4xx/5xx in the worker log **and** a crash with no terminal call → one in-run re-queue, commented on the card; a second failure of any kind halts. Timeouts are never re-queued; 10 new tests in `mission/tests/test_card_stops.py` |
+| **Provider starvation is re-queued once** (this session) | run 2: one 400 storm halted the whole board (6 findings) | ≥3 upstream 4xx/5xx in the worker log **and** a crash with no terminal call → one in-run re-queue, commented on the card; a second failure of any kind halts. Timeouts are never re-queued; 10 new tests in `tests/test_card_stops.py` |
 | **The audit reads the cards' logs too** (this session, E18) | a flake the run *survived* left no trace in any record the audit reads (the 11:50 run's storm was visible only because it halted) | one WARNING per card with the count and the first upstream-error line; the five clean runs above stay clean |
 | **`driver.log` marks each driver start** (this session) | a fresh run's lines sat under the previous day's last line, so `tail` misled | `--- driver start: board=… pid=… run=… ---`; the board-level log is append-only by design |
 
-Suite after the session's engine changes: **440 passed** (`mission/test.sh`), flow diagrams
+Suite after the session's engine changes: **440 passed** (`test.sh`), flow diagrams
 current (`render-flow.py --check`). All four engine changes were live for run 8 above, which
 came back 0 / 0 — the new paths are silent on a board where nothing goes wrong.
 
@@ -134,11 +134,11 @@ on this day it was not.
 
 ## 5. Reproducing a board from scratch
 
-    mission/reset.sh --board boards/<slug> --batch        # stop this board's workers, archive its cards
+    driver/reset.sh --board boards/<slug> --batch        # stop this board's workers, archive its cards
     env -u HERMES_HOME hermes kanban boards rm <slug>     # drop the board itself
-    mission/create-board.sh --board boards/<slug>
-    env -u HERMES_HOME mission/start-board.sh --slug <slug> --once
-    /usr/bin/python3 mission/run-audit.py --runs boards/<slug>/runs
+    driver/create-board.sh --board boards/<slug>
+    env -u HERMES_HOME driver/start-board.sh --slug <slug> --once
+    /usr/bin/python3 driver/run-audit.py --runs boards/<slug>/runs
 
 A run is done only when the last command exits 0 (no errors **and** no warnings) and the
 driver log ends with `ALL GATES COMPLETE`. Board contents are disposable; the run
@@ -190,7 +190,7 @@ run when the previous filing left one unstarted: `file_lanes.next_run_key` reuse
 abandoned mints since 2026-09-13 (the newer one named by `current`), and the board's own
 definition of done failed for a run that never existed — E1 "no driver.log — the run never
 started", E4. A directory any driver has written into is never reused. Both halves are
-pinned by `mission/tests/test_unstarted_mint.py` (26 tests, including `create-board.sh` run
+pinned by `tests/test_unstarted_mint.py` (26 tests, including `create-board.sh` run
 twice against a stubbed engine). Suite: 576 passed.
 
 The board that measured both was `goal-smoke` — `is-even`'s idea on the profile's own
@@ -266,7 +266,7 @@ gesture, and a board cannot be started headlessly.
 §8's fix is a claim until a human-gated run finishes under it, so the cheap board was
 re-armed for exactly that and its three gates were completed with the barest possible
 result: the word `Accepted`, which is what a gate-holder actually types. Filed with
-`mission/arm.sh` (the new CLI arm), the board's own model pair deleted so the cards run on
+`driver/arm.sh` (the new CLI arm), the board's own model pair deleted so the cards run on
 the profile's cloud model, and `"auto-gates": false` so the gates wait for a person.
 
 | | |
@@ -284,7 +284,7 @@ the profile's cloud model, and `"auto-gates": false` so the gates wait for a per
 build the whole deliverable off it (`is_even.py`, `test_is_even.py`, a 24-second run) while
 the driver was reading the same card as the idea: a `ready` card carrying no assignee is
 assigned by `kanban.default_assignee`, so the driver's *"the dispatcher cannot claim one
-however it is moved"* was wrong. `mission/arm.sh` now files `blocked`, and `armed_ideas`
+however it is moved"* was wrong. `driver/arm.sh` now files `blocked`, and `armed_ideas`
 reads that state when the body carries the RAW IDEA marker. And the audit warned E8 about a
 worker that had completed its card two minutes earlier and left a **zombie** behind —
 `pgrep` lists it, `/proc` says `Z` — so E8 now ignores a zombie, a worker whose card is
@@ -298,7 +298,7 @@ hours earlier. A run's own end state is in `runs/<run-id>/driver.log`.
 ## 10. Two attachment habits the card bodies now forbid — `is-even`, 2026-09-15
 
 A second human-gated run the same day, on the cloud route (`model`/`provider` deleted,
-`"auto-gates": false` kept, armed with `mission/arm.sh` after the first attempt was killed
+`"auto-gates": false` kept, armed with `driver/arm.sh` after the first attempt was killed
 for a stalled local model).
 
 | | |
@@ -326,7 +326,7 @@ for a stalled local model).
   F5 already calls valid. Two cards, one gap: the bodies demanded a patch without saying
   what a lane that changed nothing attaches.
 
-So the shared fragment `mission/card-bodies/_worker-contract.txt` gains one rule — attach
+So the shared fragment `template/card-bodies/_worker-contract.txt` gains one rule — attach
 **the file, not its text** (`attach <YOUR-CARD-ID> <path>`, then `attachments <YOUR-CARD-ID>`
 to see the size), and a diff the card asks for is EMPTY on a lane the plan proves was
 already satisfied: attach nothing, say `NO CHANGE:` in the result, and never put prose
@@ -346,7 +346,7 @@ restored, so the harness flips are not left behind on the cheap board.
 ## 11. The same board, driven two ways — `is-even`, 2026-09-18
 
 Both drivers ran `is-even` end to end, one after the other, on the same `work/` tree:
-`mission/run.py` over `hermes kanban`, and [`bots/`](bots/README.md), which runs the same
+`driver/run.py` over `hermes kanban`, and [`bots/`](bots/README.md), which runs the same
 cards as Hermes bot sessions.
 
 | | kanban `is-even-20260918-091004` | bots `bots-20260918-092039` |
@@ -370,7 +370,7 @@ numbers and the driver's last line totals them.
 **Two audit rules this pair pinned:**
 
 - A tool cache in `work/` is charged to the run that created it. `work/__pycache__` here
-  is dated 2026-09-16, older than either run: `mission/run-audit.py` reports it INFO E16
+  is dated 2026-09-16, older than either run: `driver/run-audit.py` reports it INFO E16
   "left in place" and `bots/audit.py` B7 reports it INFO for the same reason, because the
   board never deletes what it did not put there.
 - A run is auditable while its driver serves. `start-board.sh` stays up after

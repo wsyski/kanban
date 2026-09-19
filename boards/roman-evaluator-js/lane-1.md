@@ -86,7 +86,7 @@ the smallest correct change to what exists beats rebuilding it. A run that finds
 the directory empty builds it from nothing. Both are this idea.
 
 Nothing is deleted to "start clean" — clearing the directory is a human decision
-(`mission/reset.sh`), and a card that wipes what it did not plan to replace
+(`driver/reset.sh`), and a card that wipes what it did not plan to replace
 destroys the only copy of the last run's work.
 
 This idea is deliberately complete and unambiguous: it exercises the board

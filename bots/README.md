@@ -1,6 +1,6 @@
 # bots/ — the same board, run by Hermes Bots
 
-A second driver for the boards in `boards/`, beside `mission/run.py`. The kanban
+A second driver for the boards in `boards/`, beside `driver/run.py`. The kanban
 driver files cards on a `hermes kanban` board and a dispatcher spawns hidden
 workers. This one files nothing: each card becomes ONE `hermes … chat` turn on the
 bot that owns its role, in its own session, so the whole board is readable — live,
@@ -36,19 +36,19 @@ Exit codes: **0** complete · **10** a gate is held for you · **1** halted.
 | `card-adapter.txt` | the one translation — how a card reports without a board |
 | `demo.sh` | prerequisites → run → audit, for any board |
 
-Tests live with the rest of the suite: `mission/tests/test_bots_driver.py` and
-`mission/tests/test_bots_audit.py`, both model-free, both run by `mission/test.sh`.
+Tests live with the rest of the suite: `tests/test_bots_driver.py` and
+`tests/test_bots_audit.py`, both model-free, both run by `test.sh`.
 
 ## What it shares with the kanban driver
 
-Nothing about a board is restated here. The driver imports `mission/`:
+Nothing about a board is restated here. The driver imports `template/`:
 
 | From | What |
 | --- | --- |
 | `board_schema.py` | the option table, its defaults, validation of `board.json` |
 | `lanes.py` | the card graph (`lane_cards`), role→profile (`assignee_for`), the review model pin (`model_args`), per-lane options from the idea header, `max_reworks` |
 | `card_render.py` | card bodies with every placeholder resolved (`render_body`), a lane's hand-off paths, the work-directory reading |
-| `mission/card-bodies/` | the card bodies verbatim, worker contract included |
+| `template/card-bodies/` | the card bodies verbatim, worker contract included |
 
 A change to the graph, a card body or an option reaches both drivers at once.
 
@@ -168,7 +168,7 @@ continues this run` (exit 130) rather than a stack trace.
 ## Where the output goes
 
 ```
-boards/<slug>/work/                  the product — the SAME tree mission/run.py builds
+boards/<slug>/work/                  the product — the SAME tree driver/run.py builds
 boards/<slug>/runs/
     driver.lock                      the board's one driver lock, taken by both drivers
     current                          kanban's live run — this driver never writes it
@@ -187,7 +187,7 @@ boards/<slug>/runs/
 
 `runs/` is gitignored for both drivers; `work/` is tracked for both, and a human
 commits it at a gate. A run id says which driver made it —
-`mission/runs-report.py` lists them together.
+`driver/runs-report.py` lists them together.
 
 ## The audit
 
@@ -212,8 +212,11 @@ two-card run.
 
 ## Seeing it in the Bots tab
 
-Each card is an ordinary session on its profile, titled `<slug> L<n> <card>` — not a
-hidden `kanban`-source worker, which is why it is visible at all. In Desktop: the
+Each card is an ordinary session on its profile, titled `<slug> L<n> <card> <run-id>` —
+stamped with the run, so a **rerun opens fresh sessions** instead of resuming the previous
+run's conversation (it did resume them until 2026-09-19; a resumed card carried 151 messages
+of history and paid for it). Not a hidden `kanban`-source worker, which is why it is visible
+at all. In Desktop: the
 **Bots** tab, then right-click a bot → **Open recent session** for the card running
 now, or its session browser for the rest; Cmd/Ctrl+K and the board's slug jumps
 straight to one. A bot row's plain click opens that bot's canonical *Bot Chat*,
@@ -230,7 +233,7 @@ when it is missing. Cards run either way.
 
 ## What this does not have
 
-Deliberate, and the reason `mission/run.py` stays:
+Deliberate, and the reason `driver/run.py` stays:
 
 - **No enforcement.** The card contract ("no commits, no branches, no skills, no
   memories") holds because the bot honours it. A kanban worker runs in a dispatched
@@ -240,7 +243,7 @@ Deliberate, and the reason `mission/run.py` stays:
   the hermes worker path (`--goal` at filing, `auxiliary.goal_judge` on the profile),
   so a chat turn has nothing to switch on. Not silent: a run whose manifest sets it
   (or `max-retries`) logs `NOT honoured: <option> — <why>` at startup and says to run
-  that board on `mission/run.py`. `UNHONOURED` in `run-board.py` is the list.
+  that board on `driver/run.py`. `UNHONOURED` in `run-board.py` is the list.
 - **No attachments, no chain, no per-card patches, no board history** — the files
   under `runs/bots-<ts>/` are the whole record, and `audit.py` is thinner than
   `run-audit.py` because of it: it judges results, hand-offs and the work tree, never

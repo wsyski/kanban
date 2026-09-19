@@ -8,7 +8,7 @@
 #     bots/demo.sh --fresh --yes             # ... without asking
 #     bots/demo.sh --check                   # prerequisites only, run nothing
 #
-# It builds in the board's own `boards/<slug>/work/` — the same tree `mission/run.py`
+# It builds in the board's own `boards/<slug>/work/` — the same tree `driver/run.py`
 # builds in — and keeps its run state in `boards/<slug>/runs/bots-<ts>/` beside the
 # kanban runs. Both take that board's `runs/driver.lock`, so one BOARD is driven one
 # way at a time; other boards are unaffected and still run concurrently.
@@ -48,7 +48,7 @@ hermes --version | head -1
 say "2. profiles the board's roles need"
 PROFILES="$(cd "$REPO" && python3 - "$BOARD" <<'PY'
 import json, os, sys
-sys.path.insert(0, "mission")
+sys.path.insert(0, "template")
 import lanes
 cfg = json.load(open(os.path.join(sys.argv[1], "board.json")))
 print(" ".join(sorted(lanes.required_profiles(cfg.get("assignees")))))
@@ -97,7 +97,7 @@ PY
 #     purpose: a board's lane reads what is already there as its own input, whichever
 #     driver left it. `--fresh` parks the whole tree in the backup root and starts
 #     empty — it is the board's tracked product, so this is a real decision.
-say "5. work directory (shared with mission/run.py)"
+say "5. work directory (shared with driver/run.py)"
 WORK="$BOARD/work"
 if [ "$FRESH" = 1 ] && [ -d "$WORK" ] && [ -n "$(ls -A "$WORK" 2>/dev/null)" ]; then
   # This tree is TRACKED and the kanban driver builds in it too, so --fresh throws away
@@ -105,7 +105,7 @@ if [ "$FRESH" = 1 ] && [ -d "$WORK" ] && [ -n "$(ls -A "$WORK" 2>/dev/null)" ]; 
   # one mistyped flag is otherwise the whole board's product.
   if [ "$ASSUME_YES" != 1 ]; then
     echo "  $WORK holds $(ls -A "$WORK" | wc -l) entry(ies) — the board's product, shared"
-    echo "  with mission/run.py and tracked in git. --fresh empties it (a copy is parked"
+    echo "  with driver/run.py and tracked in git. --fresh empties it (a copy is parked"
     echo "  under /opt/backup/agents/ first)."
     printf '  empty it? [y/N] '
     read -r answer < /dev/tty || answer=""
@@ -149,7 +149,7 @@ echo "  From a shell: hermes -p coder sessions list | grep '$SLUG'"
 
 # 8 — the audit. A driver that reached the end is not the same claim as a run that
 #     holds together, so the run is DONE only when this exits 0 — the bot board's
-#     answer to `mission/run-audit.py`.
+#     answer to `driver/run-audit.py`.
 say "8. audit"
 set +e
 "$REPO/bots/audit.py" --board "$BOARD"

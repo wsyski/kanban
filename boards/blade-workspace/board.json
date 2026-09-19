@@ -1,5 +1,5 @@
 {
-  "$schema": "../../mission/board.schema.json",
+  "$schema": "../../template/board.schema.json",
   "slug": "blade-workspace",
   "name": "Blade Workspace (external project)",
   "lanes": 1,

@@ -16,7 +16,23 @@ Delete them by hand for a blank start. A new idea typed into the Triage card and
 to Todo archives the previous run's cards and leaves the product in place; to archive
 the cards and unstage what a dead run left pending without a new idea:
 
-    mission/reset.sh --board boards/roman-evaluator-java
+    driver/reset.sh --board boards/roman-evaluator-java
+
+## Running it
+
+See §3 of the root README; the board-specific commands are:
+
+    driver/create-board.sh --board boards/roman-evaluator-java
+    hermes kanban boards switch roman-evaluator-java      # create files the board
+                                                          # but leaves it NON-current
+    driver/start-board.sh --slug roman-evaluator-java    # serve; releases nothing
+    driver/run-audit.py --runs boards/roman-evaluator-java/runs    # 0/0 is the pass
+
+The go signal is the seeded Triage card dropped in the **Todo** column, or
+`driver/arm.sh roman-evaluator-java 1` from a shell. Never **Ready**: with
+`kanban.default_assignee` set to `coder` the dispatcher assigns and spawns the card before
+the driver can read it as the idea, and the lane then sits parked. Lane 2 opens on lane 1's
+`Gc1` rather than on an arm, so one gesture starts both lanes.
 
 ## Toolchain
 

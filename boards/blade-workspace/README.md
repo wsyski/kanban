@@ -80,9 +80,25 @@ the plan's prose. `### Done means` is what the code gate judges — every checkb
 the plan itself, the plan's test steps green, and exactly the files its File Structure
 table names staged in the workspace index, nothing committed.
 
+## Running it
+
+See §3 of the root README; the board-specific commands are:
+
+    driver/create-board.sh --board boards/blade-workspace
+    hermes kanban boards switch blade-workspace          # create files the board
+                                                         # but leaves it NON-current
+    driver/start-board.sh --slug blade-workspace        # serve; releases nothing
+    driver/run-audit.py --runs boards/blade-workspace/runs         # 0/0 is the pass
+
+Run the preconditions above first. The go signal is the seeded Triage card dropped in the
+**Todo** column, or `driver/arm.sh blade-workspace 1` from a shell; a drop in **Ready**
+loses to `kanban.default_assignee` (`coder`) and leaves every lane card parked. This board
+stages into an external repository, so the code gate is a person's and the commit there is
+that repository's own.
+
 ## Cleaning up
 
-    mission/reset.sh --board boards/blade-workspace
+    driver/reset.sh --board boards/blade-workspace
 
 Archives the cards and unstages what the last run left in the index. Nothing in the
 template deletes a work directory, so pointing one at another repository costs nothing;

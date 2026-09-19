@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Run any board's card graph through Hermes BOTS instead of `hermes kanban`.
 
-A second, parallel driver for the same boards `mission/run.py` runs: it reads the
+A second, parallel driver for the same boards `driver/run.py` runs: it reads the
 same `board.json`, the same `lane-<k>.md`, the same card bodies and the same graph
-(`mission/lanes.py`), and turns each card into ONE `hermes … chat` turn on the
+(`template/lanes.py`), and turns each card into ONE `hermes … chat` turn on the
 bot that owns that role. Nothing is filed on a kanban board, so every card's
 conversation is an ordinary session on the profile — visible in Hermes Desktop's
 Bots tab (bot row → Open recent session, or the bot's session browser).
@@ -23,7 +23,7 @@ board, and other boards run concurrently in either mode.
 What it does not have: the board's claim locks, the dispatcher's breaker, goal
 mode (`goal-cards`), attachments, the chain/timing records and `run-audit.py`.
 The card CONTRACT here is honoured by the bot or not at all — no process boundary
-enforces it. This driver is for watching the work happen; `mission/run.py` stays
+enforces it. This driver is for watching the work happen; `driver/run.py` stays
 the one that proves it.
 
     bots/run-board.py --board boards/is-even            # run every lane
@@ -32,7 +32,6 @@ the one that proves it.
 """
 
 import argparse
-import atexit
 import concurrent.futures
 import datetime
 import json
@@ -45,10 +44,11 @@ import threading
 import time
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(REPO, "mission"))
+sys.path.insert(0, os.path.join(REPO, "template"))
 
 import board_schema  # noqa: E402
 import card_render
+import driver_lock  # noqa: E402  — the board's lock, shared with driver/run.py
 import lanes  # noqa: E402
 
 ADAPTER = os.path.join(REPO, "bots", "card-adapter.txt")
@@ -99,14 +99,6 @@ def record_timing(run, row):
             f.write(json.dumps(row) + "\n")
 
 
-def duration_seconds(text):
-    """`25m` / `90s` / `2h` as seconds; the manifest's own spelling."""
-    m = re.fullmatch(r"(\d+)\s*([smh])", str(text).strip().lower())
-    if not m:
-        return None
-    return int(m.group(1)) * {"s": 1, "m": 60, "h": 3600}[m.group(2)]
-
-
 def state_path(run):
     return os.path.join(run, "state.json")
 
@@ -147,40 +139,18 @@ DRY_PREFIX = "bots-dry-"
 
 
 def take_driver_lock(runs):
-    """`runs/driver.lock`, the board's ONE driver lock — kanban's, taken the same way.
+    """`runs/driver.lock`, the board's ONE driver lock — the kanban driver's own rule.
 
-    Both drivers now build in the same `work/`, so they are mutually exclusive by
+    Both drivers build in the same `work/`, so they are mutually exclusive by
     construction rather than by convention: whichever holds this file runs the board.
-    A DEAD holder's lockfile is taken over (run.py's rule — a SIGKILL skips the
-    atexit unlink, and refusing on the file alone turns one kill into a manual rm).
+    The rule (stale holder taken over, live holder refused, release only while the lock
+    is still ours) lives in `template/driver_lock.py`, which both drivers import.
     """
-    os.makedirs(runs, exist_ok=True)
-    path = os.path.join(runs, "driver.lock")
-    try:
-        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
-    except FileExistsError:
-        held = open(path).read().strip()
-        if held.isdigit() and os.path.exists(f"/proc/{held}"):
-            raise SystemExit(f"another driver holds {path} (pid {held}) — the kanban "
-                             f"driver and this one share THIS board's work/, so one "
-                             f"board is driven one way at a time (other boards are "
-                             f"unaffected)")
-        print(f"taking over a stale driver lock ({path}: pid {held!r} is gone)")
-        fd = os.open(path, os.O_CREAT | os.O_TRUNC | os.O_WRONLY, 0o644)
-    mine = str(os.getpid())
-    os.write(fd, mine.encode())
-    os.close(fd)
-
-    def release():
-        # Only ever our own: a driver that was SIGKILLed has its lock legitimately
-        # taken over by the next one, and an atexit that unlinks on existence alone
-        # would then drop the lock of a driver that is still running.
-        try:
-            if open(path).read().strip() == mine:
-                os.unlink(path)
-        except OSError:
-            pass
-    atexit.register(release)
+    _, note = driver_lock.take(
+        runs, "the kanban driver and this one share THIS board's work/, so one board is "
+              "driven one way at a time (other boards are unaffected)")
+    if note:
+        print(note)
 
 
 def current_run(board_dir, *, resume=False, dry_run=False):
@@ -233,8 +203,27 @@ def render_card(body_file, card_id, *, board, workdir, lane, targets, run):
     return text, result_file
 
 
+def session_title(cfg, lane, card_id, run):
+    """The card session's title — STAMPED WITH THE RUN, so a rerun is a new session.
+
+    It used to be `<slug> L<n> <card>`, and `-c <title> --create-if-missing` then RESUMED
+    the previous run's conversation. Measured 2026-09-19: all six cards of a rerun picked up
+    yesterday's session (RVa1 carried 151 messages), and the first call cost 95k tokens of
+    history the card never asked for — the card's own prompt is what it should read. The
+    slug stays first, so a session is still findable by board.
+    """
+    return f"{cfg['slug']} L{lane} {card_id} {os.path.basename(run)}"
+
+
 def run_turn(profile, prompt_file, *, workdir, title, model_args, skill, budget, log_to):
-    """One bot turn: the card's whole conversation, in its own session."""
+    """One bot turn: the card's whole conversation, in its own session.
+
+    The child's environment carries the suite hygiene every card body asks for and models
+    keep forgetting: a card that runs pytest in the board's `work/` leaves `__pycache__`
+    and `.pytest_cache` there, and on THIS driver that is an audit failure (B7) rather than
+    the kanban side's note. Asking for it in prose has been measured not to work, so it is
+    set where the child is spawned.
+    """
     cmd = ["hermes", "-p", profile, "chat", "--in", workdir,
            "-c", title, "--create-if-missing",
            "--query-file", prompt_file, "-Q", *model_args]
@@ -245,6 +234,8 @@ def run_turn(profile, prompt_file, *, workdir, title, model_args, skill, budget,
     with open(log_to, "w") as out:
         try:
             proc = subprocess.run(cmd, stdout=out, stderr=subprocess.STDOUT,
+                                  env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1",
+                                       "PYTEST_ADDOPTS": "-p no:cacheprovider"},
                                   timeout=(budget + 300) if budget else None)
         except subprocess.TimeoutExpired:
             # The card is over its ceiling. Reported as a card that wrote no result —
@@ -293,9 +284,9 @@ def run_card(*, code, card_id, body_file, role, skill, board, cfg, lane_cfg, lan
         os.remove(result_file)
     profile = lanes.assignee_for(role, cfg.get("assignees"))
     model = lanes.model_args(code, cfg, lane_cfg)
-    budget = duration_seconds(cfg.get("max-runtime")
-                              or board_schema.OPTIONS["max-runtime"][1])
-    title = f"{cfg['slug']} L{lane} {card_id}"
+    budget = board_schema.duration_seconds(cfg.get("max-runtime")
+                                           or board_schema.OPTIONS["max-runtime"][1])
+    title = session_title(cfg, lane, card_id, run)
     transcript = os.path.join(run, "cards", f"{card_id}.transcript.txt")
     log(run, f"{card_id}: {lanes.LABELS.get(code, code)} on @{profile} "
              f"({' '.join(model) or 'profile model'}) — session {title!r}")
@@ -415,7 +406,7 @@ def main():
     for option, why in sorted(UNHONOURED.items()):
         if cfg.get(option) not in (None, [], board_schema.OPTIONS[option][1]):
             log(run, f"NOT honoured: {option} = {json.dumps(cfg[option])} — {why}. "
-                     f"Run this board on mission/run.py for it.")
+                     f"Run this board on driver/run.py for it.")
     if args.rework and not state.get("held_gate"):
         raise SystemExit("no gate is held in this run — there is nothing to reject")
     if args.resume and state.get("held_gate"):
