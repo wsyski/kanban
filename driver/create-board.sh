@@ -290,21 +290,24 @@ print(" ".join(lanes.required_profiles(
     integration_tests=lanes.any_lane(cfg.get("integration-tests")))))
 PY
 ) || exit 1
-# Existence is the filesystem's answer, not a CLI run's. `hermes profile list` is display
-# output: a CLI that fails (a lock, a config error, a mid-update receipt) prints nothing, and
-# the old one-liner read that as "profile not available" — a silent failure dressed as a
-# missing profile, which is exactly how a board refused to file with all three profiles
-# present. The profiles root is HOME-anchored, the same root the core resolves, so test it
-# directly and let the CLI's own view be a note when the two disagree.
-for p in $REQUIRED; do
-  if [ "$p" != default ] && [ ! -d "$HOME/.hermes/profiles/$p" ]; then
-    echo "profile $p not available — no $HOME/.hermes/profiles/$p" >&2; exit 1
-  fi
-done
+# Existence: the filesystem answers first, and the CLI's own list is the other signal. The
+# old check was `hermes profile list | grep -q " $p "` alone, which read a CLI that printed
+# nothing (a lock, a config error, a mid-update receipt) as "profile not available" — a
+# board then refused to file with every profile present. The profiles root is HOME-anchored,
+# the same root the core resolves, so a profile on disk counts even when the CLI is silent
+# (that case is a note), and the CLI still counts for a profile rooted elsewhere (a test
+# stub, or a home that is not this one). Refuse only when neither signal has it.
 PROFILE_LIST=$(hermes profile list 2>/dev/null) || PROFILE_LIST=""
 for p in $REQUIRED; do
-  printf '%s\n' "$PROFILE_LIST" | grep -q "[[:space:]]$p[[:space:]]" || \
-    echo "note: 'hermes profile list' did not name $p (it is on disk; the CLI's view may be stale)" >&2
+  named=$(printf '%s\n' "$PROFILE_LIST" | grep -c "[[:space:]]$p[[:space:]]")
+  if [ "$p" = default ] || [ -d "$HOME/.hermes/profiles/$p" ]; then
+    [ "$named" -gt 0 ] || echo "note: 'hermes profile list' did not name $p (it is on disk; the CLI's view may be stale)" >&2
+  elif [ "$named" -gt 0 ]; then
+    :   # the CLI names it — accepted, e.g. a stub in a test or a profile under another home
+  else
+    echo "profile $p not available — no $HOME/.hermes/profiles/$p, and 'hermes profile list' did not name it" >&2
+    exit 1
+  fi
 done
 
 # Which model judges the goal-mode cards. Not a board option: it is each worker
