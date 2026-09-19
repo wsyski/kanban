@@ -299,10 +299,13 @@ PY
 # stub, or a home that is not this one). Refuse only when neither signal has it.
 PROFILE_LIST=$(hermes profile list 2>/dev/null) || PROFILE_LIST=""
 for p in $REQUIRED; do
-  named=$(printf '%s\n' "$PROFILE_LIST" | grep -c "[[:space:]]$p[[:space:]]")
+  # The grep sits in an `if`, never in a command substitution: `grep -c` exits 1 on a zero
+  # count and this script runs under `set -e`, which would abort it with no message at all.
   if [ "$p" = default ] || [ -d "$HOME/.hermes/profiles/$p" ]; then
-    [ "$named" -gt 0 ] || echo "note: 'hermes profile list' did not name $p (it is on disk; the CLI's view may be stale)" >&2
-  elif [ "$named" -gt 0 ]; then
+    if ! printf '%s\n' "$PROFILE_LIST" | grep -q "[[:space:]]$p[[:space:]]"; then
+      echo "note: 'hermes profile list' did not name $p (it is on disk; the CLI's view may be stale)" >&2
+    fi
+  elif printf '%s\n' "$PROFILE_LIST" | grep -q "[[:space:]]$p[[:space:]]"; then
     :   # the CLI names it — accepted, e.g. a stub in a test or a profile under another home
   else
     echo "profile $p not available — no $HOME/.hermes/profiles/$p, and 'hermes profile list' did not name it" >&2
