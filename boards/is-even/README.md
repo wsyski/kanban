@@ -94,6 +94,29 @@ researcher's to find — a worker's `python3` may not.
     and `"max-runtime": "25m"` — `P1` used 23.2 of it, so 12m and 20m would both have halted the
     board. The rig's configuration is in the KnowledgeBase note
     `docs/large-language-models/llama-server-configuration.md`.
+- **2026-09-19 — four local runs on this engine: three complete a lane, and the attach hand-off that
+  killed every earlier local run now passes.** Both rig models (`qwen38-27b`, `nex-n25-mini`, both on
+  `llama-swap`), both drivers:
+  - kanban + `qwen38-27b` (`runs/is-even-20260919-200510`): whole lane, 22.3 min of agent time
+    (`P1` 8.0, `I1` 5.0, `RVp1` 3.4, `TW1` 2.3, `C1` 1.8, `RVa1` 1.8). Audit exit 1 for one reason only —
+    `E2`/`E17`: *the repo moved from 2688978 to 7a72fbf while this run was live*. A doc commit landed
+    under the live run; that is the audit doing its job, not the board's.
+  - bots + `qwen38-27b` (`runs/bots-20260919-210517`): `ALL CARDS COMPLETE`, 6 cards, 31m48s of model
+    time (slowest `P1` 787s), audit **0 errors** — the first local bots run to pass.
+  - kanban + `nex-n25-mini` (`runs/is-even-20260919-210601`): whole lane **including a rework round**
+    (`C1-rev-1` 2.7 min, `RVa1-r2` 1.7 min), audit **0 errors**.
+  - bots + `nex-n25-mini` (`runs/bots-20260919-213338`): **HALT**. `C1` "changed" the tree by deleting
+    `from is_even import is_even` and leaving four tests calling an undefined name; `RVa1` REJECTed it
+    (correctly); the rework card `C1-rev-1` then wrote no result, claiming *"this session has no
+    filesystem/terminal tools exposed"*. Reproduced: the same spawn shape with a one-line prompt runs a
+    terminal command fine, and `C1` in that same run made 24 tool calls on the same model — the model
+    declared itself blocked rather than use the tools it had. `bots/audit.py` exited 1 with `B2` (`RVa1`,
+    `Gc1` never completed), `B3` (no result) and `B4` (final verdict not `PASS`). The driver halting
+    there is the contract working: the fix is the model or a re-run, not the engine.
+  - **`journalctl -u llama-swap` shows no llama.cpp fault in any of the four.** Requests all 200 and
+    3-57 s, context far below the ceiling, no truncation, no OOM. Note for next time: llama-swap's
+    stdout is a socket and `llama-swap.log` is written only at shutdown, so the journal is where the
+    rig's log actually lives.
 - **The goal judge is not the review pin.** `model_override`/`provider_override` moves the
   three review cards only; the goal judge is the auxiliary task `auxiliary.goal_judge`,
   pinned machine-wide in `/etc/hermes/config.yaml` to `z-ai/glm-5.3-flash` on `openrouter`,

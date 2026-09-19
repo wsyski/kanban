@@ -27,11 +27,20 @@ bots/audit.py --run boards/<slug>/runs/bots-<ts> [--json]
 
 Exit codes: **0** complete · **10** a gate is held for you · **1** halted.
 
-**Reset before a run, or the reviews have nothing to judge.** On a board whose work directory
-already holds the previous product, the cards legitimately conclude *NO CHANGE* and the final
-review returns that instead of `PASS` — which `audit.py` reports as `ERROR B4` (exit 1). That is
-the state, not a broken driver: `driver/reset.sh --board boards/<slug> --batch` first, and B4
-means what it says.
+**Reset before a run, or the reviews may have nothing to judge.** On a board whose work directory
+already holds the previous product, the cards legitimately conclude *NO CHANGE*; the final review
+then returns that instead of `PASS` — which `audit.py` reports as `ERROR B4` (exit 1). Measured
+both ways on one complete board: one run's review said `NO CHANGE` (B4), the next said `PASS` with
+notes (clean), so B4 here is a wording-of-the-verdict outcome, not a broken driver. Resetting first
+(`driver/reset.sh --board boards/<slug> --batch`) removes the ambiguity: the cards have real work,
+and B4 then means what it says.
+
+**A card that reports nothing halts the run** — `HALT — <card> reported nothing`, and the transcript
+path is printed beside it. That is the contract, not a crash. Seen once with a local model
+(2026-09-19, `nex-n25-mini` on a rework card): it declared *"this session has no filesystem/terminal
+tools exposed"* and wrote no result, while the same model in the same run had made 24 tool calls on
+the card it was revising. Read the transcript before suspecting the spawn — the toolset is identical
+for every card, so a model claiming it has none is telling you about itself.
 
 ## Files
 
