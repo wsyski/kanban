@@ -89,6 +89,16 @@ Gi(n)      ──REWORK───────→ I(n)-rev-N          → Gi(n)-r(
   for the idea gate's verdict (`held_by_verdict`). A `block --kind dependency` would not
   hold — the engine sends it to `todo` and `recompute_ready` promotes it back as soon as
   the parents are done (`kanban_db._route_block`).
+- **The hold is every review, not a list of kinds:** `held_by_verdict` reads the candidate's
+  parents from the *pruned* graph and holds it while the newest verdict from a review or gate
+  above it is a send-back — `REWORK` from `Gi`/`Gp`/`Gc`, `REJECT` from `RVp`/`RVa`/`RVc`. The
+  parent's completion is not enough: the round it sends back is filed later in the same tick, so a
+  child released on completion alone starts against work the review just rejected — measured
+  2026-09-19 (`is-even`, `nex-n25-mini`: `Gc1` unblocked 00:35:24, the code rework filed
+  00:35:26). Reading the graph rather than `lanes.LANE_CARDS` matters on a board with
+  `integration-tests: false`, where `Gc` is relinked to `RVa`. The trigger is a send-back, not
+  "anything that is not PASS", so a gate completing with unparsed prose cannot deadlock the cards
+  behind it (`tests/test_rework_loop.py`).
 - **Rendering:** a revision card is rendered exactly like the card it revises — same
   paths, workdir, ceiling and skill — plus the numbered findings and a pointer to the
   full verdict.
@@ -98,9 +108,10 @@ Gi(n)      ──REWORK───────→ I(n)-rev-N          → Gi(n)-r(
   evidence, a separate `test-fix.diff` that RVa checks against the plan), so a test
   defect C did not correct, filed against C, could never be fixed. No usable owner
   line means `C`.
-- On a lane with integration tests the code re-review also repeats the final review,
-  and `TI` waits until the newest implementation verdict is PASS. `P` stays parked while
-  the newest idea verdict is REWORK.
+- On a lane with integration tests the code re-review also repeats the final review. `P`, `TI` and
+  `Gc` are all held by the rule above: `P` while the idea gate's newest verdict is `REWORK`, `TI`
+  and `Gc` while the newest implementation verdict is `REJECT` — any of them starts on the `PASS`
+  that ends the round, and none of them during the tick that files it.
 - **Pins:** a re-review is a review, so it carries the same `model_override` as the
   review it repeats, and a revision card carries the model the card it repeats ran on
   (`lanes.model_args` with the lane's own header pair); otherwise a rework round would
@@ -191,6 +202,11 @@ how to read them.
   announced gates), before filing — filing can fail, and the next tick must not treat
   the new run's lanes as already open, carry the last run's drift into this run's
   summary, or skip announcing a gate whose title repeats across runs.
+- **A tick attaches before it promotes.** Hand-offs land in `artifacts/lane-<k>/` at the top of the
+  hand-off phase, ahead of the promotion loop's own `unblock`, because the dispatcher takes an
+  unblocked card the moment it is ready: an artifact a child reviews has to be on disk first.
+  Measured 2026-09-19 (`is-even`, `nex-n25-mini`): the plan was written 26 s *after* its review card
+  had started, which `run-audit.py` charges as `E3` (`attach_hand_offs`).
 - **Lane/run agreement.** Cards are filed with their run's paths in their bodies. A lane
   whose root card names a different run is refused before anything is archived, linked
   or written, and is never released: every hand-off would be written where nothing

@@ -993,18 +993,43 @@ def rework_answers(text, limit=4000):
     return re.sub(r"^\s*REWORK\b[\s:—–-]*", "", text or "", flags=re.IGNORECASE).strip()[:limit]
 
 
-def held_by_verdict(state, kind, lane):
-    """A card behind a verdict waits for the verdict, not only for the card.
+VERDICT_GATES = frozenset({"Gi", "Gp", "Gc"})
 
-    P follows the idea gate and TI the implementation review. Both parents
-    complete whatever they decided, so parents_done() alone let P start on an
-    idea the human had sent back (REWORK) and TI run against code RVa had
-    rejected — in the very tick that filed the rework round, before any hold.
+
+def verdict_parents(state, kind, lane):
+    """The parents of this candidate, from the *pruned* graph (the cards that hand it a verdict
+    rather than merely finishing). Read `lane_graph`, not LANE_CARDS: a board with
+    `integration-tests: false` relinks `Gc` to `RVa` when `RVc`/`TI` are archived."""
+    for _title, parents, k, ln in lane_graph(state):
+        if k == kind and ln == lane:
+            return parents or ()
+    return ()
+
+
+def verdict_sends_it_back(text):
+    """The parent's newest verdict asks for another round instead of passing: `REWORK` (the gates)
+    or `REJECT` (the reviews). Deliberately not "anything that is not PASS": a gate that completes
+    with unparsed prose must not deadlock every card behind it."""
+    return is_rework(text) or verdict_token(text) == "REJECT"
+
+
+def held_by_verdict(state, kind, lane):
+    """A card behind a review waits for that review's VERDICT, not only for its completion.
+
+    Every review and gate that hands a verdict down the graph — `RVp`, `RVa`, `RVc` and the gates
+    `Gi`/`Gp`/`Gc` — not a short list of card kinds: the parent that just finished may have sent the
+    work back, and its rework round is filed later in the same tick, so a child released on
+    completion alone starts against work the review just rejected. Measured 2026-09-19 (`is-even`,
+    `nex-n25-mini`): `Gc1` unblocked 00:35:24 and the code rework was filed 00:35:26 — the gate was
+    briefly ready against the code its own review had rejected. Cards behind non-verdict parents
+    (`RVa` behind `C`, `RVp` behind `P`) are unaffected: those parents finish, they do not judge.
     """
-    if kind == "p":
-        return is_rework(latest_verdict(state, lane, "Gi"))
-    if kind == "ti":
-        return verdict_token(latest_verdict(state, lane, "RVa")) != "PASS"
+    for parent in verdict_parents(state, kind, lane):
+        base = lanes.base_code(parent.split(":")[0])
+        if not (base.startswith("RV") or base in VERDICT_GATES):
+            continue
+        if verdict_sends_it_back(latest_verdict(state, lane, base)):
+            return True
     return False
 
 
@@ -2198,6 +2223,13 @@ def _tick():
     # 20 s poll apart, and the reason the run's own snapshot read as a leftover to
     # doc-chain's F3. `graph` is used only by the loop below, so this is its one home.
     graph = lane_graph(st)
+    # Hand-offs land BEFORE anything is unblocked. The promotion below calls
+    # `hermes kanban unblock`, and the dispatcher takes that card the moment it is ready — so an
+    # artifact a child reviews has to be on disk first, or the child starts against a tree that
+    # does not have it yet. Measured 2026-09-19 (`is-even`, `nex-n25-mini`): the plan landed in
+    # `artifacts/lane-1/` 26 s AFTER its review card had started, which `run-audit.py` charges as
+    # E3 — the review passed only because it read the plan once it appeared.
+    attach_hand_offs(st)
     # 1. handoff promotion: blocked card whose parents are all done -> unblock
     for title, parents, kind, lane in graph:
         card = st.get(title)
@@ -2278,8 +2310,8 @@ def _tick():
     # 1b. the document chain: a start record for every card that left the parked
     #     state, then one record per card as it finishes.
     record_chain_starts(st)
-    # Before the chain record: it reads the card's attachments as what the card produced.
-    attach_hand_offs(st)
+    # The attach ran at the top of this phase, before promotion — which also satisfies what this
+    # call needs: the chain record reads the card's attachments as what the card produced.
     record_chain_done(st)
     # 2. rework loops — FILE FIRST, so a round's cards are in the graph before
     #    promotion runs on the next card.

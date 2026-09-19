@@ -459,8 +459,49 @@ def test_ti_waits_until_the_implementation_review_passes():
     assert not run.held_by_verdict(st, "ti", 1)
 
 
-def test_other_cards_are_never_held_by_a_verdict():
-    assert not run.held_by_verdict(full_lane_state(), "tw", 1)
+def test_the_code_gate_waits_until_the_code_review_passes():
+    """The gate is behind the same verdict the rework round is filed from: a REJECT files that
+    round later in the tick, so a gate released on the parent's completion alone starts against
+    the tree the review just rejected. Measured 2026-09-19 (`is-even`, nex-n25-mini): `Gc1`
+    unblocked 00:35:24 and the code rework was filed 00:35:26."""
+    st = full_lane_state()
+    st[lanes.card_title("RVc", 1)].update(status="done", result="REJECT: 1. x", completed_at=10)
+    assert run.held_by_verdict(st, "gc", 1)
+    st["RVc1-r2: integration review round 2 - lane 1"] = card(
+        "RVc1-r2", status="done", result="PASS: ok", completed_at=20)
+    assert not run.held_by_verdict(st, "gc", 1)
+
+
+def test_the_plan_gate_waits_until_the_plan_review_passes():
+    st = full_lane_state()
+    st[lanes.card_title("RVp", 1)].update(status="done", result="REJECT: 2. y", completed_at=10)
+    assert run.held_by_verdict(st, "gp", 1)
+    st["RVp1-r2: plan review round 2 - lane 1"] = card(
+        "RVp1-r2", status="done", result="PASS: ok", completed_at=20)
+    assert not run.held_by_verdict(st, "gp", 1)
+
+
+def test_a_card_behind_a_non_verdict_parent_is_never_held():
+    """`P` and `C` finish, they do not judge: the cards behind them start on completion."""
+    st = full_lane_state()
+    st[lanes.card_title("P", 1)].update(status="done", result="plan written", completed_at=10)
+    assert not run.held_by_verdict(st, "rvp", 1)
+    st[lanes.card_title("C", 1)].update(status="done", result="CHANGED: x", completed_at=20)
+    assert not run.held_by_verdict(st, "rva", 1)
+
+
+def test_every_gate_holds_its_children_until_it_passes():
+    """The rule is every review and gate, not a list of card kinds: a `Gp` that sent the plan back
+    leaves `TW` and `C` waiting for the round that fixes it, in the very tick the round is filed."""
+    st = full_lane_state()
+    st[lanes.card_title("Gp", 1)].update(status="done", result="REWORK: plan is thin",
+                                         completed_at=10)
+    assert run.held_by_verdict(st, "tw", 1)
+    assert run.held_by_verdict(st, "c", 1)
+    st["Gp1-r2: plan re-gate round 2 - lane 1"] = card(
+        "Gp1-r2", status="done", result="PASS", completed_at=20)
+    assert not run.held_by_verdict(st, "tw", 1)
+    assert not run.held_by_verdict(st, "c", 1)
 
 
 # --- rework rounds point at the full verdict; IT lanes re-run the final review

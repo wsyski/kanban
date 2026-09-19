@@ -376,3 +376,82 @@ numbers and the driver's last line totals them.
 - A run is auditable while its driver serves. `start-board.sh` stays up after
   `ALL GATES COMPLETE`, and `run-audit.py` exits 0 on this run with the driver alive; the
   mid-flight E1 line is about the RUN's banner, not about the process.
+
+## 12. Layering, a green CI, and both local models on both drivers — 2026-09-19
+
+**The tree has three layers now.** `template/` is what BOTH drivers import (`lanes.py`,
+`board_schema.py`, `card_render.py`, `driver_lock.py`, `card-bodies/`, `roles/`); `driver/` is the
+kanban driver's own (the loop, `file_lanes.py`, `run-audit.py`, the reports, the `*.sh` doors);
+`bots/` stays the second driver; `tests/` and `./test.sh` sit at the repo root. `tests/test_layer_boundary.py`
+holds the rule: every file is classified, shared-layer imports must not cross, and bots imports
+`template/` only. Same change folded the run's paths into `RunState` — the last `global` in `run.py`
+is gone — gave both drivers one duration parser and one driver lock, and fixed the swallowed
+exceptions that made a bad token invisible.
+
+**CI exists, and the first red run was the useful one.** `.github/workflows/ci.yml` runs the suite,
+`render-flow.py --check`, a schema check of every shipped board and a bots dry run on push, PRs and
+manual dispatch. Its schema step validated boards with the strict form, which requires an explicit
+`default-workdir` to exist *on the validating machine* — a runner is not the board's host, so
+`arena-federated-search` could never pass. `--any-host` now drops exactly that half and keeps every
+declaration check; the door scripts keep the strict default because they do run on the board's host.
+
+**`create-board.sh` no longer reads a CLI hiccup as a missing profile.** The pre-flight was
+`hermes profile list | grep -q " $p "`, so a CLI that printed nothing (a lock, a config error, a
+mid-update receipt) refused to file a board with every profile present — seen live, as
+`profile coder not available`. Existence now comes from `~/.hermes/profiles/<p>` (the root the core
+resolves) with the CLI's list as the second signal, and the note when they disagree. Two follow-up
+commits came from the failures: the grep must not sit in a command substitution (`grep -c` exits 1 on
+a zero count, and `set -e` then aborts with no message at all), and the CLI's list must stay a valid
+signal, because it is how three suites stub a profile.
+
+**Receipts, and the traps that cost the time.** Record `wc -l < boards/<slug>/runs/driver.log` before
+arming — the log is append-only across runs, so `grep "ALL GATES COMPLETE"` matches a *stale* banner
+and the next step kills a live driver. `run-audit.py` needs `--runs <run-dir>`. Never let an exit code
+pass through a pipe (`cmd | tail; echo $?` prints tail's). One driver at a time (the bots driver takes
+the same lock). And do not commit under a live run: the driver warns that the repo moved, and
+`run-audit.py` charges it as E2/E17. That last one is measured here, not theory — the doc commit
+`7a72fbf` landed mid-run and the qwen kanban run's audit carries those two errors to this day.
+
+**`reset.sh` does not empty `work/`.** It archives the cards and re-files them; nothing in the engine
+deletes the work tree (a product may be the input of a follow-up fix). So a run over an existing
+product legitimately ends with `NO CHANGE` verdicts and a final review saying `NO CHANGE`, which
+`bots/audit.py` reports as `ERROR B4` — measured both ways on one complete board (one run `NO CHANGE`,
+the next `PASS` with notes), so B4 is the verdict's wording, not a broken driver. Emptying `work/` for
+a from-scratch run is a human's own action, never a card's, `reset.sh`'s or a driver's.
+
+**Both rig models on both drivers — `qwen38-27b` and `nex-n25-mini`.** Three of four stages complete a
+lane, and the attach hand-off that killed every local run in §6 now passes: the driver attaches
+(`attached refined.md to I1`), so a local worker never copies base64 out of its own output. kanban+`qwen38-27b`
+whole lane in 22.3 min of agent time (its audit carries only the mid-run-commit errors above);
+bots+`qwen38-27b` `ALL CARDS COMPLETE`, 6 cards, 31m48s of model time, audit **0 errors** — the first
+local bots run to pass; kanban+`nex-n25-mini` whole lane **including a rework round**, audit **0 errors**;
+bots+`nex-n25-mini` **halted** — `C1` deleted `from is_even import is_even` and left four tests calling
+an undefined name, `RVa1` REJECTed it, and the rework card then wrote no result while claiming *"this
+session has no filesystem/terminal tools exposed"*. Reproduced: the same spawn shape runs a terminal
+command fine, and `C1` in that same run made 24 tool calls on the same model — the model declared
+itself blocked rather than use the tools it had, and halting is the contract working.
+`journalctl -u llama-swap` shows no llama.cpp fault in any of the four (llama-swap's stdout is a socket
+and `llama-swap.log` is written only at shutdown, so the journal is where the rig's log is).
+
+**The same battery with `work/` cleared before every stage — the state that gives the cards real
+work.** kanban+`qwen38-27b`: audit **0**. bots+`qwen38-27b`: `ALL CARDS COMPLETE`, 6 cards, 57m59s of
+model time, audit **0**. bots+`nex-n25-mini`: `ALL CARDS COMPLETE`, 6 cards, **16m03s** — a third of
+qwen's time, with `TW1` staging the tests against the expected failing collection, `C1` implementing
+all four steps and `RVa1` `PASS` first time, audit **0** (the halt above does not reproduce once the
+board has work: that run's rework prompt was aimed at a tree where nothing needed changing).
+kanban+`nex-n25-mini` finished the lane in wall 25.7 / agent 19.1 min and its audit carried exactly
+one error — `E3: F2 RVp1 lane 1: PLAN written 23:42:54 after the card started 23:42:29`. That is a
+race in the driver, not in the model: the tick unblocked children and only then attached hand-offs,
+so the plan landed 26 s after its review had been dispatched. `attach_hand_offs` now runs before the
+promotion loop, and the lane was re-run to confirm `E3` is gone.
+
+**One more ordering fix, from the same window.** With the gate released in that window, a `REJECT`
+left `Gc1` briefly `ready` against the code its own review had just rejected: `held_by_verdict` —
+the hold that keeps `P` behind a `REWORK` and `TI` behind a `REJECT` — covered only those two card
+kinds, so nothing held the gates. It is now the rule for **every** review and gate: read the
+candidate's parents from the *pruned* lane graph, and hold while the newest verdict from a review
+or gate above it is a send-back (`REWORK` from `Gi`/`Gp`/`Gc`; `REJECT` from `RVp`/`RVa`/`RVc`).
+A send-back is the trigger rather than "anything that is not `PASS`", so a gate that completes with
+unparsed prose cannot deadlock the cards behind it — that distinction is why two `test_open_lane`
+cases stayed green. Reading the graph rather than `lanes.LANE_CARDS` is what keeps `Gc` correct on
+a board with `integration-tests: false`, where it is relinked to `RVa`. Suite **713**.

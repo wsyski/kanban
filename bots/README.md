@@ -27,13 +27,14 @@ bots/audit.py --run boards/<slug>/runs/bots-<ts> [--json]
 
 Exit codes: **0** complete · **10** a gate is held for you · **1** halted.
 
-**Reset before a run, or the reviews may have nothing to judge.** On a board whose work directory
-already holds the previous product, the cards legitimately conclude *NO CHANGE*; the final review
-then returns that instead of `PASS` — which `audit.py` reports as `ERROR B4` (exit 1). Measured
-both ways on one complete board: one run's review said `NO CHANGE` (B4), the next said `PASS` with
-notes (clean), so B4 here is a wording-of-the-verdict outcome, not a broken driver. Resetting first
-(`driver/reset.sh --board boards/<slug> --batch`) removes the ambiguity: the cards have real work,
-and B4 then means what it says.
+**On a board whose product is already built, expect `NO CHANGE`.** `reset.sh` archives the cards and
+re-files them; it does **not** empty `work/` — nothing in the engine deletes that tree (a run's
+product may be the input of a follow-up fix, and DESIGN keeps it a human's own `rm`). So a board run
+over an existing product legitimately ends with the cards reporting nothing needed changing, and the
+final review returning `NO CHANGE` instead of `PASS`, which `audit.py` reports as `ERROR B4` (exit 1).
+Measured both ways on one complete board: one run's review said `NO CHANGE` (B4), the next said `PASS`
+with notes (clean) — so B4 here is the wording of the verdict, not a broken driver. Whether to empty
+`work/` for a from-scratch run is your call, made outside the engine.
 
 **A card that reports nothing halts the run** — `HALT — <card> reported nothing`, and the transcript
 path is printed beside it. That is the contract, not a crash. Seen once with a local model
