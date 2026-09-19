@@ -361,6 +361,22 @@ def test_a_board_owned_work_directory_asks_none_of_this():
     assert board_schema.workdir_problems({}) == []
 
 
+def test_any_host_validates_a_board_whose_workdir_is_absent(tmp_path):
+    """A CI runner is not the board's host: an owner's absolute `default-workdir` cannot be
+    there, so the existence half must be switchable off — without weakening the declaration
+    checks, which is what the strict default (previous test) keeps doing."""
+    cfg = {"slug": "b", "default-workdir": str(tmp_path / "nope")}
+    assert board_schema.workdir_problems(cfg, any_host=True) == []
+    manifest = tmp_path / "board.json"
+    manifest.write_text(json.dumps(cfg))
+    assert subprocess.run([sys.executable, SCRIPT, "--any-host", str(manifest)]).returncode == 0
+    assert subprocess.run([sys.executable, SCRIPT, str(manifest)]).returncode != 0
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps(dict(cfg, **{"goal-cards": "C"})))
+    assert subprocess.run([sys.executable, SCRIPT, "--any-host", str(bad)]).returncode != 0
+    assert subprocess.run([sys.executable, SCRIPT, "--any-host"]).returncode != 0
+
+
 def test_a_dirty_index_in_the_work_directory_is_a_notice_not_a_fault(tmp_path):
     """USER RULE (2026-09-12): the board promises nothing about the work directory's
     contents — staged and unstaged files alike are the lane's working material — so a

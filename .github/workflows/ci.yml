@@ -34,10 +34,12 @@ jobs:
       - name: diagrams still match the card graph
         run: python3 driver/render-flow.py --check
 
+      # --any-host: the runner is not the board's host, so an owner's absolute
+      # default-workdir cannot exist here; the declaration is what this checks.
       - name: every shipped board validates against the option schema
         run: |
           for b in boards/*/board.json; do
-            python3 template/board_schema.py "$b"
+            python3 template/board_schema.py --any-host "$b"
           done
 
       # Renders every card of a shipped board without spawning a session, so a template body

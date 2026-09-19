@@ -515,8 +515,13 @@ def review_model_notices(cfg, *, where="board.json"):
             f"so a verdict no longer comes from a different one"]
 
 
-def workdir_problems(cfg, *, where="board.json"):
+def workdir_problems(cfg, *, where="board.json", any_host=False):
     """Faults in an explicit `default-workdir` that only the filesystem can answer.
+
+    `any_host=True` drops the existence half and keeps every other check: a CI runner is
+    not the board's host, so an absolute path that names the owner's tree cannot be there
+    by design, while the declaration itself is still worth validating. The default stays
+    strict for the door scripts, which do run on the board's host.
 
     Kept out of `validate` because it touches disk: the pure checks have to run on
     any machine (a test, a review of someone else's board), while these are about
@@ -530,7 +535,7 @@ def workdir_problems(cfg, *, where="board.json"):
     run's product, or years of someone else's project.
     """
     wd = cfg.get("default-workdir")
-    if not wd:
+    if not wd or any_host:
         return []
     if not os.path.isdir(wd):
         return [f"{where}: 'default-workdir' {wd} does not exist on this host — an "
@@ -539,10 +544,11 @@ def workdir_problems(cfg, *, where="board.json"):
     return []
 
 
-def validate_or_die(path):
+def validate_or_die(path, *, any_host=False):
     """Print every problem with the file at `path` and exit non-zero, or return
     it. The pre-flight form, for the scripts. A `.md` path is an idea file and is
-    judged on its headers; anything else is a manifest."""
+    judged on its headers; anything else is a manifest. `any_host` drops only the
+    workdir-existence check (see `workdir_problems`)."""
     if path.endswith(".md"):
         try:
             with open(path) as f:
@@ -561,7 +567,7 @@ def validate_or_die(path):
         sys.exit(f"{path}: {e.strerror}")
     except json.JSONDecodeError as e:
         sys.exit(f"{path}: not valid JSON — {e.msg} at line {e.lineno}")
-    problems = validate(cfg, where=path) + workdir_problems(cfg, where=path)
+    problems = validate(cfg, where=path) + workdir_problems(cfg, where=path, any_host=any_host)
     # Notices never fail a door: the work directory's CONTENTS are not a fault.
     for notice in workdir_notices(cfg, where=path) + review_model_notices(cfg, where=path):
         print(f"note: {notice}")
@@ -674,6 +680,10 @@ def schema_is_current(path=None):
 USAGE = """template/board_schema.py — validate a board's files against the schema
 
   board_schema.py <board.json|lane-<k>.md>...   validate each; non-zero on any fault
+  board_schema.py --any-host <board.json>...    validate the declaration only — skip the
+                                            workdir-existence check (a CI runner is not
+                                            the board's host, so an owner's absolute
+                                            path cannot be there by design)
   board_schema.py --schema                      print the option table
   board_schema.py --jsonschema                  print the manifest's JSON Schema
   board_schema.py --write-schema [path]         (re)generate it, for editors
@@ -704,6 +714,11 @@ if __name__ == "__main__":
         else:
             sys.exit(f"{target or SCHEMA_PATH} is stale — regenerate it with "
                      f"`template/board_schema.py --write-schema`")
+    elif args[0] == "--any-host":
+        if len(args) < 2:
+            sys.exit("--any-host needs at least one <board.json|lane-<k>.md>")
+        for path in args[1:]:
+            validate_or_die(path, any_host=True)
     else:
         for path in args:
             validate_or_die(path)
