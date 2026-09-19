@@ -48,7 +48,7 @@ What the template consists of:
 | file | role |
 |---|---|
 | `template/lanes.py` | card graph and idea parsing |
-| `template/board_schema.py` | the board's options: one declaration, and the validator all three doors run |
+| `template/board_schema.py` | the board's options: one declaration, and the validator all three doors run (`--any-host` validates a board whose `default-workdir` lives on another machine — CI) |
 | `template/card_render.py` | what a card body SAYS, and where a lane's hand-offs live — shared by both drivers |
 | `template/driver_lock.py` | the board's one driver lock: stale holder taken over, live holder refused |
 | `driver/file_lanes.py` | the kanban filing half (`hermes kanban create`, the idea cards, the run-id mint) |
@@ -106,7 +106,11 @@ still works a card. Only *notification* delivery needs a running gateway: the
 | `trader` | no card |
 
 Gates have no profile — a person completes them, or the driver does with `auto-gates`.
-`create-board.sh` derives the profiles a board needs from its manifest. The SOULs, the
+`create-board.sh` derives the profiles a board needs from its manifest and checks they are
+there before filing anything: a profile on disk (`~/.hermes/profiles/<name>`, the root the
+core itself resolves) counts even when `hermes profile list` is silent about it — that silence
+is a note, not a refusal, because a CLI that failed must not read as a missing profile. The CLI's
+list still counts for a profile rooted elsewhere. The SOULs, the
 drift check and the install commands are in [template/roles/](template/roles/README.md);
 why one work profile is enough is in [DESIGN.md](DESIGN.md#profiles-and-the-worker-contract).
 

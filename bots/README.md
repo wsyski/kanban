@@ -27,6 +27,12 @@ bots/audit.py --run boards/<slug>/runs/bots-<ts> [--json]
 
 Exit codes: **0** complete · **10** a gate is held for you · **1** halted.
 
+**Reset before a run, or the reviews have nothing to judge.** On a board whose work directory
+already holds the previous product, the cards legitimately conclude *NO CHANGE* and the final
+review returns that instead of `PASS` — which `audit.py` reports as `ERROR B4` (exit 1). That is
+the state, not a broken driver: `driver/reset.sh --board boards/<slug> --batch` first, and B4
+means what it says.
+
 ## Files
 
 | | |
