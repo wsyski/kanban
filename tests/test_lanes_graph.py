@@ -56,6 +56,11 @@ def test_assignees_and_skills():
     assert by_code["I"]["skill"] is None
     assert by_code["TW"]["skill"] == "test-driven-development"
     assert by_code["C"]["skill"] is None
+    # Both code reviews run the hub's ocr-review skill: RVa over the tree the C and TW
+    # cards staged, RVc over the tree the gate receives.
+    assert by_code["RVa"]["skill"] == "ocr-review"
+    assert by_code["RVc"]["skill"] == "ocr-review"
+    assert by_code["RVp"]["skill"] is None
 
 
 def test_the_graph_is_the_chain_plus_the_one_declared_fork():
@@ -79,6 +84,8 @@ def test_the_graph_is_the_chain_plus_the_one_declared_fork():
 def test_skill_for_reads_the_lane_table():
     assert lanes.skill_for("P") == "writing-plans"
     assert lanes.skill_for("C") is None
+    assert lanes.skill_for("RVa") == "ocr-review"
+    assert lanes.skill_for("RVc") == "ocr-review"
 
 
 # ---- lane chaining: lane N+1 waits for lane N's code gate ------------------

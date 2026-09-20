@@ -160,6 +160,18 @@ def test_card_sessions_leave_their_profile_alone():
         assert "Do not write profile memories or create, patch or delete skills" in read(body), body
 
 
+def test_both_code_reviews_run_ocr_review():
+    """RVa and RVc force-load `ocr-review` (lanes.LANE_CARDS), so their bodies must ASK for
+    the dispatch — the worker contract permits only a dispatch the card asks for — and must
+    keep the verdict theirs: a finding is evidence for the card's own checks, never a
+    rejection ground of its own."""
+    for body in ("rva-body.txt", "rvc-body.txt"):
+        text = read(body)
+        assert "OCR-REVIEW" in text, body
+        assert "EVIDENCE" in text, body
+        assert "read-only" in text, body
+
+
 def test_nothing_temporary_is_written_outside_runs():
     """`work/` is what a human receives; every transient — scratch, patches,
     review files — lives under `<RUNS>/scratch/<card>/` (user rule)."""

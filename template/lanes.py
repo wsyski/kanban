@@ -24,7 +24,7 @@ LANE_CARDS = [
     ("Gp",  "gp-body.txt",  "human-gate", "RVp", None),
     ("TW",  "tw-body.txt",  "coder",      "Gp",  "test-driven-development"),
     ("C",   "c-body.txt",   "coder",      "Gp",  None),
-    ("RVa", "rva-body.txt", "coder",      "C",   None),
+    ("RVa", "rva-body.txt", "coder",      "C",   "ocr-review"),
     # The integration level is CODER work, not tester work: an end-to-end run is in
     # effect a review OF the whole deliverable, so the errors it uncovers are
     # main-code errors — and they may sit anywhere, including code the earlier review
@@ -34,7 +34,7 @@ LANE_CARDS = [
     # independent: RVc reviews the tree the gate receives (its check (e)), so the card
     # that authored the tests and the fixes never certifies them.
     ("TI",  "ti-body.txt",   "coder",     "RVa", None),
-    ("RVc", "rvc-body.txt", "coder",      "TI",  None),
+    ("RVc", "rvc-body.txt", "coder",      "TI",  "ocr-review"),
     ("Gc",  "gc-body.txt",  "human-gate", "RVc", None),
 ]
 
@@ -223,6 +223,29 @@ def required_profiles(assignees=None, refinement=True, unit_tests=True,
             continue
         out.add(assignee_for(role, remap))
     return sorted(out)
+
+
+def required_skills(assignees=None, refinement=True, unit_tests=True,
+                    integration_tests=True):
+    """{profile: [skill, ...]} — every skill this board force-loads, under the profile
+    that has to hold it.
+
+    create-board.sh's pre-flight asks this for the reason it asks required_profiles: a
+    card whose skill is missing from its profile, or switched off there, still files and
+    still runs. It just runs WITHOUT the skill — the plan card without the plan format,
+    a review card without ocr-review — and nothing says so until a review reads worse
+    than the last one. A missing profile stops a board; a missing skill only degrades it,
+    so this is a note at creation rather than a refusal.
+    """
+    codes = {c["code"] for c in lane_cards(1, integration_tests=integration_tests,
+                                           unit_tests=unit_tests,
+                                           refinement=refinement)}
+    out = {}
+    for code, _body, role, _parent, skill in LANE_CARDS:
+        if not skill or code not in codes:
+            continue
+        out.setdefault(assignee_for(role, assignees or {}), set()).add(skill)
+    return {profile: sorted(skills) for profile, skills in sorted(out.items())}
 
 
 def max_reworks(cfg=None):

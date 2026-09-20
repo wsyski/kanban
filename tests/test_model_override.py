@@ -50,6 +50,19 @@ def test_required_profiles_is_the_profiles_that_spawn():
     assert lanes.required_profiles() == ["coder", "researcher"]
 
 
+def test_required_skills_is_what_each_profile_must_hold():
+    """The pre-flight's second list: the skills the cards FORCE-LOAD, under the profile
+    that has to hold them. A missing profile stops a board; a missing skill only makes a
+    card run without it, which is why this one is a note."""
+    assert lanes.required_skills() == {
+        "coder": ["ocr-review", "test-driven-development", "writing-plans"]}
+    # Both code reviews carry ocr-review, so dropping the unit-test card loses only its own.
+    assert lanes.required_skills(unit_tests=False) == {
+        "coder": ["ocr-review", "writing-plans"]}
+    assert lanes.required_skills({"coder": "senior"}) == {
+        "senior": ["ocr-review", "test-driven-development", "writing-plans"]}
+
+
 def test_required_profiles_follows_a_remap():
     req = lanes.required_profiles({"researcher": "senior", "human-gate": "gatekeeper"})
     assert "senior" in req and "researcher" not in req
@@ -339,18 +352,34 @@ CREATE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))
                       "create-board.sh")
 
 
-def _stub_hermes(tmp_path, profiles):
-    """A `hermes` that answers `profile list` and refuses everything else, so the
-    test stops at the pre-flight instead of touching a real profile or board."""
+def _stub_hermes(tmp_path, profiles, skills=("writing-plans", "test-driven-development",
+                                             "ocr-review")):
+    """A `hermes` that answers `profile list` and `skills list` and refuses everything
+    else, so the test stops at the pre-flight instead of touching a real profile or board.
+
+    `skills` is what every profile reports as ENABLED. It is answered by the stub rather
+    than left to the host because the pre-flight's second signal is the filesystem, and a
+    host that happens to hold a skill would decide the test."""
     d = tmp_path / "bin"
     d.mkdir(exist_ok=True)
     rows = "".join(f"  {p} deepseek stopped\\n" for p in profiles)
+    # The real CLI renders a rich table and TRUNCATES a name that outgrows the column,
+    # so the stub renders the same cells — and the caller may pass an already-truncated
+    # name to exercise the prefix match. `printf '%b'` because the row separators are
+    # escapes: `%s` would print a literal backslash-n and the table would be one line.
+    skill_rows = ("\u250f Name \u2513\\n"
+                  + "".join(f"\u2502 {s} \u2502 local \u2502 enabled \u2502\\n"
+                            for s in skills))
     stub = d / "hermes"
     stub.write_text("#!/usr/bin/env bash\n"
                     'if [ "$1" = "profile" ] && [ "$2" = "list" ]; then\n'
                     f"  printf '%s' '{rows}'\n"
                     "  exit 0\n"
                     "fi\n"
+                    'case " $* " in *" skills list"*)\n'
+                    f"  printf '%b' '{skill_rows}'\n"
+                    "  exit 0 ;;\n"
+                    "esac\n"
                     'echo "stub hermes: unhandled $*" >&2\n'
                     "exit 9\n")
     stub.chmod(0o755)
@@ -368,9 +397,11 @@ def _board_dir(tmp_path, **cfg):
     return d
 
 
-def _run_create(tmp_path, board_dir, profiles):
+def _run_create(tmp_path, board_dir, profiles, skills=None):
     env = dict(os.environ)
-    env["PATH"] = str(_stub_hermes(tmp_path, profiles)) + os.pathsep + env["PATH"]
+    stub = (_stub_hermes(tmp_path, profiles) if skills is None
+            else _stub_hermes(tmp_path, profiles, skills))
+    env["PATH"] = str(stub) + os.pathsep + env["PATH"]
     env["HERMES_HOME"] = str(tmp_path / ".hermes")
     r = subprocess.run([CREATE, "--board", str(board_dir)],
                        capture_output=True, text=True, env=env)
@@ -386,6 +417,53 @@ def test_the_pre_flight_accepts_a_board_whose_roles_resolve_to_real_profiles(tmp
                             ["coder", "researcher"])
     assert "== pre-flight ==" in out, out
     assert "not available" not in out, out
+
+
+def test_the_pre_flight_reports_the_skill_each_card_force_loads(tmp_path):
+    """The wiring is said out loud at creation, where it can still be fixed — the same
+    reason the goal judge is printed there."""
+    code, out = _run_create(tmp_path, _board_dir(tmp_path), ["coder", "researcher"])
+    for skill in ("writing-plans", "test-driven-development", "ocr-review"):
+        assert f"skill {skill} (profile coder): enabled" in out, out
+    assert "has no enabled skill" not in out, out
+
+
+def test_the_pre_flight_notes_a_skill_the_profile_does_not_have(tmp_path):
+    """A card whose skill is missing or switched off runs WITHOUT it and says nothing —
+    the review that follows is simply worse. The note is the only warning there is, and
+    it names the repair. `ocr-review` is the probe because the hub forbids a name in both
+    `skills/` and `manual-skills/`, so no host has it where the filesystem signal looks."""
+    code, out = _run_create(tmp_path, _board_dir(tmp_path), ["coder", "researcher"],
+                            skills=("writing-plans", "test-driven-development"))
+    assert "profile coder has no enabled skill 'ocr-review'" in out, out
+    assert "/skill-sync" in out, out
+    assert "not available" not in out, out      # a note, never the refusal
+
+
+def test_the_pre_flight_reads_a_truncated_name_as_the_skill_it_names(tmp_path):
+    """`skills list` sizes its columns to the longest name, so a long one arrives cut
+    with an ellipsis. The cell is a PREFIX of the name, never the name, and assuming a
+    width would turn an enabled skill into a false note on the next profile."""
+    code, out = _run_create(tmp_path, _board_dir(tmp_path), ["coder", "researcher"],
+                            skills=("writing-plans", "test-driven-develop\u2026", "ocr-review"))
+    assert "skill test-driven-development (profile coder): enabled" in out, out
+    assert "has no enabled skill" not in out, out
+
+
+def test_a_skill_the_profile_disabled_is_not_rescued_by_the_filesystem(tmp_path):
+    """The case this check exists for: a skill switched off in the profile is still ON
+    DISK, so a filesystem probe reports it present and the note never fires. Only the CLI
+    knows what is disabled, so its answer is believed whenever it gives one — the disk is
+    read only when it says nothing at all. The skill is planted here rather than assumed,
+    so the test proves the precedence instead of the absence of a file."""
+    disabled = tmp_path / ".hermes" / "skills" / "autonomous-ai-agents" / "ocr-review"
+    disabled.mkdir(parents=True)
+    (disabled / "SKILL.md").write_text("---\nname: ocr-review\n---\n")
+    code, out = _run_create(tmp_path, _board_dir(tmp_path), ["coder", "researcher"],
+                            skills=("writing-plans", "test-driven-development"))
+    assert "profile coder has no enabled skill 'ocr-review'" in out, out
+    assert "on disk" not in out, out
+    assert "/skill-sync" in out, out
 
 
 def test_the_pre_flight_refuses_a_remap_to_a_profile_that_is_not_there(tmp_path):

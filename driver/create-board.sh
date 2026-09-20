@@ -313,6 +313,69 @@ for p in $REQUIRED; do
   fi
 done
 
+# The skills the cards FORCE-LOAD, checked where the profiles were. A card whose skill
+# is missing from its profile, or switched off there, files and runs perfectly — without
+# the skill. That degrades a review or a plan instead of stopping the board, so this is a
+# note, never a refusal. Two signals again, and the CLI is the first one here because only
+# it knows what a profile has DISABLED; the filesystem answers when it is silent.
+SKILLS_WANTED=$(python3 - "$REPO" "$BOARD_DIR" <<'PYEOF'
+import json, os, sys
+repo, board_dir = sys.argv[1:3]
+sys.path.insert(0, os.path.join(repo, "driver"))      # file_lanes lives here
+sys.path.insert(0, os.path.join(repo, "template"))    # the shared layer
+import lanes
+manifest = os.path.join(board_dir, "board.json")
+cfg = json.load(open(manifest)) if os.path.exists(manifest) else {}
+for profile, skills in lanes.required_skills(
+        cfg.get("assignees"),
+        refinement=lanes.any_lane(cfg.get("refinement")),
+        unit_tests=lanes.any_lane(cfg.get("unit-tests")),
+        integration_tests=lanes.any_lane(cfg.get("integration-tests"))).items():
+    print(f"{profile} {','.join(skills)}")
+PYEOF
+) || exit 1
+HERMES_ROOT="${HERMES_HOME:-$HOME/.hermes}"
+if [ -n "$SKILLS_WANTED" ]; then
+  while read -r p skills; do
+    ENABLED=$(hermes -p "$p" skills list --enabled-only </dev/null 2>/dev/null || true)
+    # The CLI's answer is the authoritative one when it speaks: it alone accounts for
+    # `skills.disabled` and for `external_dirs`, and a skill switched off in the profile
+    # is still ON DISK — believing the filesystem then would report the one case this
+    # check exists for as fine. The filesystem is consulted only when the CLI said
+    # nothing at all (a lock, a config error, a stub), which is the profile check's idiom.
+    # `skills list` renders a table whose column width follows the longest name, so a long
+    # name arrives truncated with an ellipsis: each NAME CELL is compared as a prefix of
+    # the skill wanted, never the other way round, and no width is assumed.
+    NAMES=$(printf '%s\n' "$ENABLED" | awk -F'│' 'NF > 1 { gsub(/[[:space:]]/, "", $2);
+                                                   if ($2 != "" && $2 != "Name") print $2 }')
+    for s in $(printf '%s' "$skills" | tr ',' ' '); do
+      found=
+      for n in $NAMES; do
+        n=${n%…}
+        [ -n "$n" ] || continue
+        case "$s" in "$n"*) found="enabled"; break ;; esac
+      done
+      if [ -z "$found" ] && [ -z "$ENABLED" ]; then
+        for d in "$HERMES_ROOT/profiles/$p/skills"/*/"$s" "$HERMES_ROOT/profiles/$p/skills/$s" \
+                 "$HERMES_ROOT/skills"/*/"$s" "$HERMES_ROOT/skills/$s" "$HOME/.agents/skills/$s"; do
+          [ -f "$d/SKILL.md" ] && { found="on disk ('hermes skills list' said nothing)"; break; }
+        done
+      fi
+      if [ -n "$found" ]; then
+        echo "skill $s (profile $p): $found"
+      else
+        echo "note: profile $p has no enabled skill '$s' — the card that force-loads it" \
+             "runs without it. Run /skill-sync in that profile." >&2
+      fi
+    done
+    case ",$skills," in
+      *,ocr-review,*)
+        command -v ocr >/dev/null 2>&1 || \
+          echo "note: ocr is not on PATH — the review cards fall back to git for scope" >&2 ;;
+    esac
+  done <<< "$SKILLS_WANTED"
+fi
+
 # Which model judges the goal-mode cards. Not a board option: it is each worker
 # profile's resolved `auxiliary.goal_judge` (a managed /etc/hermes pin wins), and no
 # `hermes kanban create` flag carries it — so say it here, where it can still be fixed.
