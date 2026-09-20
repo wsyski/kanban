@@ -1,12 +1,11 @@
-"""The layer boundary, enforced: `template/` is what both drivers import; `driver/` is the
-kanban driver's own; `bots/` is the second driver.
+"""The layer boundary, enforced: `template/` is what the driver imports; `driver/` is the
+kanban driver's own.
 
-The tree was split for exactly this reason and nothing held it: a `bots/` module that
-starts importing `driver/file_lanes.py`, or a shared module that reaches back into the
-driver, still RUNS — it just re-couples the two drivers the split exists to keep apart, and
-the coupling shows up later as "both had to change". So the check is on imports, and the
-file lists are written out by hand: a new module has to be classified deliberately, and
-this test fails loudly until it is.
+Nothing held this but prose: a shared module that reaches back into the driver still RUNS
+— it just couples the layers the split exists to keep apart, and the coupling shows up
+later as "both had to change". So the check is on imports, and the file lists are written
+out by hand: a new module has to be classified deliberately, and this test fails loudly
+until it is.
 
 `doc-chain.py`, `run-audit.py`, `render-flow.py`, `runs-report.py` and `timing-report.py`
 have hyphens in their names and are loaded by path, so they never appear as imports — they
@@ -17,10 +16,10 @@ import os
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# What both drivers may import: the card graph, the option declaration, the body renderer
+# What the driver may import: the card graph, the option declaration, the body renderer
 # and the board lock.
 TEMPLATE_FILES = ["board_schema", "card_render", "driver_lock", "lanes"]
-# The kanban driver's own. `bots/` may import NONE of these.
+# The kanban driver's own.
 DRIVER_FILES = ["doc-chain", "file_lanes", "render-flow", "run", "run-audit",
                 "runs-report", "runs_util", "timing-report"]
 
@@ -30,7 +29,7 @@ def _importable(stems):
     return {s.replace("-", "_") for s in stems}
 
 
-LOCAL = _importable(TEMPLATE_FILES) | _importable(DRIVER_FILES) | {"audit", "run_board"}
+LOCAL = _importable(TEMPLATE_FILES) | _importable(DRIVER_FILES)
 
 
 def _modules(layer):
@@ -55,15 +54,6 @@ def test_the_shared_layer_never_reaches_into_the_driver():
     for name, path in _modules("template").items():
         into = _imports(path) & _importable(DRIVER_FILES)
         assert not into, f"template/{name}.py imports {sorted(into)} — driver-only modules"
-
-
-def test_the_bot_driver_imports_only_the_shared_layer():
-    allowed = _importable(TEMPLATE_FILES) | set(_modules("bots"))
-    for name, path in _modules("bots").items():
-        into = _imports(path)
-        assert into <= allowed, (
-            f"bots/{name}.py imports {sorted(into - allowed)} — the bot driver must not "
-            f"depend on the kanban driver's own modules")
 
 
 def test_every_module_is_classified():

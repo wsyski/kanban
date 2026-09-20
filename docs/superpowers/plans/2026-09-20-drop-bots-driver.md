@@ -68,7 +68,7 @@ Every number this plan asserts was re-measured when the plan was revised, so an 
 
 The failure modes most likely to bite after this change, each pinned to a task:
 
-1. A `bots-*` run directory still on disk, audited through `run-audit.py`, must still exit 2 with a message naming records it lacks — never a phantom E1 "driver died". *(Task 1)*
+1. A `bots-*` run directory still on disk, audited through `run-audit.py`, must still exit 2 with a message naming records it lacks — never a phantom E1 "driver died". *(Task 1 — 8 of the 11 carry a `state.json` and take this path; the other three have no `driver.log` and are audited `E1`+`E4`, exit 1, unchanged by this plan)*
 2. The new refusal message must not name `bots/audit.py`, a file that no longer exists, or the operator follows a dead pointer. *(Task 1)*
 3. **The other side of that refusal:** a kanban run that HALTED also has no `run-summary.json`. It must still be AUDITED (E1/E4, exit 1), never refused — widening the guard to "no run-summary.json" would break the runs an operator most wants read. *(Task 1, Step 6 — measured: exit 1, `E1 the run halted`)*
 4. `tests/test_layer_boundary.py` calls `_modules("bots")`, i.e. `os.listdir(REPO/bots)` — with `bots/` gone this raises `FileNotFoundError` and the suite errors rather than failing cleanly. *(Task 2)*
@@ -127,7 +127,7 @@ The review's own *Recommended order of work* is the queue for those. This plan i
 
 ### Task 1: The auditor keeps refusing a run it cannot read, without naming a deleted tool
 
-Do this FIRST. It is independent of the deletion and it is what protects the 11 `bots-*` directories under `boards/is-even/runs/` from auditing red the moment `bots/audit.py` is gone.
+Do this FIRST. It is independent of the deletion and it is what keeps the **8 of the 11** `bots-*` directories under `boards/is-even/runs/` that carry a `state.json` from auditing red the moment `bots/audit.py` is gone. (The other three — `bots-20260918-101239`, `-101303`, `-101318` — have no `state.json` and no `driver.log`: they audit as `E1: no driver.log — the run never started` + `E4`, exit 1, before and after this change alike. Measured 2026-09-20: 8 of 11 carry the file. The guard never covered them, and this task does not extend it to.)
 
 **Files:**
 - Modify: `driver/run-audit.py:540-564` (the guard function and its call site in `main()`)
@@ -144,10 +144,14 @@ Replace `tests/test_run_audit.py:545-556` (the whole `test_a_bot_run_is_handed_t
 ```python
 def test_a_run_without_kanban_records_is_refused(tmp_path, capsys):
     """This reads a KANBAN run's records. A run directory that has none of them — the
-    old second driver left eleven of them under boards/is-even/runs/, and runs/ is
-    gitignored, so they outlive any code — would otherwise be read by the log scan
-    alone and reported as a driver that died mid-flight (a phantom E1). Refusing is
-    the only honest answer: name the records that are missing, and stop."""
+    old second driver left them under boards/is-even/runs/, and runs/ is gitignored, so
+    they outlive any code — would otherwise be read by the log scan alone and reported as
+    a driver that died mid-flight (a phantom E1). Refusing is the only honest answer:
+    name the record that is missing, and stop.
+
+    The fixture is named `bots-<ts>` because that is what is on disk, but the guard keys
+    on the FILES and never on the name — the sibling test below is what proves that.
+    """
     run_dir = tmp_path / "boards" / "b" / "runs" / "bots-20260920-000000"
     run_dir.mkdir(parents=True)
     (run_dir / "state.json").write_text(json.dumps({"done": [], "held_gate": None}))
@@ -156,6 +160,21 @@ def test_a_run_without_kanban_records_is_refused(tmp_path, capsys):
     err = capsys.readouterr().err
     assert "run-summary.json" in err, err
     assert "bots/audit.py" not in err, err
+    assert "bots/run-board.py" not in err, err
+
+
+def test_the_refusal_is_keyed_on_the_files_not_on_the_name(tmp_path, capsys):
+    """Why the guard was renamed: a directory holding `state.json` and no
+    `run-summary.json` is foreign WHATEVER it is called. A guard re-narrowed to a `bots-`
+    basename predicate would pass every other test in this file — the refusal fixture is
+    itself named `bots-<ts>` — and would refuse only runs that happen to be named that
+    way. This is the case that goes red when the predicate stops being about files.
+    """
+    run_dir = tmp_path / "boards" / "b" / "runs" / "something-else-20260920-000000"
+    run_dir.mkdir(parents=True)
+    (run_dir / "state.json").write_text("{}")
+    assert ra.main(["--runs", str(run_dir)]) == 2
+    assert "not a kanban run" in capsys.readouterr().err
 ```
 
 - [ ] **Step 2: Run it and watch it fail**
@@ -173,11 +192,11 @@ In `driver/run-audit.py`, replace the function at line 540:
 def looks_like_a_foreign_run(path):
     """A run directory this tool cannot read: state.json without run-summary.json.
 
-    `state.json` is the bot driver's `--resume` file — no kanban run has one (grep
-    the tree: the name appears in this file alone, and no `is-even-*` run directory
-    on disk carries it), while the kanban driver writes run-summary.json for every
-    run it finishes. So the two files together say "not mine" without naming a tool
-    that no longer exists.
+    `state.json` is the old bot driver's `--resume` file and no kanban run has one — none
+    of the `is-even-*` run directories on disk carries it (the 8 that do are all under
+    `bots-*`) — while the kanban driver writes run-summary.json for every run it
+    finishes. So the two files together say "not mine" without naming a tool that no
+    longer exists.
     """
     return (os.path.isfile(os.path.join(path, "state.json"))
             and not os.path.isfile(os.path.join(path, "run-summary.json")))
@@ -192,15 +211,15 @@ and replace its call site inside `main()` (currently lines 555-561):
         # `ALL GATES COMPLETE`), which is a phantom E1.
         sys.stderr.write(
             f"{runs} is not a kanban run — run-audit.py reads run-summary.json, "
-            f"chain.jsonl and verdicts.jsonl, and this directory has none of them. "
-            f"Nothing in this tree audits it.\n")
+            f"chain.jsonl and verdicts.jsonl, and this directory has no "
+            f"run-summary.json. Nothing in this tree audits it.\n")
         return 2
 ```
 
 - [ ] **Step 4: Run the test and the file's whole suite**
 
 Run: `/usr/bin/python3 -m pytest tests/test_run_audit.py -q`
-Expected: PASS — `43 passed`. Step 1 rewrote a test rather than adding one, so the count is unchanged (the +1 comes in Step 6).
+Expected: PASS — `44 passed`. Step 1 rewrote one test and added the name-keyed sibling, so the file grows by one here (43 → 44); Step 6 adds the second new test, for 45.
 
 **One finding in this same file is NOT yours to fix.** The 2026-09-20 review's **K3** (Critical) is at `driver/run-audit.py:407-412`: a missing or unparseable `board.json` leaves `cfg = {}`, so the ceiling check is disarmed and the audit reports NOTHING — re-measured 2026-09-20, a card that took 25 min under a declared 4m ceiling audits clean with no manifest, and with `"max-runtime": "banana"`. Fixing it needs a new finding code and README vocabulary, and it is deferred in *Code review, 2026-09-20* above. Your guard edit is two hundred lines below it and must not widen into it.
 
@@ -233,13 +252,13 @@ def test_a_kanban_run_that_halted_is_still_audited(tmp_path, capsys):
     out = capsys.readouterr()
     assert "E1" in out.out and "the run halted" in out.out, out
     assert "E4" in out.out, out                      # no run-summary.json, and reported
-    assert "not a kanban run" not in out.err, out
+    assert out.err == "", out                        # nothing was refused, so nothing was said
 ```
 
 Run: `/usr/bin/python3 -m pytest tests/test_run_audit.py -k halted -q`
-Expected: PASS. Verified by hand before this plan was written: exit 1, `E1: the run halted`, `E4: no run-summary.json`, empty stderr. If it fails, the guard's condition is wrong — fix the guard, never the test.
+Expected: PASS — **2 passed**: the new test plus `test_a_halted_run_says_why`, which the same keyword also matches. Verified by hand before this plan was written: exit 1, `E1: the run halted`, `E4: no run-summary.json`, empty stderr. If the new one fails, the guard's condition is wrong — fix the guard, never the test.
 
-Then the whole file: `/usr/bin/python3 -m pytest tests/test_run_audit.py -q` → `44 passed` (43 + this one).
+Then the whole file: `/usr/bin/python3 -m pytest tests/test_run_audit.py -q` → `45 passed` (43 + the two this task adds).
 
 - [ ] **Step 7: Stage and ask**
 
@@ -257,7 +276,7 @@ Then STOP and tell the operator what is staged. Do not commit.
 - Modify: `tests/test_layer_boundary.py` (docstring, `LOCAL`, and remove `test_the_bot_driver_imports_only_the_shared_layer`)
 - Delete: `bots/` (README.md, audit.py, card-adapter.txt, demo.sh, run-board.py)
 - Delete: `tests/test_bots_driver.py`, `tests/test_bots_audit.py`
-- Modify: `.github/workflows/ci.yml:45-48`
+- Modify: `.github/workflows/ci.yml:44-48` (the blank line, the two comment lines, the `- name:` step and its `run:` line — five lines, exactly as Step 6 says)
 
 **Interfaces:**
 - Consumes: Task 1's reworded auditor guard (so the on-disk `bots-*` dirs stay safe once `bots/audit.py` is gone).
@@ -334,7 +353,10 @@ Expected: FAIL (non-zero exit) naming `__scratch_probe`. If it passes, the narro
 cd /opt/projects/kanban/main/kanban
 git rm -r --quiet bots
 git rm --quiet tests/test_bots_driver.py tests/test_bots_audit.py
+ls bots 2>/dev/null && echo "still there — see below" || echo "bots/ gone"
 ```
+
+`git rm` removes tracked files only, so a gitignored `bots/__pycache__/` survives and leaves the directory on disk. Derived, never-tracked bytecode from a tree you have just backed up: `rm -rf bots/__pycache__` (and `rmdir bots` if it is then empty) so `bots/` is actually gone. Do not delete anything under `boards/*/runs/` while you are at it — those stay exactly as they are.
 
 - [ ] **Step 6: Remove the CI step**
 
@@ -343,7 +365,12 @@ In `.github/workflows/ci.yml`, delete lines 44-48 — the blank line, the two-li
 - [ ] **Step 7: Run the whole suite and the diagram check**
 
 Run: `./test.sh`
-Expected: PASS, with **no collection ERROR** from `test_layer_boundary.py`, and a count well below the pre-change baseline of `724 passed` — the two deleted files hold 48 test functions (30 + 18) on top of the one boundary test this task removes. A count in the low 660s is the shape to expect; what matters is zero failures and zero errors. (Do not compare against "642 fewer lines": that number is lines of test source, not collected tests.)
+Expected: PASS, with **no collection ERROR** from `test_layer_boundary.py`, and a count below what the suite collected before this task. Measure it rather than predicting it — Task 1 added two tests, so the pre-deletion baseline is no longer the 724 this plan was written against:
+
+```bash
+/usr/bin/python3 -m pytest tests --collect-only -q 2>/dev/null | tail -1   # before you delete
+```
+The drop must equal exactly the tests the deleted files held plus the one boundary test this task removes. Measure it as COLLECTED items, not as `def test` lines: the two files hold 48 test functions but collect **62** items (37 + 25), so with Task 1 landed the suite goes **726 → 663**, a drop of 63. (An earlier revision of this plan predicted "low 660s" from the 48-function count and then "677" from it; both were wrong for the same reason — measured 2026-09-20: 663.) What matters is zero failures, zero errors, and a drop you can account for line by line. (Do not compare against "642 fewer lines": that number is lines of test source, not collected tests.)
 
 Run: `python3 driver/render-flow.py --check`
 Expected: exit 0.
@@ -356,7 +383,7 @@ Side benefit worth knowing: `tests/test_bots_driver.py` cannot be collected on i
 grep -rn "bots/" --include="*.py" --include="*.sh" --include="*.yml" . | grep -v "^./.git/"
 ```
 
-Expected: hits ONLY in the files Tasks 3 and 4 own — `template/card_render.py:3,51`, `template/board_schema.py:163`, `template/driver_lock.py` (wording, not the string `bots/`), `driver/runs-report.py:55`, `driver/file_lanes.py:9`, and the README/AGENTS prose. Nothing else, and nothing in `bots/` (gone). If a file outside that list appears, it is a place the plan did not account for — stop and report it rather than editing it.
+Expected: hits ONLY in the files Tasks 3 and 4 own — `template/card_render.py:3,51`, `driver/runs-report.py:55`, `driver/file_lanes.py:9` — **plus `tests/test_run_audit.py`**. (Measured 2026-09-20 after this task: exactly those four files. `template/board_schema.py:163` and `template/driver_lock.py` are NOT hits here and must not be expected: this grep matches `bots/` with a slash, and the first says "the bots driver" while the second has no such token at all — both are Task 4's for the bare-word sweep in Task 3 Step 10, not for this one.), which is deliberate and stays: Task 1's refusal test asserts that `bots/audit.py` is *absent* from the message (line ~558) and names a `bots-<ts>` run directory as its fixture (line ~551). Nothing else, and nothing in `bots/` (gone). If a file outside that list appears, it is a place the plan did not account for — stop and report it rather than editing it.
 
 This grep cannot see every stale phrase: it catches `bots/` only. `tests/test_tool_clis.py:8` says "what both drivers share" with no `bots/` in it, and `AGENTS.md:6` says "plus the drivers". That is what Task 3 Step 10's wider sweep is for.
 
@@ -422,15 +449,19 @@ Line 72 — delete the whole row:
 
 Line 52 is the one a "delete the bots row" reading misses, and it is why Step 10's sweep would otherwise report a hit nobody owns.
 
-- [ ] **Step 3: README — the auditor paragraph (lines 376-378)**
+- [ ] **Step 3: README — the auditor paragraph (line 376, mid-line, through 378)**
 
-Replace lines 376-378 — the sentence beginning `` A `bots-<ts>` run has none of the `` — with:
+Replace the sentence that BEGINS mid-line 376 — right after `` `--runs boards/<slug>/runs/<run-id>` reads that one. `` — and runs to the end of 378. Keep that preceding clause where it is and splice the replacement in after it: replacing 376-378 wholesale deletes the `--runs …/<run-id>` clause, which is a different sentence and still true. With:
 
 ```markdown
-A run directory with no `run-summary.json` is not a kanban run: `run-audit.py` says which
-records it is missing and exits 2, rather than reading its log alone and reporting a
-phantom "driver died".
+A run directory that carries a `state.json` and no `run-summary.json` — the old bot
+driver's `--resume` file — is not a kanban run: `run-audit.py` says which record it is
+missing and exits 2, rather than reading its log alone and reporting a phantom "driver
+died". A run with no `state.json` is still a kanban run however it ended, and still gets
+audited: a halted one reports E1 and E4 and exits 1.
 ```
+
+The first sentence must name BOTH files. "A run directory with no `run-summary.json`" alone is the widened rule this plan exists to prevent — Review Focus #3 — because a halted kanban run has no summary either and must be read, not refused (measured: exit 1, `E1 the run halted`).
 
 - [ ] **Step 4: README — the worker-sessions line (line 403)**
 
@@ -440,14 +471,20 @@ Leave the mention of Desktop's Bots tab: it describes where kanban worker sessio
 
 Delete the entire `- **One driver per board, of either kind.**` bullet — ten lines, from that heading through the line ending `proves.`. The bullet immediately after it (`- **One driver per board.** Duplicates idle silently...`) already states the surviving rule and stays as-is.
 
-**Rescue one sentence first.** `README.md:418-420` is the ONLY place in the repo that says how boards share resources: *"What they share across boards is model capacity — the same profiles and the same backend serve every board at once (`sequential`, and Desktop's Warm Bot Backends, are the knobs for that)."* Deleting the bullet deletes it. Fold it into the surviving bullet right after `Kill all, start one.`:
+**Rescue TWO sentences first.** The bullet you are deleting is the only place in the repo that states either of these:
+
+- *"What they share across boards is model capacity — the same profiles and the same backend serve every board at once (`sequential`, and Desktop's Warm Bot Backends, are the knobs for that)."*
+- *"The scope is the board, not the machine: other boards run concurrently exactly as before, in either mode."* — measured 2026-09-20: once this bullet is gone, `grep -rni concurrent README.md AGENTS.md DESIGN.md` comes back **empty**. The fact has to be carried or it is lost, and "in either mode" goes with the second driver.
+
+Fold both into the surviving bullet right after `Kill all, start one.`:
 
 ```markdown
 - **One driver per board.** Duplicates idle silently and interleave log output. Kill
-  all, start one. Boards share model capacity — the same profiles and the same backend
-  serve every board at once (`sequential`, and Desktop's Warm Bot Backends, are the
-  knobs for that). A restart is safe: it rejoins this run's lanes and the one-shot
-  allowances …                      ← the rest of the bullet, unchanged
+  all, start one. The scope is the board, not the machine — other boards run
+  concurrently — and boards share model capacity: the same profiles and the same
+  backend serve every board at once (`sequential`, and Desktop's Warm Bot Backends,
+  are the knobs for that). A restart is safe: it rejoins this run's lanes and the
+  one-shot allowances …                      ← the rest of the bullet, unchanged
 ```
 
 - [ ] **Step 6: AGENTS.md — the two-layer bullet (lines 6-11)**
@@ -491,14 +528,27 @@ with:
 - [ ] **Step 10: Check no dead links or stale phrases remain — in the tree, not just these two files**
 
 ```bash
-# (a) the two files this task edits: must be silent
+# (a) the two files this task edits: silent EXCEPT the one mention Step 4 keeps
 grep -rniE "bots|second driver|both drivers|other driver|two drivers|the drivers" README.md AGENTS.md
-# (b) the whole tree: only Task 4's files may still answer
+#     -> exactly ONE hit is correct: the `Bots tab` sentence Step 4 leaves in place
+# (b) the whole tree: only Task 4's files and Task 1's own two may still answer
 grep -rniE "bots|both drivers|BOTH drivers" README.md AGENTS.md template/*.py driver/*.py \
-  driver/*.sh tests/*.py .github/workflows/*.yml | grep -v "^tests/test_bots"
+  driver/*.sh tests/*.py .github/workflows/*.yml \
+  | grep -v "^tests/test_bots" | grep -v "^tests/test_run_audit.py" | grep -v "^driver/run-audit.py"
+# (c) the exclusions in (b) are not holes. Task 1's refusal test must still name the deleted
+#     tool exactly once, and only to assert its absence
+grep -c "bots/audit.py" tests/test_run_audit.py      # expect 1 — the `not in err` assertion
+# (d) ...and run-audit.py must hold exactly one `bots` token: the `bots-*` its guard docstring
+#     needs in order to say where the 8 on-disk `state.json` files live
+grep -c "bots" driver/run-audit.py                   # expect 1
 ```
 
-Expected: **(a) prints nothing.** **(b) hits only `template/card_render.py`, `template/board_schema.py`, `template/driver_lock.py`, `driver/runs-report.py`, `driver/file_lanes.py` and `tests/test_tool_clis.py:8`** — every one of those is Task 4's, and after Task 4 (b) must also print nothing. Any OTHER path in (b), or any hit in (a), is an unowned stale phrase: fix it here and add it to Task 3's Files list rather than leaving it.
+Expected: **(a) prints exactly one hit — the `Bots tab` sentence (measured 2026-09-20: `README.md:401`) — and nothing else.** **(b) hits only `template/card_render.py`, `template/board_schema.py`, `template/driver_lock.py`, `driver/runs-report.py`, `driver/file_lanes.py`, `tests/test_tool_clis.py:8`, plus that same `Bots tab` line** — every one of those except the last is Task 4's, and after Task 4 (b) must leave only the `Bots tab` line and `driver/runs-report.py:55-57` standing (the comment Task 4 writes there still names `current-bots`, and line 57 is `BOARD_LEVEL` code). **(c) prints `1` and (d) prints `1`.** Any OTHER path in (b), or any hit in (a), is an unowned stale phrase: fix it here and add it to Task 3's Files list rather than leaving it.
+
+Two files are excluded from (b) because they must keep their strings, and (c)/(d) are what keep those exclusions honest — if either count rises above 1, a real reference has been smuggled in behind an exclusion:
+
+- `tests/test_run_audit.py` — its fixture is a `bots-<ts>` run directory, and its assertion is that the refusal message does NOT name `bots/audit.py` (and, since Task 1's fix round, not `bots/run-board.py` either).
+- `driver/run-audit.py` — Task 1's guard docstring names `bots-*` once, to say where the 8 on-disk `state.json` files are. Before Task 1 that file held four such tokens (the old docstring and the old refusal message); the change is what reduced it to one.
 
 Scope note: neither grep touches `TIMELINE.md`, `boards/is-even/README.md`, `docs/reviews/*` or `docs/superpowers/plans/*`. Those are dated records and this plan keeps their bot text (Global Constraints, Non-goals #4) — a repo-wide `grep -ri bots` outside the paths above is expected to keep finding them, and that is correct.
 
@@ -515,11 +565,11 @@ Then STOP. Do not commit. Do not stage `TIMELINE.md` or `boards/portfolio-engine
 ### Task 4: The engine's own prose, and the one thing that stays
 
 **Files:**
-- Modify: `template/card_render.py:1-11,49-53`
+- Modify: `template/card_render.py:1-11,50-54`
 - Modify: `template/board_schema.py:163`
-- Modify: `template/driver_lock.py:1-9`
-- Modify: `driver/runs-report.py:55-57` (the comment only — the code, `current-bots` included, does not change)
-- Modify: `driver/file_lanes.py:9-10` (docstring only)
+- Modify: `template/driver_lock.py:1-10` (the closing `"""` is line 10)
+- Modify: `driver/runs-report.py:55-56` (the comment only — line 57 is `BOARD_LEVEL` code and must not change)
+- Modify: `driver/file_lanes.py:7-9` (docstring only)
 - Modify: `tests/test_tool_clis.py:8` (docstring only)
 
 **Interfaces:**
@@ -538,12 +588,12 @@ baked in here: `run_root` names the run directory outright, so a caller whose ru
 not `boards/<board>/runs/<run_id>` passes its own and every `<RUNS>`, `<IDEA>`,
 `<PLAN>` and `<REFINED>` a body carries resolves there.
 
-The filing half — `hermes kanban create`, the idea cards, the run-id mint — is
-`file_lanes.py`, and it imports this module rather than the other way round.
+Filing — `hermes kanban create`, the idea cards, the run-id mint — is `file_lanes.py`,
+and it imports this module rather than the other way round.
 """
 ```
 
-Then in `run_dir`'s docstring, replace lines 49-53 (the `run_root` paragraph) so it stops citing a driver that no longer exists:
+Then in `run_dir`'s docstring, replace lines 50-54 (the `run_root` paragraph — measured 2026-09-20; the blank line above it is 49) so it stops citing a driver that no longer exists:
 
 ```python
     `run_root` names the run DIRECTORY outright, for a caller whose runs are not
@@ -566,7 +616,7 @@ The rest of the docstring already says what that reader got wrong — it `matche
 
 - [ ] **Step 3: `template/driver_lock.py` docstring**
 
-Replace lines 1-9 — the whole module docstring, closing `"""` included — with the version below. **Keep the second half**: the atexit/SIGKILL paragraph is why the rule unlinks only its OWN lock, `tests/test_acquire_lock.py:60` pins that behaviour, and this docstring is the only place the reasoning lives. Only the two mentions of the second driver go:
+Replace lines 1-10 — the whole module docstring, closing `"""` on line 10 included — with the version below. **Keep the second half**: the atexit/SIGKILL paragraph is why the rule unlinks only its OWN lock, `tests/test_acquire_lock.py:60` pins that behaviour, and this docstring is the only place the reasoning lives. Only the two mentions of the second driver go:
 
 ```python
 """The board's ONE driver lock.
@@ -612,12 +662,14 @@ This file is also the engine's least-covered module (59.2% of statements) and th
 sed -n '5,12p' driver/file_lanes.py
 ```
 
-Its last sentence says the run-id mint is `shared with bots/run-board.py, which files nothing`. Drop that clause and keep the rest:
+Its last two lines call this "the KANBAN half" — a phrase that named the OTHER half until this plan deleted it, and now implies a counterpart that does not exist. Drop the bots clause AND the halving:
 
 ```python
-This is the KANBAN half: `hermes kanban create`, the idea cards, the run-id mint.
-What a card body says, and where a lane's hand-offs live, is `card_render.py`.
+Filing is `hermes kanban create`, the idea cards and the run-id mint. What a card body
+says, and where a lane's hand-offs live, is `card_render.py`.
 ```
+
+**Three sites, not one.** The same "half" framing is in `README.md:53` (`the kanban filing half (…)`) and `AGENTS.md:37` (`is the kanban filing half (…)`), so a pass that fixes only this docstring leaves the three disagreeing. Measured 2026-09-20 (final review, finding 4): all three must move together. README's row becomes `| \`driver/file_lanes.py\` | filing: \`hermes kanban create\`, the idea cards, the run-id mint |` and AGENTS' sentence becomes `… \`driver/file_lanes.py\` files the board (\`hermes kanban create\`, the idea cards, the run-id mint).`
 
 Then the last piece of prose in the tree that still says "both drivers" — `tests/test_tool_clis.py:8`, in the module docstring, with no `bots/` string for Task 2's grep to catch. Its sentence is:
 
@@ -634,13 +686,16 @@ Change the parenthetical to `(what the driver imports)`. Leave the rest of that 
 ```
 Expected: `ALL GREEN`.
 
-Then re-run Task 3 Step 10's tree-wide sweep — after this task it must be empty, which is what closes the prose half of the change:
+Then re-run Task 3 Step 10's tree-wide sweep — after this task (b) must be empty and (c) must still print `1`, which is what closes the prose half of the change:
 
 ```bash
 grep -rniE "bots|both drivers|BOTH drivers" README.md AGENTS.md template/*.py driver/*.py \
-  driver/*.sh tests/*.py .github/workflows/*.yml | grep -v "^tests/test_bots"
+  driver/*.sh tests/*.py .github/workflows/*.yml \
+  | grep -v "^tests/test_bots" | grep -v "^tests/test_run_audit.py" | grep -v "^driver/run-audit.py"
+grep -c "bots/audit.py" tests/test_run_audit.py      # expect 1
+grep -c "bots" driver/run-audit.py                   # expect 1
 ```
-Expected: no hits. (Task 2 has deleted `tests/test_bots_*`, so even the `grep -v` guard should have nothing to hide; a hit there means the deletion did not happen.)
+Expected: after this task (b) leaves exactly these standing, every one of them mandated — `README.md:401` (the `Bots tab` sentence Task 3 keeps), and `driver/runs-report.py:55-57` (the comment this task rewrites must still name `current-bots` and `bots-<ts>`, and `BOARD_LEVEL` on line 57 is code that must not change). **"Empty" is not the target; those four lines are.** Everything else must be gone. `1` from each of the counts: (c) is `tests/test_run_audit.py` still asserting the deleted tool's absence, (d) is `driver/run-audit.py` still holding Task 1's single `bots-*` docstring mention.
 
 **Do not run this step while another task is mid-flight in this checkout.** Task 5's probe plants a broken placeholder in `template/card-bodies/c-body.txt`, and `./test.sh` here would fail on it for the wrong reason. That is why Tasks 3, 4 and 5 are dispatched one at a time.
 
@@ -736,6 +791,11 @@ def test_every_shipped_board_renders_every_card_it_files(tmp_path):
     assert filed == {"arena-federated-search": 9, "blade-workspace": 11, "is-even": 9,
                      "portfolio-engineering": 9, "roman-evaluator-java": 20,
                      "roman-evaluator-js": 9}, filed
+    # Known limit, measured 2026-09-20: this aggregates per BOARD, so a card moving between
+    # roman-evaluator-java's two lanes keeps its 20 and passes. The per-lane shape is
+    # ("roman-evaluator-java", 1) -> 9 and ("roman-evaluator-java", 2) -> 11; the off-by-one
+    # index risk it would close is already pinned by
+    # `test_the_two_lane_board_resolves_each_lane_its_own_options` below. Left per board here.
     assert sum(filed.values()) == 67, filed
 ```
 
@@ -849,11 +909,11 @@ def test_an_escalated_triage_card_is_an_e12_and_a_resting_one_is_not(monkeypatch
 - [ ] **Step 2: Run them**
 
 Run: `/usr/bin/python3 -m pytest tests/test_run_audit.py -k e12 -q`
-Expected: PASS, `2 passed`. Measured 2026-09-20: both pass verbatim against the tree as it stands — this is a coverage test, not a fix, so there is no red step. (`-k e12` matches only these two. The file totals 46 tests once Task 1 has added its own; 45 if Task 1 has not run yet.)
+Expected: PASS, `2 passed`. Measured 2026-09-20: both pass verbatim against the tree as it stands — this is a coverage test, not a fix, so there is no red step. (`-k e12` matches only these two. The file totals 47 once Task 1 has added its two; 45 if Task 1 has not run yet.)
 
 - [ ] **Step 3: Prove they bite**
 
-Add `"running"` to `DONE_STATES` in `driver/run-audit.py:74` — the one-word mutation that inverts E12's condition — and the first test must fail:
+Add `"running"` to `DONE_STATES` in `driver/run-audit.py:74` — the one-word mutation that inverts E12's condition — and BOTH new tests must fail (measured 2026-09-20: the first on `[] == ['E12']`, the second on `['E12'] == ['E12', 'E12']` — the mutation removes E12 for a `running` card and for an escalated `triage` card alike):
 
 ```bash
 cd /opt/projects/kanban/main/kanban
@@ -872,14 +932,14 @@ grep -n "^DONE_STATES" driver/run-audit.py     # back to the three-state tuple
 git diff --stat driver/run-audit.py            # must print NOTHING: tree == index again
 ```
 
-Expected: the mutated tuple printed with `"running"` in it, a **non-zero** exit from the first test, then the original tuple and an empty `git diff --stat`. Measured 2026-09-20: the mutation empties the E12 list, so the first test fails on `assert codes(...) == ["E12"]`. If the test still passes, it is not reaching `board_findings` — fix that before continuing.
+Expected: the mutated tuple printed with `"running"` in it, a **non-zero** exit, then the original tuple and an empty `git diff --stat`. Measured 2026-09-20: the mutation empties the E12 list, so BOTH new tests fail — the first on `assert codes(...) == ["E12"]`, the second on `== ["E12", "E12"]`. If either still passes, it is not reaching `board_findings` — fix that before continuing.
 
 Check the restore with `git diff --stat`, NOT `git status --short`: Task 1 stages changes to this same file, so `git status` will legitimately show `M  driver/run-audit.py` and say nothing about your mutation. `git diff` compares the working tree to the index, which is exactly what "my edit is gone" means here.
 
 - [ ] **Step 4: The whole file, then the whole suite**
 
 ```bash
-/usr/bin/python3 -m pytest tests/test_run_audit.py -q      # 46 with Task 1's test, 45 without
+/usr/bin/python3 -m pytest tests/test_run_audit.py -q      # 47 with Task 1's tests, 45 without
 ./test.sh
 ```
 Expected: PASS both times, no failures and no errors. This task adds tests only, so a failure anywhere is a real finding — report it rather than adjusting the new tests.

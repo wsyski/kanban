@@ -537,9 +537,15 @@ def resolve_run_dir(path):
     """
     return runs_util.resolve_run_dir(path)
 
-def looks_like_a_bot_run(path):
-    """A `bots-<ts>` run: state.json is what `--resume` reads, and run-summary.json is
-    the kanban driver's record. One without the other is the second driver's."""
+def looks_like_a_foreign_run(path):
+    """A run directory this tool cannot read: state.json without run-summary.json.
+
+    `state.json` is the old bot driver's `--resume` file and no kanban run has one — none
+    of the `is-even-*` run directories on disk carries it (the 8 that do are all under
+    `bots-*`) — while the kanban driver writes run-summary.json for every run it
+    finishes. So the two files together say "not mine" without naming a tool that no
+    longer exists.
+    """
     return (os.path.isfile(os.path.join(path, "state.json"))
             and not os.path.isfile(os.path.join(path, "run-summary.json")))
 
@@ -552,15 +558,14 @@ def main(argv=None):
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
     runs = resolve_run_dir(a.runs)
-    if looks_like_a_bot_run(runs):
-        # Not this tool's business, and saying the wrong thing loudly is worse than
-        # saying nothing: driver_findings reads a bots run's log as a kanban driver
-        # that died mid-flight (no `ALL GATES COMPLETE`), which is a phantom E1.
+    if looks_like_a_foreign_run(runs):
+        # Saying the wrong thing loudly is worse than saying nothing: driver_findings
+        # reads such a directory's log as a kanban driver that died mid-flight (no
+        # `ALL GATES COMPLETE`), which is a phantom E1.
         sys.stderr.write(
-            f"{runs} is a BOT run (`bots/run-board.py` wrote it) — its gate is "
-            f"`bots/audit.py --run {runs}`; run-audit.py reads a kanban run's "
-            f"records (run-summary.json, chain.jsonl, verdicts.jsonl) and this "
-            f"directory has none of them.\n")
+            f"{runs} is not a kanban run — run-audit.py reads run-summary.json, "
+            f"chain.jsonl and verdicts.jsonl, and this directory has no "
+            f"run-summary.json. Nothing in this tree audits it.\n")
         return 2
     findings, rows, stats = audit(runs, a.board)
     if a.json:

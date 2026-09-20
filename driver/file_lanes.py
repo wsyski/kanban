@@ -4,9 +4,8 @@ A board is a DIRECTORY — `boards/<slug>/` — holding `board.json` and one
 `lane-<k>.md` per lane. There is no import step and no second copy: the file
 the human edits is the file the board reads.
 
-This is the KANBAN half: `hermes kanban create`, the idea cards, the run-id mint.
-What a card body says, and where a lane's hand-offs live, is `card_render.py` —
-shared with `bots/run-board.py`, which files nothing.
+Filing is `hermes kanban create`, the idea cards and the run-id mint. What a card body
+says, and where a lane's hand-offs live, is `card_render.py`.
 """
 import datetime
 import json

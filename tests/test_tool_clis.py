@@ -5,7 +5,7 @@ ask for is one people guess at, and two of these had stopped answering (a hand-r
 parser that treated --help as an unknown argument, and one that treated it as a file
 path). Nothing here checks the TEXT, only that the contract holds.
 
-The tools live in TWO directories — `template/` (what both drivers share) and `driver/`
+The tools live in TWO directories — `template/` (what the driver imports) and `driver/`
 (the kanban driver's own) — so the search walks both, and a tool that moves between
 them is still collected.
 """

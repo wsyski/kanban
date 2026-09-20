@@ -36,12 +36,11 @@ independent of the author. Every other card runs its profile's own model: `"mode
 from an idea header, and the pin wins over them on the reviews. Neither key has a default,
 so a board that wants either says so.
 
-The engine is **two layers and the drivers**. `template/` holds what BOTH drivers import —
+The engine is **one layer and the driver**. `template/` holds what the driver imports —
 the card graph, the option declaration, the body renderer, the board lock, the card bodies
 and the role souls. `driver/` holds the kanban driver's own: `run.py` and its tools, reports
-and `.sh` entry points. `bots/` is the second driver, which imports `template/` only. `tests/`
-is one suite over both layers, run by `./test.sh`, and `tests/test_layer_boundary.py` is what
-keeps the layers apart.
+and `.sh` entry points. `tests/` is one suite over both, run by `./test.sh`, and
+`tests/test_layer_boundary.py` is what keeps the layers apart.
 
 What the template consists of:
 
@@ -49,9 +48,9 @@ What the template consists of:
 |---|---|
 | `template/lanes.py` | card graph and idea parsing |
 | `template/board_schema.py` | the board's options: one declaration, and the validator all three doors run (`--any-host` validates a board whose `default-workdir` lives on another machine — CI) |
-| `template/card_render.py` | what a card body SAYS, and where a lane's hand-offs live — shared by both drivers |
+| `template/card_render.py` | what a card body SAYS, and where a lane's hand-offs live |
 | `template/driver_lock.py` | the board's one driver lock: stale holder taken over, live holder refused |
-| `driver/file_lanes.py` | the kanban filing half (`hermes kanban create`, the idea cards, the run-id mint) |
+| `driver/file_lanes.py` | filing: `hermes kanban create`, the idea cards, the run-id mint |
 | `driver/create-board.sh` | board instantiation |
 | `driver/start-board.sh` | driver launch |
 | `driver/arm.sh` | the go signal from a shell: files the idea as a `blocked`, unassigned card |
@@ -69,7 +68,6 @@ What the template consists of:
 | `driver/review-package.sh` | one task's scoped commits + diff, for a review |
 | `test.sh` | the suite, through an interpreter that has pytest (the shell's `python3` does not) |
 | `template/board.schema.json` | the generated JSON Schema (write it with `board_schema.py --write-schema`) |
-| `bots/` | the second driver: the same cards, run as visible bot sessions ([bots/README.md](bots/README.md)) |
 
 ---
 
@@ -373,9 +371,12 @@ run — so read the runs themselves:
     driver/runs-report.py --board <slug>                      # what runs/ holds, newest first
 
 `--runs boards/<slug>/runs` reads the run `runs/current` names;
-`--runs boards/<slug>/runs/<run-id>` reads that one. A `bots-<ts>` run has none of the
-records this reads, so `run-audit.py` names `bots/audit.py` and exits 2 rather than
-reporting a phantom "driver died" — see §5 for the second driver.
+`--runs boards/<slug>/runs/<run-id>` reads that one.
+A run directory that carries a `state.json` and no `run-summary.json` — the old bot
+driver's `--resume` file — is not a kanban run: `run-audit.py` says which record it is
+missing and exits 2, rather than reading its log alone and reporting a phantom "driver
+died". A run with no `state.json` is still a kanban run however it ended, and still gets
+audited: a halted one reports E1 and E4 and exits 1.
 
 **Audit every run; that is the loop's stopping rule.** `run-audit.py` exits 0 only when a
 finished run has no errors and no warnings. It reads the driver log (terminal state,
@@ -410,21 +411,14 @@ with the CLI:
 
 ## 5. Operational rules
 
-- **One driver per board, of either kind.** A board can also be run by
-  [`bots/`](bots/README.md), which drives the same cards through Hermes bots so the
-  work is visible live in Desktop's Bots tab. Both drivers share THAT board's `work/`
-  tree and its `runs/` directory and take its `runs/driver.lock`, so one board is
-  driven one way at a time. The scope is the board, not the machine: other boards run
-  concurrently exactly as before, in either mode. What they share across boards is
-  model capacity — the same profiles and the same backend serve every board at once
-  (`sequential`, and Desktop's Warm Bot Backends, are the knobs for that). Run the bot
-  driver to WATCH a board; `driver/run.py` is the one whose record `run-audit.py`
-  proves.
 - **One driver per board.** Duplicates idle silently and interleave log output. Kill
-  all, start one. A restart is safe: it rejoins this run's lanes and the one-shot
-  allowances the run already spent, and recovers a driver that stopped without a halt.
-  It does not undo a halt that rests on the board's record — only `driver/reset.sh`
-  clears that ([restart and reset](DESIGN.md#restart-and-reset)).
+  all, start one. The scope is the board, not the machine — other boards run
+  concurrently — and boards share model capacity: the same profiles and the same
+  backend serve every board at once (`sequential`, and Desktop's Warm Bot Backends,
+  are the knobs for that). A restart is safe: it rejoins this run's lanes and the
+  one-shot allowances the run already spent, and recovers a driver that stopped
+  without a halt. It does not undo a halt that rests on the board's record — only
+  `driver/reset.sh` clears that ([restart and reset](DESIGN.md#restart-and-reset)).
 - **Re-filing mid-run is forbidden.** `create-board.sh` refuses if the board exists.
   To start over, `driver/reset.sh --board boards/<slug>`: it stops this board's
   driver (the pid in `runs/driver.lock`), unstages its leftover index entries, then stops

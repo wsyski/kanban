@@ -7,7 +7,9 @@ from fnmatch import fnmatch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "template"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "driver"))
+import card_render
 import file_lanes
+import run
 import lanes
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -212,3 +214,50 @@ def test_a_boards_product_is_not_gitignored():
         rc = subprocess.run(["git", "check-ignore", "--no-index", "-q", probe],
                             cwd=REPO).returncode
         assert rc != 0, f"{probe} is gitignored — its deliverable could never be committed"
+
+
+def test_every_shipped_board_renders_every_card_it_files(tmp_path):
+    """THE WHOLE-BOARD WALK. `test_render_body.py` renders every body from a synthetic
+    config; this renders the cards each shipped board's options leave a lane to RUN — the board's
+    real options folded over each lane's idea header decide which cards exist, and the
+    run id decides what `<RUNS>` and `<WORKDIR-STATE>` resolve to. A body, a fragment or
+    a placeholder that stopped resolving fails here instead of at a board's first card.
+
+    Every board and every lane in one assertion set: reporting the first offender alone
+    hides the rest behind whichever board sorts earliest."""
+    bad = {}
+    filed = {}
+    for slug in boards():
+        cfg = json.load(open(os.path.join(BOARDS, slug, "board.json")))
+        for lane, path in ideas(slug):
+            parsed = lanes.read_idea(path)
+            assert parsed is not None, path
+            headers, _body = parsed
+            opts = lanes.resolve_lane_options(cfg, headers, lane)
+            cards = lanes.lane_cards(
+                lane,
+                integration_tests=opts["integration-tests"],
+                unit_tests=opts["unit-tests"],
+                assignees=cfg.get("assignees"),
+                refinement=opts["refinement"],
+                sequential=cfg.get("sequential", False))
+            assert cards, (slug, lane)
+            filed[slug] = filed.get(slug, 0) + len(cards)
+            for card in cards:
+                text = card_render.render_body(
+                    card["body"], repo=REPO, board=slug,
+                    workdir=str(tmp_path), lane=lane,
+                    targets=cfg.get("targets", ()),
+                    run_id=f"{slug}-20260101-000000")
+                left = run.unresolved_placeholders(text)
+                if left:
+                    bad[f"{slug} lane {lane} {card['id']} ({card['body']})"] = left
+    assert not bad, "\n".join(f"{k}: {v}" for k, v in bad.items())
+    # Not vacuous: `assert cards` above is satisfied by ONE card per lane, so a silent
+    # option-resolution change would still read as "clean" here. These are the counts the
+    # boards file today — 2026-09-20, 6 boards, 7 lanes, 67 cards. A smaller number means
+    # an option default or an idea header moved, not that the tree got cleaner.
+    assert filed == {"arena-federated-search": 9, "blade-workspace": 11, "is-even": 9,
+                     "portfolio-engineering": 9, "roman-evaluator-java": 20,
+                     "roman-evaluator-js": 9}, filed
+    assert sum(filed.values()) == 67, filed

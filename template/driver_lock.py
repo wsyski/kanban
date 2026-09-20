@@ -1,12 +1,12 @@
-"""The board's ONE driver lock — taken the same way by both drivers.
+"""The board's ONE driver lock.
 
-`runs/driver.lock` is what keeps the kanban driver and the bot driver out of the same
-`work/`: whichever holds the file runs that board. The rule lives here, in the layer both
-drivers import, because a shared file with two implementations of one policy is an edit
-away from two behaviours — and it already had two. run.py unlinked the lock in its atexit
-on the file's EXISTENCE alone, so a driver that was SIGKILLed (and whose lock the next
-driver then legitimately took over) would drop a lock that by then belonged to somebody
-else. The rule below unlinks only its OWN.
+`runs/driver.lock` is what keeps two runs out of the same `work/`: whichever holds the
+file runs that board. The rule lives here, in the layer the driver imports, because a
+shared file with two implementations of one policy is an edit away from two behaviours
+— and it already had two. run.py unlinked the lock in its atexit on the file's
+EXISTENCE alone, so a driver that was SIGKILLed (and whose lock the next driver then
+legitimately took over) would drop a lock that by then belonged to somebody else. The
+rule below unlinks only its OWN.
 """
 import atexit
 import os

@@ -160,7 +160,7 @@ def duration_seconds(text):
     """`25m`, `90s`, `2h`, `1h30m` as seconds; None when nothing parses.
 
     ONE parser for the manifest's spelling, beside the regex that validates it. The
-    other readers had their own copies and one of them was wrong: the bots driver
+    other readers had their own copies and one of them was wrong: a second reader
     matched a SINGLE unit, so the multi-unit form accepted above (`1h30m`) came back
     None there, and a None budget means no `--run-budget` and no subprocess timeout —
     a card that runs unbounded while its manifest names a ceiling. `run-audit.py`

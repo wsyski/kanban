@@ -1,13 +1,12 @@
-"""Card rendering and a board's hand-off paths — what BOTH drivers need.
+"""Card rendering and a board's hand-off paths — what the driver needs.
 
-`driver/run.py` files these cards on a `hermes kanban` board; `bots/run-board.py`
-sends the same bodies to Hermes bots. Neither layout is baked in here: `run_root`
-names the run directory outright, so a driver whose runs are not
-`boards/<board>/runs/<run_id>` passes its own and every `<RUNS>`, `<IDEA>`,
+`driver/run.py` files these cards on a `hermes kanban` board. The run layout is not
+baked in here: `run_root` names the run directory outright, so a caller whose runs are
+not `boards/<board>/runs/<run_id>` passes its own and every `<RUNS>`, `<IDEA>`,
 `<PLAN>` and `<REFINED>` a body carries resolves there.
 
-The filing half — `hermes kanban create`, the idea cards, the run-id mint — is
-`file_lanes.py`, and it imports this module rather than the other way round.
+Filing — `hermes kanban create`, the idea cards, the run-id mint — is `file_lanes.py`,
+and it imports this module rather than the other way round.
 """
 
 import json
@@ -47,11 +46,10 @@ def lane_paths(repo, board, lane, run_id=None, run_root=None):
     time and swept from the git index by pathspec, and an alias would resolve at
     write time — into whichever run happens to be current when the worker writes.
 
-    `run_root` names the run DIRECTORY outright, for a driver whose runs are not
-    `boards/<board>/runs/<run_id>` — `bots/run-board.py` mints `runs/bots-<ts>` and
-    has to put its own hand-offs there. An argument rather than a module global a
-    caller rewrites: two callers patching `run_dir` is the same coupling with a
-    hazard attached.
+    `run_root` names the run DIRECTORY outright, for a caller whose runs are not
+    `boards/<board>/runs/<run_id>`. An argument rather than a module global a caller
+    rewrites: two callers patching `run_dir` is the same coupling with a hazard
+    attached.
     """
     run = run_root or run_dir(repo, board, run_id)
     return {"<IDEA>": os.path.join(run, "snapshots", f"lane-{lane}.md"),

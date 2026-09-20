@@ -542,17 +542,39 @@ def test_the_current_run_is_used_when_runs_is_given(tmp_path):
     assert ra.resolve_run_dir(str(flat)) == str(flat)
 
 
-def test_a_bot_run_is_handed_to_the_other_auditor(tmp_path, capsys):
-    """This reads a KANBAN run's records, and a bots run has none of them — the log
-    scan alone would report the second driver as a driver that died mid-flight (a
-    phantom E1) on a run whose real gate is `bots/audit.py`. Measured 2026-09-20: a
-    clean bot run audited red through this door."""
+def test_a_run_without_kanban_records_is_refused(tmp_path, capsys):
+    """This reads a KANBAN run's records. A run directory that has none of them — the
+    old second driver left them under boards/is-even/runs/, and runs/ is gitignored, so
+    they outlive any code — would otherwise be read by the log scan alone and reported as
+    a driver that died mid-flight (a phantom E1). Refusing is the only honest answer:
+    name the record that is missing, and stop.
+
+    The fixture is named `bots-<ts>` because that is what is on disk, but the guard keys
+    on the FILES and never on the name — the sibling test below is what proves that.
+    """
     run_dir = tmp_path / "boards" / "b" / "runs" / "bots-20260920-000000"
     run_dir.mkdir(parents=True)
     (run_dir / "state.json").write_text(json.dumps({"done": [], "held_gate": None}))
     (run_dir / "driver.log").write_text("[10:00:00] lane 1: I1 -> Gi1\n")
     assert ra.main(["--runs", str(run_dir)]) == 2
-    assert "bots/audit.py" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "run-summary.json" in err, err
+    assert "bots/audit.py" not in err, err
+    assert "bots/run-board.py" not in err, err
+
+
+def test_the_refusal_is_keyed_on_the_files_not_on_the_name(tmp_path, capsys):
+    """Why the guard was renamed: a directory holding `state.json` and no
+    `run-summary.json` is foreign WHATEVER it is called. A guard re-narrowed to a `bots-`
+    basename predicate would pass every other test in this file — the refusal fixture is
+    itself named `bots-<ts>` — and would refuse only runs that happen to be named that
+    way. This is the case that goes red when the predicate stops being about files.
+    """
+    run_dir = tmp_path / "boards" / "b" / "runs" / "something-else-20260920-000000"
+    run_dir.mkdir(parents=True)
+    (run_dir / "state.json").write_text("{}")
+    assert ra.main(["--runs", str(run_dir)]) == 2
+    assert "not a kanban run" in capsys.readouterr().err
 
 
 def test_a_work_directory_that_moved_fails_the_run(tmp_path):
@@ -593,3 +615,68 @@ def test_a_held_gate_is_judged_against_the_gates_that_are_automatic():
     assert sev == {"Gp1": "INFO", "Gi1": "WARNING"}
     both = {s for s, c, _t in ra.driver_findings(log, [])[0] if c == "E2"}
     assert both == {"INFO"}, "nothing automatic: a held gate is always a person"
+
+
+def test_a_kanban_run_that_halted_is_still_audited(tmp_path, capsys):
+    """A halted kanban run has no run-summary.json — the driver writes one only when
+    it finishes — and no state.json, so this is a run this tool MUST read: E1 names
+    the halt and E4 names the missing summary, exit 1. Refusing it instead (the shape
+    of the bots guard one condition too wide) would silence the audit on precisely the
+    runs an operator wants read. Measured on disk 2026-09-20:
+    boards/is-even/runs/is-even-20260915-121551 -> 12 error(s), exit 1."""
+    run_dir = tmp_path / "boards" / "b" / "runs" / "b-20260920-000000"
+    run_dir.mkdir(parents=True)
+    (run_dir / "driver.log").write_text(
+        "[10:00:00] lane 1: I1 -> Gi1\n"
+        "[10:05:00] BOARD HALTED — driver exiting; board state left for human inspection\n")
+    (run_dir / "halt.txt").write_text("halted\n")
+    assert ra.main(["--runs", str(run_dir)]) == 1
+    out = capsys.readouterr()
+    assert "E1" in out.out and "the run halted" in out.out, out
+    assert "E4" in out.out, out                      # no run-summary.json, and reported
+    assert out.err == "", out                        # nothing was refused, so nothing was said
+
+
+def _stub_board_cli(monkeypatch, cards):
+    """`hermes kanban --board b list --json` answered with `cards`; no live workers."""
+    class Cards:
+        returncode = 0
+        stdout = json.dumps(cards)
+
+    class Procs:
+        returncode = 0
+        stdout = ""
+
+    monkeypatch.setattr(ra.subprocess, "run",
+                        lambda cmd, **kw: Procs() if cmd[:2] == ["pgrep", "-af"] else Cards())
+
+
+def test_a_card_the_board_did_not_finish_is_an_e12(monkeypatch):
+    """E12 is the claim the whole gate rests on — "the board still holds a card this run
+    never finished" — and it has never run against a non-empty board: `"E12"` appears 0
+    times in `tests/`, and the 30 tests that call `ra.audit()` get `cards = []` from the
+    stubbed CLI, so an inverted condition here would let a half-finished run audit clean
+    with the whole suite green (code review K8, 2026-09-20)."""
+    _stub_board_cli(monkeypatch, [{"id": "t1", "title": "C1: implement - lane 1",
+                                   "status": "running"}])
+    findings = ra.board_findings("b", "unused")
+    assert codes(findings, "ERROR") == ["E12"], findings
+    assert "did not finish" in findings[0][2], findings
+
+
+def test_an_escalated_triage_card_is_an_e12_and_a_resting_one_is_not(monkeypatch):
+    """`triage` is where an UNASSIGNED idea card rests until a human promotes it, so it
+    is a done state; an ASSIGNED card there is the board escalating and must be E12.
+    Measured 2026-09-20: the two-card list the review proposed yields ONE E12, not two —
+    the unassigned row is dropped on purpose, so the escalated shape is the one that
+    pins the second E12."""
+    _stub_board_cli(monkeypatch, [{"id": "t1", "title": "C1: implement - lane 1",
+                                   "status": "running"},
+                                  {"id": "t2", "title": "Idea 1", "status": "triage",
+                                   "assignee": "coder"}])
+    assert codes(ra.board_findings("b", "unused"), "ERROR") == ["E12", "E12"]
+
+    _stub_board_cli(monkeypatch, [{"id": "t1", "title": "C1: implement - lane 1",
+                                   "status": "done"},
+                                  {"id": "t2", "title": "Idea 1", "status": "triage"}])
+    assert codes(ra.board_findings("b", "unused"), "ERROR") == []
