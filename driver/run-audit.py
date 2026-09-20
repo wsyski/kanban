@@ -27,6 +27,7 @@ REPO = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(REPO, "template"))   # the shared layer
 import board_schema  # noqa: E402  — the manifest's duration parser lives there
+import lanes  # noqa: E402  — base_code, and WORKER_CODES beside it
 import runs_util  # noqa: E402
 
 
@@ -43,9 +44,17 @@ CHAIN = _load(os.path.join(HERE, "doc-chain.py"), "doc_chain")
 # A run's normal vocabulary. Anything matching ERROR_VOCAB is a finding unless
 # it also matches one of these — a gate saying "nothing committed", a card
 # being unblocked, the lane opening.
+#
+# `(non-fatal)` is the driver's own marker for a line it deliberately carries on
+# from: a summary it could not write, a timing report that timed out, a hand-off
+# attachment that failed the first time. The WORD is not what makes a run clean —
+# the marker is — so the severity word must not fail the run. Measured 2026-09-20:
+# `WARNING: timing report timed out (non-fatal)` and its two siblings were E2
+# errors, which turned a healthy run permanently red (the summary is written once).
 BENIGN = (
     re.compile(r"NOTHING COMMITTED"),
     re.compile(r"no commit"),
+    re.compile(r"\(non-fatal\)"),
 )
 
 
@@ -203,11 +212,11 @@ def result_findings(rows):
     """Every worker card must report a result; the chain knows which are which."""
     out = []
     for row in rows:
-        code = CHAIN.base_code(row["code"])
+        code = lanes.base_code(row["code"])
         if not row.get("done"):
             continue        # still in flight: it has no result YET (reading "-"
                             # as a finished card that produced nothing is #32)
-        if code in CHAIN.WORKER_CODES and not (row.get("result") or "").strip():
+        if code in lanes.WORKER_CODES and not (row.get("result") or "").strip():
             out.append(("WARNING", "E7", f"{row['code']} finished with an empty result"))
     return out
 
@@ -381,7 +390,7 @@ def board_findings(slug, runs_dir):
             out.append(("ERROR", "E12",
                         f"{title} is still {status} — the board did not finish"))
     try:
-        procs = subprocess.run(["pgrep", "-af", "work kanban task"],
+        procs = subprocess.run(["pgrep", "-af", "work kanban [t]ask"],
                                capture_output=True, text=True)
         for line in procs.stdout.splitlines():
             if line.strip():
@@ -523,15 +532,17 @@ def resolve_run_dir(path):
     every caller to paste a timestamp would make auditing the live run harder than
     it was. So: point it at runs/ for the current run, or at runs/<run-id> for any
     earlier one — which is the whole reason the older ones are kept.
+
+    ONE copy, in `runs_util`: `doc-chain.py` resolves the same `--runs` the same way.
     """
-    import os
-    current = os.path.join(path, "current")
-    if os.path.isfile(current):
-        with open(current) as f:
-            run_id = f.read().strip()
-        if run_id and os.path.isdir(os.path.join(path, run_id)):
-            return os.path.join(path, run_id)
-    return path
+    return runs_util.resolve_run_dir(path)
+
+def looks_like_a_bot_run(path):
+    """A `bots-<ts>` run: state.json is what `--resume` reads, and run-summary.json is
+    the kanban driver's record. One without the other is the second driver's."""
+    return (os.path.isfile(os.path.join(path, "state.json"))
+            and not os.path.isfile(os.path.join(path, "run-summary.json")))
+
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
@@ -540,7 +551,18 @@ def main(argv=None):
     ap.add_argument("--board", help="the board directory (default: runs/..)")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
-    findings, rows, stats = audit(resolve_run_dir(a.runs), a.board)
+    runs = resolve_run_dir(a.runs)
+    if looks_like_a_bot_run(runs):
+        # Not this tool's business, and saying the wrong thing loudly is worse than
+        # saying nothing: driver_findings reads a bots run's log as a kanban driver
+        # that died mid-flight (no `ALL GATES COMPLETE`), which is a phantom E1.
+        sys.stderr.write(
+            f"{runs} is a BOT run (`bots/run-board.py` wrote it) — its gate is "
+            f"`bots/audit.py --run {runs}`; run-audit.py reads a kanban run's "
+            f"records (run-summary.json, chain.jsonl, verdicts.jsonl) and this "
+            f"directory has none of them.\n")
+        return 2
+    findings, rows, stats = audit(runs, a.board)
     if a.json:
         print(json.dumps({"findings": findings, "rows": rows, "stats": stats}, indent=2))
         return 1 if any(f[0] in ("ERROR", "WARNING") for f in findings) else 0

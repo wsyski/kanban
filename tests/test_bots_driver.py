@@ -166,6 +166,24 @@ def test_resume_refuses_a_run_it_cannot_find(tmp_path):
     assert "no run to continue" in str(run_driver(d, "--resume"))
 
 
+def test_a_dry_run_never_continues_a_run_a_session_produced(tmp_path):
+    """A dry run records the cards it RENDERS as done — that is what makes a board
+    walkable without spawning a session, and it is confined to its own bots-dry-<ts>
+    run. Pointed at a live run it marked every card done and printed ALL CARDS
+    COMPLETE with nothing run (2026-09-20), so the next real --resume would have
+    skipped the whole board."""
+    d = board(tmp_path, **{"auto-gates": []})
+    runs = d / "runs"
+    live = runs / "bots-20260920-000000"
+    (live / "cards").mkdir(parents=True)
+    (live / "state.json").write_text(json.dumps({"done": ["I1"], "held_gate": "Gi1"}))
+    (runs / "current-bots").write_text("bots-20260920-000000")
+    before = (live / "state.json").read_text()
+    message = str(run_driver(d, "--resume"))
+    assert "--dry-run" in message and "bots-dry-" in message, message
+    assert (live / "state.json").read_text() == before, "a dry run wrote the live run's state"
+
+
 def test_a_halted_run_is_continued_at_the_card_that_failed(tmp_path, capsys):
     """The cards that finished are not run again — the point of resuming a halt."""
     d = board(tmp_path, **{"auto-gates": []})

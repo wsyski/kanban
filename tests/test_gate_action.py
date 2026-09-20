@@ -32,8 +32,17 @@ class FakeCard:
     def kb(self, *args, capture=True):
         self.calls.append(args)
         if args[0] == "comment":
-            author = args[args.index("--author") + 1] if "--author" in args else "user"
-            self.human(args[-1], author=author)
+            # The driver's posts carry `--author`; the body is the positional beside
+            # the card id. Read them positionally so a flag added to the call does not
+            # silently make the AUTHOR the body this fake records.
+            rest = list(args[1:])
+            if "--author" in rest:
+                i = rest.index("--author")
+                author = rest[i + 1]
+                del rest[i:i + 2]
+            else:
+                author = "user"
+            self.human(rest[-1], author=author)
         return ""
 
     def driver_comments(self):
@@ -114,7 +123,14 @@ def test_a_board_owned_work_directory_says_so(monkeypatch, tmp_path):
 
 
 def test_a_work_directory_outside_git_is_named_as_such(monkeypatch, tmp_path):
+    """A work directory is usually still inside SOME repository — this one, or a board's
+    external tree — because `git -C WORKDIR` answers with the nearest enclosing one. The
+    probe is stubbed to the empty answer rather than relying on tmp_path being outside
+    every repo: pytest's tmp_path is whatever TMPDIR points at, and on a machine where
+    TMPDIR sits inside a repository (a Hermes profile directory is one) the real probe
+    answered "an EXTERNAL repository" and this test failed on correct behaviour."""
     monkeypatch.setattr(run, "WORKDIR", str(tmp_path))
+    monkeypatch.setattr(run, "git_at", lambda *a, **k: "")
     assert "not a git repository" in run.commit_target()
 
 

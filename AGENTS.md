@@ -18,7 +18,7 @@ per board under `boards/<slug>/`, driven by `driver/run.py` over `hermes kanban`
 
 ## Commands
 
-    test.sh                                  # the suite — never bare `python3 -m pytest` (the Hermes venv has no pytest)
+    ./test.sh                                  # the suite — never bare `python3 -m pytest` (the Hermes venv has no pytest)
     python3 driver/render-flow.py --check           # diagrams vs LANE_CARDS; run render-flow.py after touching the graph
     template/board_schema.py --schema                 # board.json options
     template/board_schema.py --any-host boards/*/board.json   # validate without this host's paths

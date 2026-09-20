@@ -19,15 +19,15 @@ import argparse
 import datetime
 import json
 import os
-import re
 import sys
 
-WORKER_CODES = ("I", "P", "TW", "C", "TI")
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.dirname(HERE)
+sys.path.insert(0, HERE)                             # runs_util lives here
+sys.path.insert(0, os.path.join(REPO, "template"))   # the shared layer
 
-
-def base_code(code):
-    """A card's code without its lane and round: `P1` / `P1-rev-1` -> `P`, `RVa1-r2` -> `RVa`."""
-    return re.match(r"[A-Za-z]*", code).group()
+import lanes  # noqa: E402  — base_code, and WORKER_CODES beside it
+import runs_util  # noqa: E402  — resolve_run_dir, one copy for both readers
 
 
 # Which card produces which hand-off, by role.
@@ -121,7 +121,7 @@ def analyze(recs, runs_dir=None):
             # a stale read. What still matters for an output path is F3 — a
             # leftover from an earlier run sitting where this card will write
             # (a refined idea surviving into a later run).
-            is_output = PRODUCED_BY.get(role) == base_code(code)
+            is_output = PRODUCED_BY.get(role) == lanes.base_code(code)
             if not os.path.exists(path):
                 if not is_output:
                     findings.append(f"F1 {code} lane {lane}: {role} missing at {path}")
@@ -150,7 +150,7 @@ def analyze(recs, runs_dir=None):
         # judge. (2026-09-13: C1 concluded exactly that; the empty `patch.diff` this used
         # to require was ceremony, not evidence, and a worker that skipped it failed the
         # audit for having done the right thing.)
-        if base_code(code) in WORKER_CODES and done \
+        if lanes.base_code(code) in lanes.WORKER_CODES and done \
                 and not produced["attached"] and not produced["staged"] \
                 and not str(done.get("result") or "").strip():
             findings.append(f"F5 {code} lane {lane}: finished with nothing attached, "
@@ -210,24 +210,6 @@ def history(runs_dir):
 
 
 
-def resolve_run_dir(path):
-    """A board's runs/ resolves to the run its `current` file names; a run
-    directory is taken as given.
-
-    Per-run directories mean `--runs boards/<slug>/runs` is ambiguous, and asking
-    every caller to paste a timestamp would make auditing the live run harder than
-    it was. So: point it at runs/ for the current run, or at runs/<run-id> for any
-    earlier one — which is the whole reason the older ones are kept.
-    """
-    import os
-    current = os.path.join(path, "current")
-    if os.path.isfile(current):
-        with open(current) as f:
-            run_id = f.read().strip()
-        if run_id and os.path.isdir(os.path.join(path, run_id)):
-            return os.path.join(path, run_id)
-    return path
-
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--runs", required=True,
@@ -237,7 +219,7 @@ def main(argv=None):
     ap.add_argument("--history", action="store_true",
                     help="this run's verdict ledger — its reviews and rework rounds")
     a = ap.parse_args(argv)
-    runs = resolve_run_dir(a.runs)
+    runs = runs_util.resolve_run_dir(a.runs)
     recs = load(runs)
     if recs is None:
         print(f"no chain log at {os.path.join(runs, 'chain.jsonl')} — "

@@ -3,8 +3,11 @@
 A dated record, in order: what ran, what the numbers were, what each run surfaced and what
 changed because of it. This is a log, not a description of the template —
 [README.md](README.md) and [DESIGN.md](DESIGN.md) are the current state, and where they
-disagree with this file, they win. Sections 1–6 are the 2026-09-13 session; §7 is the
-2026-09-15 run; §11 is the 2026-09-18 session, where a second driver joined the template.
+disagree with this file, they win. Sections 1–6 are the 2026-09-13 session; §7–§10 are
+2026-09-15 (two patches retired and the one-run mint, the first lane against an external
+repository, the gate-text fix, and the two attachment habits the card bodies now forbid);
+§11 is the 2026-09-18 session, where a second driver joined the template; §12 is
+2026-09-19 (the layering, a green CI, and both local models on both drivers).
 
 Every number here comes from the run directories under `boards/<slug>/runs/`, which are
 never deleted. Re-derive any of it with:
@@ -148,7 +151,7 @@ directories are the record.
 
 Same day, later: the cheap board renamed `minimal-development` → `is-even` and pointed at
 the local rig to exercise the new board option (`model`/`provider` — the WORK model, on
-every card the board files; see [DESIGN.md](DESIGN.md#two-models-one-precedence)). Stopped
+every card the board files; see [DESIGN.md](DESIGN.md), *Two models, one precedence*). Stopped
 by hand at 23:50, not timed out; its run directory is
 `boards/is-even/runs/is-even-20260913-233501/`.
 
@@ -199,7 +202,7 @@ The board that measured both was `goal-smoke` — `is-even`'s idea on the profil
 (`f9ea3a53`) and rebuilt from the four vault assets that remain. It was **removed the same
 day as redundant**: it is the same idea as `is-even`, so a probe changes `is-even`'s own
 parameters before the run (DESIGN.md, *Probing it*) instead of carrying a second board for
-it. Its record — run `runs/goal-smoke-20260915-071024`: 9 cards / 11.3 min of a 4.0 min
+it. Its record — run `goal-smoke-20260915-071024`: 9 cards / 11.3 min of a 4.0 min
 per-card ceiling, `RVp1`/`Gp1`/`RVa1`/`Gc1` PASS, audit 0 errors 0 warnings, doc chain 0
 findings, and the out-of-turn judge call answering `{"verdict": "done"}` on `I1` and `P1`
 with zero `continue` and zero `MissingSessionID` — and the archived board home are kept at

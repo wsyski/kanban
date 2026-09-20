@@ -24,9 +24,9 @@ how its runs went is not kept here — the runs describe themselves (§4).
 | `is-even` | one Python function (`is_even`) and its tests — the cheap smoke board, no build tool, no dependencies. Was `minimal-development` until 2026-09-13. It runs on the profiles' cloud models with the goal judge on `C` only (the canary for the judge after a `hermes update`); its README says how to point it at the local rig, and records the local-model runs | 1 | auto, 25 min |
 | `roman-evaluator-js` | a browser page: `roman-evaluator.html`, a DOM-free parsing module with unit tests, `run.sh`, two launch modes | 1 | auto, 20 min |
 | `roman-evaluator-java` | the same problem twice: a roman CLI (`roman-cli/`) then a spec-first Spring Boot service (`roman-service/`) consuming lane 1's rule; needs JDK 17, Maven, a warm `~/.m2` | 2 | auto, 20 min |
-| `portfolio-engineering` | a GPW small-cap research pipeline built into the Hermes `trader` profile (external `default-workdir`) | 1 | human, 60 min (default) |
-| `blade-workspace` | implements a committed plan, task by task, in an **external** repository (`default-workdir`): refinement, unit and integration tests on, the goal judge on `C` and `TI` only, human gates | 1 | human, 60 min |
-| `arena-federated-search` | the same shape against a second **external** repository: a Maven/Spring Boot multi-module service whose plan is all `mvn … test`, so unit tests are on and integration tests off (no `TI`/`RVc`); the goal judge on `C` only, human gates | 1 | human, 60 min |
+| `portfolio-engineering` | a GPW small-cap research pipeline built into the Hermes `trader` profile (external `default-workdir`) | 1 | auto, 60 min (default) |
+| `blade-workspace` | implements a committed plan, task by task, in an **external** repository (`default-workdir`): refinement, unit and integration tests on, the goal judge on `C` and `TI` only | 1 | Gi auto; Gp/Gc human, 60 min |
+| `arena-federated-search` | the same shape against a second **external** repository: a Maven/Spring Boot multi-module service whose plan is all `mvn … test`, so unit tests are on and integration tests off (no `TI`/`RVc`); the goal judge on `C` only | 1 | Gi auto; Gp/Gc human, 60 min |
 
 Every shipped board pins its review cards (`RVp`, `RVa`, `RVc` and their rework rounds)
 to a different model from the one that did the work — `"model_override":
@@ -373,7 +373,9 @@ run — so read the runs themselves:
     driver/runs-report.py --board <slug>                      # what runs/ holds, newest first
 
 `--runs boards/<slug>/runs` reads the run `runs/current` names;
-`--runs boards/<slug>/runs/<run-id>` reads that one.
+`--runs boards/<slug>/runs/<run-id>` reads that one. A `bots-<ts>` run has none of the
+records this reads, so `run-audit.py` names `bots/audit.py` and exits 2 rather than
+reporting a phantom "driver died" — see §5 for the second driver.
 
 **Audit every run; that is the loop's stopping rule.** `run-audit.py` exits 0 only when a
 finished run has no errors and no warnings. It reads the driver log (terminal state,

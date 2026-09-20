@@ -167,3 +167,24 @@ def upstream_hits_since(path, offset):
         return 0, None
     hits = [l.strip() for l in text.splitlines() if UPSTREAM_ERROR.search(l)]
     return len(hits), (hits[0] if hits else None)
+
+
+def resolve_run_dir(path):
+    """A board's runs/ resolves to the run its `current` file names; a run directory
+    is taken as given.
+
+    Per-run directories mean `--runs boards/<slug>/runs` is ambiguous, and asking every
+    caller to paste a timestamp would make auditing the live run harder than it was. So:
+    point it at runs/ for the current run, or at runs/<run-id> for any earlier one —
+    which is the whole reason the older ones are kept.
+
+    ONE copy: `run-audit.py` and `doc-chain.py` both read `--runs`, and the two
+    resolvers were byte-identical until they were folded in here.
+    """
+    current = os.path.join(path, "current")
+    if os.path.isfile(current):
+        with open(current) as f:
+            run_id = f.read().strip()
+        if run_id and os.path.isdir(os.path.join(path, run_id)):
+            return os.path.join(path, run_id)
+    return path

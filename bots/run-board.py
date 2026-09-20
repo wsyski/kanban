@@ -29,6 +29,11 @@ the one that proves it.
     bots/run-board.py --board boards/is-even            # run every lane
     bots/run-board.py --board boards/is-even --resume   # continue past a held gate
     bots/run-board.py --board boards/is-even --dry-run  # render prompts only
+
+A `--dry-run` renders every prompt into its own `runs/bots-dry-<ts>/` and writes
+nothing anywhere else: it moves no pointer, and it refuses `--resume`/`--rework` when
+the run they name is one a session produced — continuing such a run would record its
+cards as done without running them.
 """
 
 import argparse
@@ -160,7 +165,8 @@ def current_run(board_dir, *, resume=False, dry_run=False):
     human just accepted, and a mint here would silently restart the board from its
     first card with an empty `state.json` — the one failure a person meets rather
     than a developer. A DRY RUN never writes the pointer either: it renders into its
-    own `bots-dry-<ts>` scratch so it cannot repoint a live run.
+    own `bots-dry-<ts>` scratch so it cannot repoint a live run, and it refuses to
+    CONTINUE one — see the guard below for why.
     """
     runs = os.path.join(board_dir, "runs")
     pointer = os.path.join(runs, BOTS_POINTER)
@@ -174,6 +180,17 @@ def current_run(board_dir, *, resume=False, dry_run=False):
             raise SystemExit(
                 f"--resume found no run to continue ({pointer} names {run_id or 'nothing'}) "
                 f"— start a run without --resume")
+        # A dry run renders and RECORDS what it rendered as done — that is what makes
+        # a board walkable without spawning a session (the suite drives it that way),
+        # and it is exactly what must never land in a run a session produced: one
+        # `--dry-run --resume` against a live run marked every card done and printed
+        # ALL CARDS COMPLETE with nothing run (2026-09-20), so the next real --resume
+        # would skip the whole board. A dry run may only continue a dry run.
+        if dry_run and not os.path.basename(directory).startswith(DRY_PREFIX):
+            raise SystemExit(
+                f"--dry-run writes into its own {DRY_PREFIX}<ts> run only, and {run_id} "
+                f"is a run a session produced — continuing it would record those cards "
+                f"as done without running them. Drop --dry-run to answer its gate.")
         return directory
     prefix = DRY_PREFIX if dry_run else RUN_PREFIX
     run_id = prefix + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")

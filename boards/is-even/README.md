@@ -101,7 +101,7 @@ researcher's to find — a worker's `python3` may not.
     (`P1` 8.0, `I1` 5.0, `RVp1` 3.4, `TW1` 2.3, `C1` 1.8, `RVa1` 1.8). Audit exit 1 for one reason only —
     `E2`/`E17`: *the repo moved from 2688978 to 7a72fbf while this run was live*. A doc commit landed
     under the live run; that is the audit doing its job, not the board's.
-  - bots + `qwen38-27b` (`runs/bots-20260919-210517`): `ALL CARDS COMPLETE`, 6 cards, 31m48s of model
+  - bots + `qwen38-27b` (`runs/bots-20260919-203325`): `ALL CARDS COMPLETE`, 6 cards, 31m48s of model
     time (slowest `P1` 787s), audit **0 errors** — the first local bots run to pass.
   - kanban + `nex-n25-mini` (`runs/is-even-20260919-210601`): whole lane **including a rework round**
     (`C1-rev-1` 2.7 min, `RVa1-r2` 1.7 min), audit **0 errors**.

@@ -98,6 +98,30 @@ def test_a_traceback_in_the_log_is_an_error(tmp_path, monkeypatch):
     assert "E2" in codes(findings, "ERROR")
 
 
+def test_a_line_the_driver_carries_on_from_does_not_fail_the_run(tmp_path, monkeypatch):
+    """`(non-fatal)` is the driver's own marker for a line it continues past — a summary
+    it could not write, a timing report that timed out. The vocabulary reads
+    `warning|failed|error` off the log, so without the marker in BENIGN these were E2
+    errors, and a clean run went permanently red because the summary is written once
+    (measured 2026-09-20)."""
+    clean_probe(monkeypatch)
+    findings, _rows, _s = ra.audit(fixture(
+        tmp_path, log=GOOD_LOG[:3] + [
+            "[21:31:00] WARNING: timing report timed out (non-fatal)",
+            "[21:31:01] WARNING: summary generation failed (non-fatal): TypeError('x')",
+        ] + GOOD_LOG[3:]))
+    assert findings == [], findings
+
+
+def test_a_warning_the_driver_did_not_disclaim_is_still_an_error(tmp_path, monkeypatch):
+    """The marker is the exemption, never the word: a warning the driver did not carry
+    on from is exactly what E2 is for."""
+    clean_probe(monkeypatch)
+    findings, _rows, _s = ra.audit(fixture(
+        tmp_path, log=GOOD_LOG[:3] + ["[21:31:00] WARNING: the work directory moved"] + GOOD_LOG[3:]))
+    assert "E2" in codes(findings, "ERROR")
+
+
 def test_a_run_that_did_not_finish_is_an_error(tmp_path, monkeypatch):
     clean_probe(monkeypatch)
     findings, _rows, _s = ra.audit(fixture(tmp_path, log=GOOD_LOG[:3]))
@@ -516,6 +540,19 @@ def test_the_current_run_is_used_when_runs_is_given(tmp_path):
     flat = tmp_path / "boards" / "old" / "runs"
     flat.mkdir(parents=True)
     assert ra.resolve_run_dir(str(flat)) == str(flat)
+
+
+def test_a_bot_run_is_handed_to_the_other_auditor(tmp_path, capsys):
+    """This reads a KANBAN run's records, and a bots run has none of them — the log
+    scan alone would report the second driver as a driver that died mid-flight (a
+    phantom E1) on a run whose real gate is `bots/audit.py`. Measured 2026-09-20: a
+    clean bot run audited red through this door."""
+    run_dir = tmp_path / "boards" / "b" / "runs" / "bots-20260920-000000"
+    run_dir.mkdir(parents=True)
+    (run_dir / "state.json").write_text(json.dumps({"done": [], "held_gate": None}))
+    (run_dir / "driver.log").write_text("[10:00:00] lane 1: I1 -> Gi1\n")
+    assert ra.main(["--runs", str(run_dir)]) == 2
+    assert "bots/audit.py" in capsys.readouterr().err
 
 
 def test_a_work_directory_that_moved_fails_the_run(tmp_path):

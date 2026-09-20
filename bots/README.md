@@ -19,7 +19,7 @@ bots/run-board.py --board boards/<slug>                     # the driver alone
 bots/run-board.py --board boards/<slug> --resume            # accept a gate, or continue a halt
 bots/run-board.py --board boards/<slug> --rework "<reason>" # reject at a gate
 bots/run-board.py --board boards/<slug> --lane 2            # one lane
-bots/run-board.py --board boards/<slug> --dry-run           # render prompts, run nothing
+bots/run-board.py --board boards/<slug> --dry-run           # render prompts into bots-dry-<ts>; writes nothing else
 
 bots/audit.py --board boards/<slug>                         # exit 0 = the run is done
 bots/audit.py --run boards/<slug>/runs/bots-<ts> [--json]
@@ -181,6 +181,18 @@ Ctrl-C and `SIGTERM` both unwind through the same path: the board's lock is rele
 the cards that finished are recorded, and the run ends with `interrupted — … --resume
 continues this run` (exit 130) rather than a stack trace.
 
+### `--dry-run` and a live run
+
+A dry run renders each prompt into its own `runs/bots-dry-<ts>/` and writes nothing
+else — no pointer move, no session. It also walks the graph, which means it RECORDS
+the cards it rendered as done; that is what makes a board walkable without spawning
+anything, and it is confined to a `bots-dry-<ts>` run. So a dry run refuses
+`--resume`/`--rework` when the pointer names a run a session produced
+(`bots-<ts>`): one `--dry-run --resume` against a live run recorded every card as done
+and printed `ALL CARDS COMPLETE` with nothing run, after which the next real `--resume`
+would skip the whole board (measured 2026-09-20). Drop `--dry-run` to answer a real
+run's gate.
+
 ## Where the output goes
 
 ```
@@ -198,7 +210,8 @@ boards/<slug>/runs/
         cards/<card>.transcript.txt  what it answered
         cards/<card>.result.txt      the result field
         snapshots/, artifacts/, scratch/   the lane's hand-offs, at the paths the bodies name
-    bots-dry-<ts>/                   a --dry-run: renders prompts, moves no pointer
+    bots-dry-<ts>/                   a --dry-run: renders prompts, moves no pointer,
+                                     and continues only another bots-dry-<ts> run
 ```
 
 `runs/` is gitignored for both drivers; `work/` is tracked for both, and a human
@@ -219,7 +232,7 @@ and any ERROR or WARNING makes it non-zero. `demo.sh` runs it as its last step.
 | B4 | a review's last round does not PASS — a lane that shipped a refused deliverable |
 | B5 | a card blocked |
 | B6 | a result claims `CHANGED: <path>` that is not on disk |
-| B7 | a tool cache THIS RUN left in the work directory; one older than the run is an INFO, as the kanban audit's E16 reports it |
+| B7 | a tool cache THIS RUN left in the work directory — a WARNING here, where the kanban audit's E16 reports the same cache as an INFO: the worker contract forbids caches in `work/`, so the stricter reading is the one this driver, which cannot rely on the dispatcher to enforce it, keeps |
 | B8 | a lane hand-off (`<IDEA>`, `<REFINED>`, `<PLAN>`) empty or missing |
 
 The declared card list comes from `lanes.lane_cards`, not from what the run happens

@@ -112,12 +112,12 @@ def test_a_board_can_turn_the_goal_judge_off(monkeypatch):
     assert lanes.goal_args("C", cards=["C"]) == ["--goal", "--goal-max-turns", "40"]
     assert lanes.goal_args("C", cards=[]) == []
     assert lanes.goal_args("RVp", cards=["RVp"]) == []
-    monkeypatch.setattr(run, "board_defaults", lambda: {"goal-cards": []})
+    monkeypatch.setattr(run, "manifest", lambda: {"goal-cards": []})
     assert run._goal_args("coder", "C") == []
-    monkeypatch.setattr(run, "board_defaults", lambda: {})
+    monkeypatch.setattr(run, "manifest", lambda: {})
     assert run._goal_args("coder", "C") == [], \
         "the judge is opt-in: no 'goal-cards' key arms nothing"
-    monkeypatch.setattr(run, "board_defaults", lambda: {"goal-cards": ["C"]})
+    monkeypatch.setattr(run, "manifest", lambda: {"goal-cards": ["C"]})
     assert run._goal_args("coder", "C") == ["--goal", "--goal-max-turns", "40"]
     assert run._goal_args("coder", "TW") == []
 
@@ -667,7 +667,7 @@ def test_a_round_already_on_the_board_is_not_filed_again(monkeypatch):
 
 def test_a_revision_round_follows_goal_cards(monkeypatch):
     """Revision cards are filed with their base code, so `goal-cards` covers the rounds."""
-    monkeypatch.setattr(run, "board_defaults", lambda: {"goal-cards": ["C"]})
+    monkeypatch.setattr(run, "manifest", lambda: {"goal-cards": ["C"]})
     assert run._goal_args("coder", "C") == ["--goal", "--goal-max-turns", "40"]
     assert run._goal_args("coder", "TW") == []
     assert run._goal_args("researcher", "I") == []

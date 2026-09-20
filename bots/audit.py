@@ -30,6 +30,13 @@ import lanes  # noqa: E402
 # breaking. One that predates the run is not: the board never deletes what it did not
 # put there, and `driver/run-audit.py` reports those as E16 "left in place" rather than
 # failing the run for inherited litter. Graded the same way here, by mtime.
+#
+# One DELIBERATE difference from E16, kept: E16 reports a cache left by the run as an
+# INFO too (a note about the tree, which never fails a run), while B7 is a WARNING.
+# The kanban side has the dispatcher's breaker behind its cards; this driver has the
+# audit alone, and a cache in `work/` is the one contract breach a file check can see.
+# The asymmetry is the strictness, not an oversight — a run driven both ways is red
+# here and green there.
 CACHE_NAMES = ("__pycache__", ".pytest_cache", ".ruff_cache", ".mypy_cache", "node_modules")
 
 # `CHANGED: <paths> — …`: the paths a card says it wrote, up to the first dash, the

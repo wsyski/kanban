@@ -121,6 +121,19 @@ def test_a_new_run_opens_its_own_timing_segment(monkeypatch, tmp_path):
     assert not hasattr(run.record_timing, "_started")
 
 
+def test_a_refile_does_not_carry_the_previous_runs_timing_cache(monkeypatch, tmp_path):
+    """That cache is what makes record_timing log a card only when its status MOVED, and
+    a refile reuses the card TITLES (I1, Gi1 …): left standing, the new run's first tick
+    found a matching status for every card and logged none of them. It is run state, so
+    it lives on STATE and goes with the run (2026-09-20)."""
+    monkeypatch.setattr(run, "RUNS_ROOT", str(tmp_path))
+    monkeypatch.setattr(run, "CURRENT_RUN", str(tmp_path / "current"))
+    run.STATE.timing_prev["I1: idea - lane 1"] = {"status": "done", "last_run": None}
+    run.mint_run("r2", [(1, "## Idea\n\n### Done means\n- x\n", "c1")])
+    run.STATE.reset()                          # adopt_and_refile: mint, then reset
+    assert run.STATE.timing_prev == {}
+
+
 def test_minting_a_second_run_leaves_the_first_alone(monkeypatch, tmp_path):
     """The whole point: last run's evidence survives the next arm, so `run, audit,
     fix, run again` can compare. Before this, the next run deleted the numbers the

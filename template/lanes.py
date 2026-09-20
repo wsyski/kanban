@@ -356,8 +356,13 @@ import board_schema
 
 
 def base_code(code):
-    """A card's code without its lane and round: `P1`, `P1-rev-1` -> `P`; `RVa1-r2` -> `RVa`."""
+    """A card's code without its lane and round: `P1` / `P1-rev-1` -> `P`, `RVa1-r2` -> `RVa`."""
     return re.match(r"[A-Za-z]*", code).group()
+
+# The codes that DO the work, as opposed to a gate or a review. Read by the driver's
+# chain record (`run.py`), by doc-chain's hand-off check and by the auditor, so the
+# list lives with the grammar above it rather than in three copies of the tuple.
+WORKER_CODES = ("I", "P", "TW", "C", "TI")
 
 # The option set — and the per-lane subset an idea header may carry — is declared
 # once, in board_schema. A second copy here is what let the manifest and the

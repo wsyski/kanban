@@ -116,6 +116,11 @@ class RunState:
         self.armed = False
         self.reported = {}
         self.deadman_stuck = [frozenset()]   # the stuck set last notified, so one stall is one message
+        # The previous tick's per-card statuses, which record_timing logs a card from
+        # only when it MOVED. Run-scoped like everything else here: a refile reuses the
+        # card TITLES (I1, Gi1 …), so a cache carried across runs made a card whose
+        # status happened to match skip its card_log line in the new run.
+        self.timing_prev = {}
 
     def reset(self):
         """A refile: the previous run's notes are stale, not history to keep."""
@@ -125,6 +130,7 @@ class RunState:
         self.run_finished[0] = False
         self.announced.clear()
         self.reported.clear()
+        self.timing_prev.clear()
 
 
 STATE = RunState()
@@ -198,20 +204,18 @@ use_run(_read_current_run())
 
 
 def manifest():
-    """Board manifest. REPO is template_root (control files); WORKDIR is the
-    only tree git ever runs in — they differ when a board points elsewhere."""
+    """Board manifest, through the SAME reader the bot driver uses: `card_render`
+    owns the file's shape, and a second `json.load` here is one edit away from two
+    answers. REPO is template_root (control files); WORKDIR is the only tree git
+    ever runs in — they differ when a board points elsewhere."""
     try:
-        return json.load(open(BOARD_CFG))
+        return card_render.read_board(BOARD_DIR)
     except FileNotFoundError:
         # Same defaults create-board.sh prints in --help, so a board that loses
         # its manifest degrades to the documented shape rather than silently
         # growing integration cards nobody asked for.
         return {"default-workdir": os.path.join(BOARD_DIR, "work"), "lanes": 1,
                 "integration-tests": False, "auto-gates": []}
-
-
-def board_defaults():
-    return manifest()
 
 
 WORKDIR = manifest().get("default-workdir") or os.path.join(BOARD_DIR, "work")
@@ -300,7 +304,7 @@ def lane_options(lane):
     if parsed is None:
         return None
     headers, body = parsed
-    opts = lanes.resolve_lane_options(board_defaults(), headers, lane)
+    opts = lanes.resolve_lane_options(manifest(), headers, lane)
     opts["idea"] = body
     return opts
 
@@ -502,7 +506,7 @@ def _goal_args(assignee, code):
     codes in `goal-cards`; `[]` (the default) is none, and those cards complete on
     their own evidence (reviewers and gates still judge the work).
     """
-    cfg = board_defaults()
+    cfg = manifest()
     return lanes.goal_args(code, cards=cfg.get("goal-cards"),
                            max_turns=cfg.get("goal-max-turns"))
 
@@ -1062,7 +1066,15 @@ def verdict_code(state, v_card):
 
 
 def driver_comment(card_id, body):
-    kb("comment", "--author", DRIVER_AUTHOR, card_id, body)
+    """Every post the driver makes goes through here.
+
+    The author is what makes the driver's own words readable as the driver's:
+    `_comment_verdict`, `_replied` and the readiness watermark in
+    `answer_early_verdicts` all key on it, and a bare `comment` reads as a person's
+    verdict on the card. The flag rides LAST because the call keeps the shape
+    `(comment, <card-id>, <body>)` every reader of this board's argv expects.
+    """
+    kb("comment", card_id, body, "--author", DRIVER_AUTHOR)
 
 
 def _comment_verdict(comment):
@@ -1328,7 +1340,7 @@ def record_timing(state):
     # enrich cards whose status CHANGED since last tick with their runs
     # data (spawns/elapsed/budget) — self-contained evidence, no CLI at
     # report time; only fires on transitions, so cost is a handful of calls
-    cache = getattr(record_timing, "_prev", {})
+    cache = STATE.timing_prev
     for t, c in list(snap.items()):
         prev = cache.get(t)
         if prev is not None and prev.get("status") == c["status"]:
@@ -1349,8 +1361,8 @@ def record_timing(state):
             full.update(c)          # keep the enriched last_run/gave_up
             full = {**state[t], **full}
         card_log(full)
-    record_timing._prev = {t: {"status": c["status"], "last_run": c.get("last_run")}
-                           for t, c in snap.items()}
+    STATE.timing_prev = {t: {"status": c["status"], "last_run": c.get("last_run")}
+                         for t, c in snap.items()}
     entry = {"ts": datetime.datetime.now().isoformat(timespec="seconds"),
              "epoch": time.time(), "cards": snap}
     with open(STATE.timing_path, "a") as f:
@@ -1527,10 +1539,10 @@ def open_lane(state, lane):
         f"snapshot={snap} workdir={wd_state.split(' — ')[0]} idea={idea_head!r}")
     # The idea text is NOT posted to the board: raw ideas stay off it, and a
     # comment would be a second, mutable copy of the contract.
-    kb("comment", state[lanes.card_title("I", lane)]["id"],
-       f"lane {lane} opened: integration-tests={opts['integration-tests']} "
-       f"unit-tests={opts['unit-tests']} auto-gates={auto_gates()}, "
-       f"idea snapshot: {snap}")
+    driver_comment(state[lanes.card_title("I", lane)]["id"],
+                   f"lane {lane} opened: integration-tests={opts['integration-tests']} "
+                   f"unit-tests={opts['unit-tests']} auto-gates={auto_gates()}, "
+                   f"idea snapshot: {snap}")
     # The run's own beginning, on the record. The lane's inputs are on disk above and
     # the root is released next, so doc-chain's F3 ("a document older than the run is
     # a leftover") measures from HERE rather than from the first card's start — which
@@ -1616,10 +1628,8 @@ def rework_rounds(st):
 # read a leftover, and a worker that attached nothing produced
 # nothing. runs/chain.jsonl is per-run state: it lives in this run's own directory
 # and outlives the run, so an earlier run stays auditable.
-# Set once this process records anything for this run. A restart that finds the run
-# already finished has nothing to add, and must not re-write its summary (see
-# write_summary).
-WORKER_CODES = ("I", "P", "TW", "C", "TI")
+# WORKER_CODES is `lanes.WORKER_CODES`, beside the card-code grammar it is read
+# against: this file, doc-chain.py and run-audit.py all ask the same list.
 
 
 def load_chain_ids(run_dir=None):
@@ -1975,7 +1985,7 @@ def record_chain_done(state):
         if code.lower().startswith(VERDICT_CODES):
             verdict = "REWORK" if is_rework(result) else verdict_token(result)
         staged = []
-        if lanes.base_code(code) in WORKER_CODES:
+        if lanes.base_code(code) in lanes.WORKER_CODES:
             try:
                 staged = sorted(staged_files())
             except RuntimeError as e:
@@ -2012,7 +2022,7 @@ def note_empty_results(state):
     """
     noted = []
     for title, card in state.items():
-        if lanes.base_code(title.split(":")[0]) not in WORKER_CODES:
+        if lanes.base_code(title.split(":")[0]) not in lanes.WORKER_CODES:
             continue
         if card["status"] != "done" or (card.get("result") or "").strip():
             continue
@@ -2292,10 +2302,10 @@ def _tick():
             STATE.repromoted.add(card["id"])
             ledger({"event": "repromote", "code": code, "card_id": card["id"]})
             try:
-                kb("comment", card["id"],
-                   f"RE-PROMOTED (once): this card was blocked "
-                   f"({block_reason_text(card)}) — the board grants it one more "
-                   f"attempt; a second block halts the run.")
+                driver_comment(card["id"],
+                               f"RE-PROMOTED (once): this card was blocked "
+                               f"({block_reason_text(card)}) — the board grants it one more "
+                               f"attempt; a second block halts the run.")
             except Exception as e:
                 log(f"WARNING: could not comment on {code} ({e})")
             log(f"re-promoted {code} once — it blocked itself: "
@@ -2450,7 +2460,7 @@ def escalate(card_id, code, reason, key=None):
     key = key or code        # a halt that shares a gate's code keeps its own once
     if key not in STATE.escalated:
         STATE.escalated.add(key)
-        kb("comment", card_id, f"ESCALATION: {reason}{halt_guidance()}")
+        driver_comment(card_id, f"ESCALATION: {reason}{halt_guidance()}")
         ledger({"event": "escalation", "code": code, "card_id": card_id,
                 **({"key": key} if key != code else {}),
                 "findings": " ".join((reason or "").split())[:600]})
@@ -2713,7 +2723,7 @@ def halt_if_exhausted(st):
     # The reason must be readable where the human looks first: on the card
     # itself, not only in runs/halt.txt or the driver log.
     try:
-        kb("comment", c["id"], f"BOARD HALTED: {reason}{halt_guidance()}")
+        driver_comment(c["id"], f"BOARD HALTED: {reason}{halt_guidance()}")
     except RuntimeError as e:
         log(f"WARNING: halt comment failed ({e})")
     record_halt(reason)
@@ -2868,7 +2878,7 @@ def requeue_provider_starved(card, hits):
               f"is the provider, not the task. One retry; a second failure of any "
               f"kind halts the board.")
     try:
-        kb("comment", card["id"], reason)
+        driver_comment(card["id"], reason)
     except Exception as e:                      # never take the driver down here
         log(f"WARNING: could not comment on {code} ({e})")
     mark_attempt(card)
@@ -2959,9 +2969,9 @@ def card_stall(state, card, record, parents):
         ledger({"event": "repromote", "code": code, "card_id": cid,
                 "via": "dependency_wait"})
         try:
-            kb("comment", cid, f"RE-PROMOTED (once): this card's worker blocked it with "
-                               f"`--kind dependency` ({why}) and the engine returned it "
-                               f"to the pool; a second block halts the run.")
+            driver_comment(cid, f"RE-PROMOTED (once): this card's worker blocked it with "
+                                f"`--kind dependency` ({why}) and the engine returned it "
+                                f"to the pool; a second block halts the run.")
         except Exception as e:
             log(f"WARNING: could not comment on {code} ({e})")
         log(f"{code}: its worker blocked it with --kind dependency ({why[:90]}) — "
@@ -3234,7 +3244,9 @@ def finish_run():
         write_summary(board())
     except Exception as e:
         # The exception, not just the fact: this summary is the artefact run-audit
-        # requires (E4), so a bare "failed" leaves nothing to act on.
+        # requires (E4), so a bare "failed" leaves nothing to act on. The
+        # `(non-fatal)` marker is what the auditor reads: E2's vocabulary would
+        # otherwise fail a clean run over a line the driver carries on from.
         log(f"WARNING: summary generation failed (non-fatal): {e!r}")
     STATE.run_finished[0] = True
     log("ALL GATES COMPLETE — scenario finished")
@@ -3494,7 +3506,7 @@ def validate_armed(armed):
                   f"per-lane options {sorted(board_schema.PER_LANE)} may appear in an "
                   "idea.")
         try:
-            kb("comment", cid, body)
+            driver_comment(cid, body)
         except Exception as exc:          # a comment must never stop the driver
             log(f"  (could not comment on {cid}: {exc})")
     return False

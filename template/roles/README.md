@@ -54,6 +54,7 @@ instructions. It is left alone.
 cd template/roles
 PAT='/skill-sync:response-style:start/,/skill-sync:response-style:end/p'   # hub-owned block
 CON='/^## Kanban Cards/,/^## Shared Floor/p'                              # the card-precedence paragraph
+OWN='/skill-sync:response-style:start/q;p'                                # everything the repo owns
 for r in researcher trader; do
   diff <(sed -n "$PAT" $r/SOUL.md) <(sed -n "$PAT" coder/SOUL.md) >/dev/null \
     && echo "$r: hub block ok"   || echo "$r: HUB BLOCK DRIFTED"
@@ -61,12 +62,22 @@ for r in researcher trader; do
     && echo "$r: kanban ok"      || echo "$r: KANBAN PARAGRAPH DRIFTED"
 done
 for r in researcher coder trader; do
-  cmp -s $r/SOUL.md ~/.hermes/profiles/$r/SOUL.md && echo "$r: copy = live" || echo "$r: COPY DIFFERS FROM LIVE"
+  diff <(sed -n "$OWN" $r/SOUL.md) <(sed -n "$OWN" ~/.hermes/profiles/$r/SOUL.md) >/dev/null \
+    && echo "$r: hand-written part = live" || echo "$r: HAND-WRITTEN PART DRIFTED"
+  cmp -s $r/SOUL.md ~/.hermes/profiles/$r/SOUL.md \
+    && echo "$r: hub block = live" \
+    || echo "$r: hub block is a snapshot — live has moved on since the copy"
 done
 ```
 
-Every line should say `ok` or `copy = live`. Stop the second range at `## Shared Floor`, not at the
-managed block, or `trader`'s deliberate wording variant reads as drift.
+Every line should say `ok`, `= live`, or the one snapshot line. Stop the second range at
+`## Shared Floor`, not at the managed block, or `trader`'s deliberate wording variant reads as drift.
+
+**A whole-file `cmp` against the live profile was the wrong check** (changed 2026-09-20): it
+failed on all three copies over nothing but the hub block, which `/skill-sync` rewrites in a
+profile whenever `~/.agents` changes — so the check was red on a healthy repo and stopped being
+read. What this repo owns is everything ABOVE the block (`OWN`); the block is a snapshot, and a
+live one that has moved on is the normal state between refreshes, not drift.
 
 ## Refreshing the copies, and installing
 
