@@ -71,7 +71,7 @@ def _release(path, mine):
 
     A driver whose lock was taken over must not unlink its successor's: the takeover
     happens precisely because this process looked dead, and an unlink on existence
-    alone would hand the board back to two drivers at once.
+    alone would hand the board back to two runs at once.
     """
     try:
         if open(path).read().strip() == mine:

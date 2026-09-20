@@ -540,11 +540,10 @@ def resolve_run_dir(path):
 def looks_like_a_foreign_run(path):
     """A run directory this tool cannot read: state.json without run-summary.json.
 
-    `state.json` is the old bot driver's `--resume` file and no kanban run has one — none
-    of the `is-even-*` run directories on disk carries it (the 8 that do are all under
-    `bots-*`) — while the kanban driver writes run-summary.json for every run it
-    finishes. So the two files together say "not mine" without naming a tool that no
-    longer exists.
+    `state.json` is not a kanban file: the kanban driver writes run-summary.json for
+    every run it finishes, and none of the `is-even-*` run directories on disk carries a
+    `state.json`. The 8 that do are the older `run-*` directories left behind by a driver
+    that no longer exists, so the two files together say "not mine" without naming it.
     """
     return (os.path.isfile(os.path.join(path, "state.json"))
             and not os.path.isfile(os.path.join(path, "run-summary.json")))

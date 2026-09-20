@@ -8,8 +8,8 @@ prune ("never this script's"), AGENTS.md says run directories are never deleted,
 `start-board.sh` ever runs — therefore leaves a directory the board then treats as
 its current run.
 
-Measured on `is-even` (2026-09-13): two abandoned mints, `is-even-20260913-235032`
-and `is-even-20260913-235701`, no driver ever started in either, the newer one named
+Measured on `is-even` (2026-09-13): two abandoned mints, `run-20260913-235032`
+and `run-20260913-235701`, no driver ever started in either, the newer one named
 by `runs/current` — so the project's own definition of done went red for a run that
 never existed:
 
@@ -69,14 +69,14 @@ def _runs(tmp_path):
 # ---- the decision ---------------------------------------------------------
 
 def test_an_unstarted_mint_is_reused(tmp_path):
-    repo = _repo(tmp_path, run_id=f"{SLUG}-{MINTED}")
-    assert file_lanes.next_run_key(repo, SLUG, now=LATER) == f"{SLUG}-{MINTED}"
+    repo = _repo(tmp_path, run_id=f"run-{MINTED}")
+    assert file_lanes.next_run_key(repo, SLUG, now=LATER) == f"run-{MINTED}"
 
 
 def test_reusing_mints_no_second_directory(tmp_path):
     """The board's runs/ is the record. A filing adds a directory only when it
     starts a run."""
-    repo = _repo(tmp_path, run_id=f"{SLUG}-{MINTED}")
+    repo = _repo(tmp_path, run_id=f"run-{MINTED}")
     before = _runs(tmp_path)
     file_lanes.next_run_key(repo, SLUG, now=LATER)
     assert _runs(tmp_path) == before
@@ -95,20 +95,20 @@ def test_a_filing_that_succeeds_twice_still_holds_one_run(tmp_path):
 def test_a_run_a_driver_started_is_never_reused(tmp_path, name):
     """One path is enough: these are written by the driver and by nothing else, so
     a filing that finds any of them is looking at a run, not at an abandoned mint."""
-    repo = _repo(tmp_path, run_id=f"{SLUG}-{MINTED}", entries=[name])
+    repo = _repo(tmp_path, run_id=f"run-{MINTED}", entries=[name])
     key = file_lanes.next_run_key(repo, SLUG, now=LATER)
-    assert key == f"{SLUG}-{LATER:%Y%m%d-%H%M%S}", key
-    assert key != f"{SLUG}-{MINTED}"
+    assert key == f"run-{LATER:%Y%m%d-%H%M%S}", key
+    assert key != f"run-{MINTED}"
     assert key not in _runs(tmp_path)        # the decision is a name, not a directory
 
 
 def test_a_run_the_driver_started_stays_where_it_is(tmp_path):
     """Deliberately the same assertion as minting a second run leaves the first
     alone: a filing must never write into a directory that holds evidence."""
-    repo = _repo(tmp_path, run_id=f"{SLUG}-{MINTED}", entries=["driver.log", "chain.jsonl"])
+    repo = _repo(tmp_path, run_id=f"run-{MINTED}", entries=["driver.log", "chain.jsonl"])
     file_lanes.next_run_key(repo, SLUG, now=LATER)
-    assert _runs(tmp_path) == [f"{SLUG}-{MINTED}", "current"]
-    assert (tmp_path / "boards" / SLUG / "runs" / f"{SLUG}-{MINTED}" / "chain.jsonl").exists()
+    assert _runs(tmp_path) == ["current", f"run-{MINTED}"]
+    assert (tmp_path / "boards" / SLUG / "runs" / f"run-{MINTED}" / "chain.jsonl").exists()
 
 
 def test_a_current_naming_a_missing_directory_is_not_a_mint(tmp_path):
@@ -117,8 +117,8 @@ def test_a_current_naming_a_missing_directory_is_not_a_mint(tmp_path):
     recreate the very confusion (`current` naming a run nothing wrote) this
     prevents. `run.use_run` already resolves such a pointer; filing mints fresh."""
     repo = _repo(tmp_path, run_id="", current=True)
-    (tmp_path / "boards" / SLUG / "runs" / "current").write_text(f"{SLUG}-{MINTED}\n")
-    assert file_lanes.next_run_key(repo, SLUG, now=LATER) == f"{SLUG}-{LATER:%Y%m%d-%H%M%S}"
+    (tmp_path / "boards" / SLUG / "runs" / "current").write_text(f"run-{MINTED}\n")
+    assert file_lanes.next_run_key(repo, SLUG, now=LATER) == f"run-{LATER:%Y%m%d-%H%M%S}"
 
 
 @pytest.mark.parametrize("current", [None, "", "   "])
@@ -126,27 +126,27 @@ def test_no_run_named_means_a_fresh_key(tmp_path, current):
     repo = _repo(tmp_path)
     if current is not None:
         (tmp_path / "boards" / SLUG / "runs" / "current").write_text(current + "\n")
-    assert file_lanes.next_run_key(repo, SLUG, now=LATER) == f"{SLUG}-{LATER:%Y%m%d-%H%M%S}"
+    assert file_lanes.next_run_key(repo, SLUG, now=LATER) == f"run-{LATER:%Y%m%d-%H%M%S}"
 
 
 def test_a_board_that_has_never_been_created_has_no_runs_dir(tmp_path):
     """`--board boards/<slug>` on a fresh clone: nothing to reuse, and the
     decision must not create anything on its own."""
     assert file_lanes.next_run_key(str(tmp_path), SLUG, now=LATER) == \
-        f"{SLUG}-{LATER:%Y%m%d-%H%M%S}"
+        f"run-{LATER:%Y%m%d-%H%M%S}"
 
 
 def test_the_fresh_key_is_the_documented_shape(tmp_path):
-    """`<slug>-<YYYYmmdd-HHMMSS>`, the shape every run id in runs/ already has."""
+    """`run-<YYYYmmdd-HHMMSS>`, the shape every run id in runs/ already has."""
     key = file_lanes.next_run_key(_repo(tmp_path), SLUG, now=LATER)
-    assert key == f"{SLUG}-{LATER:%Y%m%d-%H%M%S}"
-    assert re.fullmatch(rf"{SLUG}-\d{{8}}-\d{{6}}", key)
+    assert key == f"run-{LATER:%Y%m%d-%H%M%S}"
+    assert re.fullmatch(rf"run-\d{{8}}-\d{{6}}", key)
 
 
 def test_the_default_clock_is_now(tmp_path):
     """The script passes no clock, so the shape above must hold for the real one."""
     key = file_lanes.next_run_key(_repo(tmp_path), SLUG)
-    stamp = datetime.datetime.strptime(key[len(SLUG) + 1:], "%Y%m%d-%H%M%S")
+    stamp = datetime.datetime.strptime(key[len("run-"):], "%Y%m%d-%H%M%S")
     assert abs((datetime.datetime.now() - stamp).total_seconds()) < 60
 
 

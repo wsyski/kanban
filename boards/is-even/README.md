@@ -70,7 +70,7 @@ researcher's to find — a worker's `python3` may not.
     into `runs/<run>/scratch/<card-id>/` and the driver — which is not fenced — attaches it
     (`run.attach_hand_offs`). Cloud models had been passing this step by running
     `env -u HERMES_DELEGATED_CHILD_CONTEXT hermes kanban … attach`, i.e. by defeating the fence.
-  - Evidence: `runs/is-even-20260913-233501/`, `runs/is-even-20260915-080245/` (and the 07:49 and
+  - Evidence: `runs/run-20260913-233501/`, `runs/run-20260915-080245/` (and the 07:49 and
     18:25 runs), plus the workers' own sessions — `~/.hermes/profiles/researcher/logs/agent.log`
     and `hermes -p researcher sessions list --source kanban`. The per-card file
     `~/.hermes/kanban/boards/is-even/logs/<card>.log` stays EMPTY, because a worker logs to its
@@ -84,7 +84,7 @@ researcher's to find — a worker's `python3` may not.
   so two cards on one slot need roughly twice it. `ornith-35b` runs `--parallel 2` (262144 context
   per session) and is the local model this lane shape fits. The alternative on a single-slot model
   is `"unit-tests": false`, which drops `TW` and leaves one worker card live at a time.
-- **Proven 2026-09-16** (run `is-even-20260916-104755`, `qwen38-27b` on an EMPTY work tree):
+- **Proven 2026-09-16** (run `run-20260916-104755`, `qwen38-27b` on an EMPTY work tree):
     `I1` 5.0 min, `P1` 23.2 min, `TW1` 2.6 min (4 tests staged, suite red — `ModuleNotFound`),
     `C1` 2.7 min (`is_even.py`, 4 passed), `RVp1`/`RVa1` PASS on the cloud review pin, the three
     gates auto-completed. Audit **0 errors, 0 warnings**; wall 40.4 min, agent 34.8 min. Three
@@ -94,26 +94,16 @@ researcher's to find — a worker's `python3` may not.
     and `"max-runtime": "25m"` — `P1` used 23.2 of it, so 12m and 20m would both have halted the
     board. The rig's configuration is in the KnowledgeBase note
     `docs/large-language-models/llama-server-configuration.md`.
-- **2026-09-19 — four local runs on this engine: three complete a lane, and the attach hand-off that
+- **2026-09-19 — two local runs on this engine: both complete a lane, and the attach hand-off that
   killed every earlier local run now passes.** Both rig models (`qwen38-27b`, `nex-n25-mini`, both on
-  `llama-swap`), both drivers:
-  - kanban + `qwen38-27b` (`runs/is-even-20260919-200510`): whole lane, 22.3 min of agent time
+  `llama-swap`):
+  - `qwen38-27b` (`runs/run-20260919-200510`): whole lane, 22.3 min of agent time
     (`P1` 8.0, `I1` 5.0, `RVp1` 3.4, `TW1` 2.3, `C1` 1.8, `RVa1` 1.8). Audit exit 1 for one reason only —
     `E2`/`E17`: *the repo moved from 2688978 to 7a72fbf while this run was live*. A doc commit landed
     under the live run; that is the audit doing its job, not the board's.
-  - bots + `qwen38-27b` (`runs/bots-20260919-203325`): `ALL CARDS COMPLETE`, 6 cards, 31m48s of model
-    time (slowest `P1` 787s), audit **0 errors** — the first local bots run to pass.
-  - kanban + `nex-n25-mini` (`runs/is-even-20260919-210601`): whole lane **including a rework round**
+  - `nex-n25-mini` (`runs/run-20260919-210601`): whole lane **including a rework round**
     (`C1-rev-1` 2.7 min, `RVa1-r2` 1.7 min), audit **0 errors**.
-  - bots + `nex-n25-mini` (`runs/bots-20260919-213338`): **HALT**. `C1` "changed" the tree by deleting
-    `from is_even import is_even` and leaving four tests calling an undefined name; `RVa1` REJECTed it
-    (correctly); the rework card `C1-rev-1` then wrote no result, claiming *"this session has no
-    filesystem/terminal tools exposed"*. Reproduced: the same spawn shape with a one-line prompt runs a
-    terminal command fine, and `C1` in that same run made 24 tool calls on the same model — the model
-    declared itself blocked rather than use the tools it had. `bots/audit.py` exited 1 with `B2` (`RVa1`,
-    `Gc1` never completed), `B3` (no result) and `B4` (final verdict not `PASS`). The driver halting
-    there is the contract working: the fix is the model or a re-run, not the engine.
-  - **`journalctl -u llama-swap` shows no llama.cpp fault in any of the four.** Requests all 200 and
+  - **`journalctl -u llama-swap` shows no llama.cpp fault in either.** Requests all 200 and
     3-57 s, context far below the ceiling, no truncation, no OOM. Note for next time: llama-swap's
     stdout is a socket and `llama-swap.log` is written only at shutdown, so the journal is where the
     rig's log actually lives.

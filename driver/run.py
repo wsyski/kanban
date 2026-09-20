@@ -204,7 +204,7 @@ use_run(_read_current_run())
 
 
 def manifest():
-    """Board manifest, through the SAME reader the bot driver uses: `card_render`
+    """Board manifest, through the SAME reader: `card_render`
     owns the file's shape, and a second `json.load` here is one edit away from two
     answers. REPO is template_root (control files); WORKDIR is the only tree git
     ever runs in — they differ when a board points elsewhere."""
@@ -3624,7 +3624,7 @@ def acquire_lock():
 
     The rule itself — a DEAD holder's lockfile taken over rather than refused, a LIVE
     one refused, release only while the lock is still ours — lives in `driver_lock`,
-    which the bot driver takes too: both build in the same `work/`, so the two must not
+    which every door takes: they all build in the same `work/`, so two of them must not
     be able to disagree about who holds the board."""
     _, note = driver_lock.take(RUNS_ROOT, "kill it or remove the lockfile")
     if note:

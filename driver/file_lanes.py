@@ -97,13 +97,14 @@ def next_run_key(repo, board, now=None):
 
     Reusing the id is what keeps `runs/` honest — one directory per armed idea rather
     than one per filing attempt. `create-board.sh` is the only caller, and the shape of
-    a fresh key is the one every run id in `runs/` already has, so a run's name says
-    when it was filed and nothing else.
+    a fresh key is the one every run id in `runs/` already has — `run-<YYYYmmdd-HHMMSS>`
+    — so a run's name says when it was filed and nothing else; the board it belongs to
+    is the directory it sits in.
     """
     reuse = unstarted_mint(repo, board)
     if reuse:
         return reuse
-    return f"{board}-{(now or datetime.datetime.now()):%Y%m%d-%H%M%S}"
+    return f"run-{(now or datetime.datetime.now()):%Y%m%d-%H%M%S}"
 
 
 

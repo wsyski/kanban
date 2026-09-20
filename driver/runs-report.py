@@ -52,9 +52,7 @@ def current_run(runs):
 
 # The driver's own state, in runs/ itself whatever the layout: the log it appends
 # to, its lock, the pointer naming the live run.
-# `current-bots` is a pointer file left by a driver that no longer exists; it sits
-# beside `current` and names a `bots-<ts>` run, which this report lists like any other.
-BOARD_LEVEL = ("driver.log", "driver.lock", "current", "current-bots")
+BOARD_LEVEL = ("driver.log", "driver.lock", "current")
 # A pre-per-run layout's own subdirectories — run state, but not a run directory.
 FLAT_SUBDIRS = ("snapshots", "artifacts", "cards", "scratch", "patches")
 

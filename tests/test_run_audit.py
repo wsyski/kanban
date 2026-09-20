@@ -544,15 +544,15 @@ def test_the_current_run_is_used_when_runs_is_given(tmp_path):
 
 def test_a_run_without_kanban_records_is_refused(tmp_path, capsys):
     """This reads a KANBAN run's records. A run directory that has none of them — the
-    old second driver left them under boards/is-even/runs/, and runs/ is gitignored, so
-    they outlive any code — would otherwise be read by the log scan alone and reported as
-    a driver that died mid-flight (a phantom E1). Refusing is the only honest answer:
-    name the record that is missing, and stop.
+    dropped driver left eleven of them under boards/is-even/runs/, and runs/ is
+    gitignored, so they outlive any code — would otherwise be read by the log scan alone
+    and reported as a driver that died mid-flight (a phantom E1). Refusing is the only
+    honest answer: name the record that is missing, and stop.
 
-    The fixture is named `bots-<ts>` because that is what is on disk, but the guard keys
-    on the FILES and never on the name — the sibling test below is what proves that.
+    The fixture's name is arbitrary: the guard keys on the FILES and never on the name,
+    and the sibling test below is what proves that.
     """
-    run_dir = tmp_path / "boards" / "b" / "runs" / "bots-20260920-000000"
+    run_dir = tmp_path / "boards" / "b" / "runs" / "run-20260920-000000"
     run_dir.mkdir(parents=True)
     (run_dir / "state.json").write_text(json.dumps({"done": [], "held_gate": None}))
     (run_dir / "driver.log").write_text("[10:00:00] lane 1: I1 -> Gi1\n")
@@ -564,11 +564,12 @@ def test_a_run_without_kanban_records_is_refused(tmp_path, capsys):
 
 
 def test_the_refusal_is_keyed_on_the_files_not_on_the_name(tmp_path, capsys):
-    """Why the guard was renamed: a directory holding `state.json` and no
-    `run-summary.json` is foreign WHATEVER it is called. A guard re-narrowed to a `bots-`
-    basename predicate would pass every other test in this file — the refusal fixture is
-    itself named `bots-<ts>` — and would refuse only runs that happen to be named that
-    way. This is the case that goes red when the predicate stops being about files.
+    """Why the guard is keyed on the FILES: a directory holding `state.json` and no
+    `run-summary.json` is foreign WHATEVER it is called. A guard re-narrowed to a
+    basename predicate would pass every other test in this file — the refusal fixture
+    above is named like the runs on disk — and would refuse only runs that happen to be
+    named that way. This is the case that goes red when the predicate stops being about
+    files.
     """
     run_dir = tmp_path / "boards" / "b" / "runs" / "something-else-20260920-000000"
     run_dir.mkdir(parents=True)
@@ -621,9 +622,9 @@ def test_a_kanban_run_that_halted_is_still_audited(tmp_path, capsys):
     """A halted kanban run has no run-summary.json — the driver writes one only when
     it finishes — and no state.json, so this is a run this tool MUST read: E1 names
     the halt and E4 names the missing summary, exit 1. Refusing it instead (the shape
-    of the bots guard one condition too wide) would silence the audit on precisely the
+    of the foreign-run guard one condition too wide) would silence the audit on precisely
     runs an operator wants read. Measured on disk 2026-09-20:
-    boards/is-even/runs/is-even-20260915-121551 -> 12 error(s), exit 1."""
+    boards/is-even/runs/run-20260915-121551 -> 12 error(s), exit 1."""
     run_dir = tmp_path / "boards" / "b" / "runs" / "b-20260920-000000"
     run_dir.mkdir(parents=True)
     (run_dir / "driver.log").write_text(

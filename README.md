@@ -401,7 +401,7 @@ Every halt and what it says: [DESIGN.md](DESIGN.md#stall-classes).
 
 **Worker sessions** are not in `runs/`. Each card's worker runs in its assignee
 profile's session store, tagged `source=kanban` and titled `Work kanban task <task-id>`.
-Hermes Desktop hides them from every session list, the Bots tab included, so read them
+Hermes Desktop hides them from every session list, so read them
 with the CLI:
 
     hermes -p coder sessions list --source kanban --limit 20

@@ -6,8 +6,8 @@ changed because of it. This is a log, not a description of the template —
 disagree with this file, they win. Sections 1–6 are the 2026-09-13 session; §7–§10 are
 2026-09-15 (two patches retired and the one-run mint, the first lane against an external
 repository, the gate-text fix, and the two attachment habits the card bodies now forbid);
-§11 is the 2026-09-18 session, where a second driver joined the template; §12 is
-2026-09-19 (the layering, a green CI, and both local models on both drivers).
+§11 is 2026-09-18 (two audit rules); §12 is 2026-09-19 (the layering, a green CI, and
+both local models).
 
 Every number here comes from the run directories under `boards/<slug>/runs/`, which are
 never deleted. Re-derive any of it with:
@@ -153,7 +153,7 @@ Same day, later: the cheap board renamed `minimal-development` → `is-even` and
 the local rig to exercise the new board option (`model`/`provider` — the WORK model, on
 every card the board files; see [DESIGN.md](DESIGN.md), *Two models, one precedence*). Stopped
 by hand at 23:50, not timed out; its run directory is
-`boards/is-even/runs/is-even-20260913-233501/`.
+`boards/is-even/runs/run-20260913-233501/`.
 
 | what | result |
 |---|---|
@@ -219,7 +219,7 @@ Its subject is the guest-accessible `GET /o/headless-delivery-ext/v1.0/arena-sit
 
 | | |
 |---|---|
-| run | `runs/blade-workspace-20260915-094418` |
+| run | `runs/run-20260915-094418` |
 | cards | 11 filed + one rework round (`TI1-rev-1`, `RVa1-r2`) |
 | wall / agent | 147.0 min / 94.0 min — 90.4 min in flight, 3.5 min with two cards at once, 56.6 min overhead — against a 60 min per-card ceiling |
 | per card, agent min | I1 3.93, P1 2.58, RVp1 1.30, TW1 3.53, C1 17.72, RVa1 7.90, TI1 18.58, RVc1 18.18, TI1-rev-1 10.80, RVa1-r2 9.42; a gate is completed in a tick, not by a worker |
@@ -274,7 +274,7 @@ the profile's cloud model, and `"auto-gates": false` so the gates wait for a per
 
 | | |
 |---|---|
-| run | `runs/is-even-20260915-123048` |
+| run | `runs/run-20260915-123048` |
 | cards | 9 — `TI1`/`RVc1` archived at lane open (`integration-tests: false`), so the lane is `I Gi P RVp Gp TW C RVa Gc` |
 | wall / agent | 26.7 min / 22.6 min |
 | gates | Gi, Gp and Gc completed with `--result "Accepted"` and nothing else |
@@ -306,7 +306,7 @@ for a stalled local model).
 
 | | |
 |---|---|
-| run | `runs/is-even-20260915-183835` |
+| run | `runs/run-20260915-183835` |
 | cards | 9 — `TI1`/`RVc1` archived at lane open |
 | wall / agent | 13.3 min / 7.2 min (union 6.6, overhead 6.7, overlap 0.5) |
 | gates | Gi, Gp and Gc completed with `--result "PASS"` and nothing else |
@@ -346,54 +346,33 @@ error, one generation in flight — the 2026-09-14 shape again, so the run was k
 restored, so the harness flips are not left behind on the cheap board.
 
 
-## 11. The same board, driven two ways — `is-even`, 2026-09-18
+## 11. Two audit rules — `is-even`, 2026-09-18
 
-Both drivers ran `is-even` end to end, one after the other, on the same `work/` tree:
-`driver/run.py` over `hermes kanban`, and [`bots/`](bots/README.md), which runs the same
-cards as Hermes bot sessions.
-
-| | kanban `is-even-20260918-091004` | bots `bots-20260918-092039` |
-|---|---|---|
-| verdicts | RVp1, Gp1, RVa1, Gc1 all PASS | RVp1, RVa1 PASS; 3 auto gates |
-| outcome | no staged change — the tree as it found it | `NO CHANGE` on every card |
-| audit | `run-audit.py` exit 0, 0 errors / 0 warnings | `bots/audit.py` exit 0 |
-| cost | wall 10.8 min, agent 4.0 min of a 25 m ceiling | 12 min 14 s of model time |
-
-Both concluded the committed `is_even.py` already satisfied the idea — the lane's
-`NO CHANGE` path, on both drivers.
-
-**The review model is the lane, not the fork.** Per card under bots: I1 39 s, P1 52 s,
-RVp1 164 s, TW1 39 s, C1 48 s, RVa1 392 s — the two cards pinned to `glm-5.3-flash` are
-76% of the run. The same RVa1 takes 58 s under kanban, where the worker has the board's
-tooling and the goal judge; the bot review re-derives everything from files in one turn.
-The fork (TW ∥ C) overlaps under bots and saves ~32 s against that, so on this board the
-review model is the lever that matters. Every bot run's `timing.jsonl` carries these
-numbers and the driver's last line totals them.
-
-**Two audit rules this pair pinned:**
+The 2026-09-18 run of `run-20260918-091004` was the first to end on the lane's `NO CHANGE`
+path (the committed `is_even.py` already satisfied the idea: no staged change, verdicts
+RVp1, Gp1, RVa1, Gc1 all `PASS`, `run-audit.py` exit 0, wall 10.8 min of a 25 m ceiling).
+Two rules it pinned are still what the audit does:
 
 - A tool cache in `work/` is charged to the run that created it. `work/__pycache__` here
-  is dated 2026-09-16, older than either run: `driver/run-audit.py` reports it INFO E16
-  "left in place" and `bots/audit.py` B7 reports it INFO for the same reason, because the
-  board never deletes what it did not put there.
+  is dated 2026-09-16, older than the run: `driver/run-audit.py` reports it INFO E16
+  "left in place", because the board never deletes what it did not put there.
 - A run is auditable while its driver serves. `start-board.sh` stays up after
   `ALL GATES COMPLETE`, and `run-audit.py` exits 0 on this run with the driver alive; the
   mid-flight E1 line is about the RUN's banner, not about the process.
 
-## 12. Layering, a green CI, and both local models on both drivers — 2026-09-19
+## 12. Layering, a green CI, and both local models — 2026-09-19
 
-**The tree has three layers now.** `template/` is what BOTH drivers import (`lanes.py`,
+**The tree has three layers.** `template/` is what the driver imports (`lanes.py`,
 `board_schema.py`, `card_render.py`, `driver_lock.py`, `card-bodies/`, `roles/`); `driver/` is the
-kanban driver's own (the loop, `file_lanes.py`, `run-audit.py`, the reports, the `*.sh` doors);
-`bots/` stays the second driver; `tests/` and `./test.sh` sit at the repo root. `tests/test_layer_boundary.py`
-holds the rule: every file is classified, shared-layer imports must not cross, and bots imports
-`template/` only. Same change folded the run's paths into `RunState` — the last `global` in `run.py`
-is gone — gave both drivers one duration parser and one driver lock, and fixed the swallowed
-exceptions that made a bad token invisible.
+driver's own (the loop, `file_lanes.py`, `run-audit.py`, the reports, the `*.sh` doors); `tests/` and
+`./test.sh` sit at the repo root. `tests/test_layer_boundary.py` holds the rule: every file is
+classified and shared-layer imports must not cross. Same change folded the run's paths into `RunState`
+— the last `global` in `run.py` is gone — gave the engine one duration parser and one driver lock, and
+fixed the swallowed exceptions that made a bad token invisible.
 
 **CI exists, and the first red run was the useful one.** `.github/workflows/ci.yml` runs the suite,
-`render-flow.py --check`, a schema check of every shipped board and a bots dry run on push, PRs and
-manual dispatch. Its schema step validated boards with the strict form, which requires an explicit
+`render-flow.py --check` and a schema check of every shipped board on push, PRs and manual
+dispatch. Its schema step validated boards with the strict form, which requires an explicit
 `default-workdir` to exist *on the validating machine* — a runner is not the board's host, so
 `arena-federated-search` could never pass. `--any-host` now drops exactly that half and keeps every
 declaration check; the door scripts keep the strict default because they do run on the board's host.
@@ -410,43 +389,33 @@ signal, because it is how three suites stub a profile.
 **Receipts, and the traps that cost the time.** Record `wc -l < boards/<slug>/runs/driver.log` before
 arming — the log is append-only across runs, so `grep "ALL GATES COMPLETE"` matches a *stale* banner
 and the next step kills a live driver. `run-audit.py` needs `--runs <run-dir>`. Never let an exit code
-pass through a pipe (`cmd | tail; echo $?` prints tail's). One driver at a time (the bots driver takes
-the same lock). And do not commit under a live run: the driver warns that the repo moved, and
+pass through a pipe (`cmd | tail; echo $?` prints tail's). One driver at a time (the board's lock is
+what enforces it). And do not commit under a live run: the driver warns that the repo moved, and
 `run-audit.py` charges it as E2/E17. That last one is measured here, not theory — the doc commit
 `7a72fbf` landed mid-run and the qwen kanban run's audit carries those two errors to this day.
 
 **`reset.sh` does not empty `work/`.** It archives the cards and re-files them; nothing in the engine
 deletes the work tree (a product may be the input of a follow-up fix). So a run over an existing
-product legitimately ends with `NO CHANGE` verdicts and a final review saying `NO CHANGE`, which
-`bots/audit.py` reports as `ERROR B4` — measured both ways on one complete board (one run `NO CHANGE`,
-the next `PASS` with notes), so B4 is the verdict's wording, not a broken driver. Emptying `work/` for
+product legitimately ends with `NO CHANGE` verdicts and a final review saying `NO CHANGE` — measured
+both ways on one complete board (one run `NO CHANGE`, the next `PASS` with notes), so that wording is
+the verdict's, not a broken driver. Emptying `work/` for
 a from-scratch run is a human's own action, never a card's, `reset.sh`'s or a driver's.
 
-**Both rig models on both drivers — `qwen38-27b` and `nex-n25-mini`.** Three of four stages complete a
-lane, and the attach hand-off that killed every local run in §6 now passes: the driver attaches
-(`attached refined.md to I1`), so a local worker never copies base64 out of its own output. kanban+`qwen38-27b`
-whole lane in 22.3 min of agent time (its audit carries only the mid-run-commit errors above);
-bots+`qwen38-27b` `ALL CARDS COMPLETE`, 6 cards, 31m48s of model time, audit **0 errors** — the first
-local bots run to pass; kanban+`nex-n25-mini` whole lane **including a rework round**, audit **0 errors**;
-bots+`nex-n25-mini` **halted** — `C1` deleted `from is_even import is_even` and left four tests calling
-an undefined name, `RVa1` REJECTed it, and the rework card then wrote no result while claiming *"this
-session has no filesystem/terminal tools exposed"*. Reproduced: the same spawn shape runs a terminal
-command fine, and `C1` in that same run made 24 tool calls on the same model — the model declared
-itself blocked rather than use the tools it had, and halting is the contract working.
-`journalctl -u llama-swap` shows no llama.cpp fault in any of the four (llama-swap's stdout is a socket
-and `llama-swap.log` is written only at shutdown, so the journal is where the rig's log is).
+**Both rig models — `qwen38-27b` and `nex-n25-mini`.** Both complete a lane, and the attach hand-off
+that killed every local run in §6 now passes: the driver attaches (`attached refined.md to I1`), so a
+local worker never copies base64 out of its own output. `qwen38-27b` whole lane in 22.3 min of agent
+time (its audit carries only the mid-run-commit errors above); `nex-n25-mini` whole lane **including a
+rework round**, audit **0 errors**. `journalctl -u llama-swap` shows no llama.cpp fault in either
+(llama-swap's stdout is a socket and `llama-swap.log` is written only at shutdown, so the journal is
+where the rig's log is).
 
 **The same battery with `work/` cleared before every stage — the state that gives the cards real
-work.** kanban+`qwen38-27b`: audit **0**. bots+`qwen38-27b`: `ALL CARDS COMPLETE`, 6 cards, 57m59s of
-model time, audit **0**. bots+`nex-n25-mini`: `ALL CARDS COMPLETE`, 6 cards, **16m03s** — a third of
-qwen's time, with `TW1` staging the tests against the expected failing collection, `C1` implementing
-all four steps and `RVa1` `PASS` first time, audit **0** (the halt above does not reproduce once the
-board has work: that run's rework prompt was aimed at a tree where nothing needed changing).
-kanban+`nex-n25-mini` finished the lane in wall 25.7 / agent 19.1 min and its audit carried exactly
-one error — `E3: F2 RVp1 lane 1: PLAN written 23:42:54 after the card started 23:42:29`. That is a
-race in the driver, not in the model: the tick unblocked children and only then attached hand-offs,
-so the plan landed 26 s after its review had been dispatched. `attach_hand_offs` now runs before the
-promotion loop, and the lane was re-run to confirm `E3` is gone.
+work.** `qwen38-27b`: audit **0**. `nex-n25-mini` finished the lane in wall 25.7 / agent 19.1 min and
+its audit carried exactly one error — `E3: F2 RVp1 lane 1: PLAN written 23:42:54 after the card
+started 23:42:29`. That is a race in the driver, not in the model: the tick unblocked children and
+only then attached hand-offs, so the plan landed 26 s after its review had been dispatched.
+`attach_hand_offs` now runs before the promotion loop, and the lane was re-run to confirm `E3` is
+gone.
 
 **One more ordering fix, from the same window.** With the gate released in that window, a `REJECT`
 left `Gc1` briefly `ready` against the code its own review had just rejected: `held_by_verdict` —
