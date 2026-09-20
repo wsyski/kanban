@@ -169,17 +169,50 @@ that stopped existing. A content-level degradation is invisible to it entirely.
   disappears at 10 days — before a two-week outage could be diagnosed. `cron/output/` is
   capped by **run count**, so it is already a long-lived sink for a daily job (~2 months on
   `87ed28ea20bb`) and only days for an hourly one (`ee40dd6115a2`): the digest capture is a
-  sink for whatever it prints, at a cadence-dependent horizon.
+  sink for whatever it prints, at a cadence-dependent horizon. None of them is a *record*:
+  the vault is clobberable and 14d, `cron/output/` is untracked and capped by run count,
+  `run/` and `cache/` are gitignored (`.gitignore:38`, `:54`), and even the replay source of
+  truth is unversioned (`.gitignore:23 **/cron/executions.db*`).
+- **The durable sink has to be created, and the profile repo is the only place that
+  versions one.** A file written directly under `<profile>/cron/` that no ignore pattern
+  matches is committed and pushed by the hourly `sync-hermes-profiles.sh`, giving unbounded
+  history through git, outside the vault repo, and out of reach of the sync that ate the
+  research section. Verified with `git check-ignore`: `trader/cron/analyst_status.log` and
+  `trader/cron/analyst_skip_state.json` are **trackable**, while
+  `**/cron/jobs.json`, `**/cron/executions.db*`, `**/cron/output`, `**/cron/catch_up_occurrences`
+  and `**/cron/ticker_*` are ignored — so the pattern the profile already uses for run state
+  is exactly the non-durable class, and the new sink must not borrow those names. One
+  consequence to plan for: the autocommit is **paused for a board run's lifetime**, so during
+  a lane the record persists locally and is pushed when autocommit resumes.
+- **The recorder has this lane's failure class, one level up.** The sink is only durable
+  because `sync-hermes-profiles.sh` versions it — and that script does not live in the repo it
+  protects. `~/.hermes/scripts/sync-hermes-profiles.sh` is a 17-line wrapper that `exec`s
+  `KnowledgeBase/assets/infrastructure/sync-hermes-profiles.sh`: the real script is a **vault
+  asset**, inside the repo with the `obsidian-git` second writer, i.e. as clobberable as the
+  research section was. And a second copy of it has already run: the script's `cmp` guard
+  (`:59-61`) compares `$ASSET_COPY` to `${BASH_SOURCE[0]}`, which are the SAME file when the
+  wrapper `exec`s it — so `NOTE: script differs from vault asset` can only mean the recorder
+  was invoked from some other path, not through the wrapper at all. That NOTE appears **10
+  times** in `~/.hermes/logs/sync-hermes-profiles.log` between 2026-09-06 22:47:59 and
+  2026-09-09 11:30:14 (the log is unrotated and the window has been quiet since; the last
+  entry is 2026-09-20 11:00:09 SUCCESS). Ten runs of a stale copy of the thing that versions
+  the record, and nothing but a stderr NOTE and one log line noticed — while the wrapper's own
+  header still claims "there is no second copy to drift". It also fails
+  **closed** on a branch (`:66`): a profiles repo left on anything but `main` stops the
+  autocommit entirely, loudly in the log and invisibly to anyone reading only the file on
+  disk. Do not treat a successful write as evidence the writer is sound: the `Done means`
+  proof asserts the branch and the commit, not the file.
 - **Two sinks, sized separately — and the vault is not a safe one.** The vault body is
   writable by a second writer (`obsidian-git` sync, proven above), so a status line parked
   there is exactly as erasable as the research section was; the vault summary is the
-  human-visible surface, not the durable record. The consecutive-skip counter needs its own
-  **non-day-scoped, non-count-capped** file **outside the vault and outside its sync** — the
-  `ticker_heartbeat` / `catch_up_occurrences` pattern in the profile's own cron state
-  (`~/.hermes/profiles/trader`, a different repo) — because a counter in a day-scoped dir
-  cannot report history beyond 10-14 days, a counter in `cron/output/` inherits the cadence
-  trap, and a counter in the vault can be overwritten by a sync from a machine that ran the
-  same job hours earlier. Do not size them together.
+  human-visible surface, not the durable record — this machine's vault writes sit
+  **uncommitted** until a boot/pull backup lands, measured lags of 6 min to ~12 h, and 09-08
+  was that window plus a pull arriving inside it (render 19:29, fast-forward 20:56:49, 87
+  minutes later). The machine-readable record — the consecutive-skip counter and the status
+  line's own history — belongs in the trackable `<profile>/cron/` sink above, which no sync
+  pull and neither the 50-run nor the 10/14/30-day cap can reach. Do not size the two
+  together: the vault line is for the human reading today's digest; the `cron/` file is for
+  whoever diagnoses next week's outage.
 - **The pipeline dates everything by `scheduled_instant`, not wall clock.** Verified end
   to end: the 2026-09-19 manual replay at 22:11 wrote
   `portfolio-avanza-jfusion-2026-09-19.md` with frontmatter
@@ -267,10 +300,22 @@ that stopped existing. A content-level degradation is invisible to it entirely.
   and the Telegram digest, e.g.
   `🔬 Research: skipped — model not served (serving: nex-n25-mini, qwen38-27b)` — and the
   note attribution quotes the model id the call actually returned. That line is also
-  **persisted in the named sinks** — the digest capture and the vault summary for the
-  human-visible line, a non-day-scoped file for the consecutive-skip counter — so a
-  degradation stays diagnosable past the 10/14/30-day sweeps and past the
-  cadence-dependent digest horizon.
+  **persisted in the durable sink** — an append-only file directly under `<profile>/cron/`
+  that `git check-ignore` does not match (the vault summary stays the human-visible surface,
+  not the record) — and the consecutive-skip counter lives beside it as its own JSON state
+  file, so the record is versioned by the hourly profiles autocommit. **The file existing on
+  disk proves nothing.** The proof is two assertions: `git -C ~/.hermes/profiles rev-parse
+  --abbrev-ref HEAD` prints `main` — off `main` the sync refuses to autocommit at all
+  (`sync-hermes-profiles.sh:66`, `BRANCH="main"` at `:37`) and the versioning is gone while
+  every local write still looks fine — and `git -C ~/.hermes/profiles log --oneline --
+  trader/cron/analyst_status.log trader/cron/analyst_skip_state.json` shows a commit that
+  actually landed **both** paths. Autocommit is paused
+  for the board run's lifetime, so take that proof after it resumes, or from one hand-run of
+  the script; and read that run's line in `~/.hermes/logs/sync-hermes-profiles.log` for the
+  drift NOTE while you are there. Skip either assertion and the sink's disappearance has the
+  same silent shape as the section this lane exists to restore. A degradation must
+  stay diagnosable past the 10/14/30-day sweeps, past the cadence-dependent digest horizon,
+  and past a sync pull from the other machine.
 - **Selection self-heals.** Remove the pinned model from the roster and the pass still
   runs on a served model that answers with non-empty content at the real call shape;
   `LLAMA_MODEL` stays an override, not the mechanism.

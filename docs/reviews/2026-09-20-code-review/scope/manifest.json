@@ -1,0 +1,388 @@
+{
+ "repo": "/opt/projects/kanban/main/kanban",
+ "scope": "all-files",
+ "reviewable": [
+  ".github/workflows/ci.yml",
+  ".gitignore",
+  "boards/arena-federated-search/board.json",
+  "boards/blade-workspace/board.json",
+  "boards/is-even/board.json",
+  "boards/is-even/work/is_even.py",
+  "boards/portfolio-engineering/board.json",
+  "boards/roman-evaluator-java/board.json",
+  "boards/roman-evaluator-java/work/pom.xml",
+  "boards/roman-evaluator-java/work/roman-cli/pom.xml",
+  "boards/roman-evaluator-java/work/roman-cli/src/main/java/com/example/roman/RomanMain.java",
+  "boards/roman-evaluator-java/work/roman-cli/src/main/java/com/example/roman/RomanNumeral.java",
+  "boards/roman-evaluator-java/work/roman-service/pom.xml",
+  "boards/roman-evaluator-java/work/roman-service/src/main/java/com/example/roman/RomanServiceApplication.java",
+  "boards/roman-evaluator-java/work/roman-service/src/main/java/com/example/roman/service/EvaluateController.java",
+  "boards/roman-evaluator-java/work/roman-service/src/main/java/com/example/roman/service/RomanApiExceptionHandler.java",
+  "boards/roman-evaluator-java/work/roman-service/src/main/java/com/example/roman/service/RomanEvaluationService.java",
+  "boards/roman-evaluator-java/work/roman-service/src/main/resources/openapi/roman-service.yaml",
+  "boards/roman-evaluator-js/board.json",
+  "boards/roman-evaluator-js/work/jest.config.js",
+  "boards/roman-evaluator-js/work/main.js",
+  "boards/roman-evaluator-js/work/package.json",
+  "boards/roman-evaluator-js/work/roman-evaluator.html",
+  "boards/roman-evaluator-js/work/roman.js",
+  "boards/roman-evaluator-js/work/run.sh",
+  "boards/roman-evaluator-js/work/style.css",
+  "bots/audit.py",
+  "bots/demo.sh",
+  "bots/run-board.py",
+  "driver/arm.sh",
+  "driver/create-board.sh",
+  "driver/doc-chain.py",
+  "driver/driver-pid.sh",
+  "driver/file_lanes.py",
+  "driver/render-flow.py",
+  "driver/reset.sh",
+  "driver/review-package.sh",
+  "driver/run-audit.py",
+  "driver/run.py",
+  "driver/runs-report.py",
+  "driver/runs_util.py",
+  "driver/start-board.sh",
+  "driver/timing-report.py",
+  "template/board.schema.json",
+  "template/board_schema.py",
+  "template/card_render.py",
+  "template/driver_lock.py",
+  "template/lanes.py",
+  "test.sh",
+  "tests/conftest.py"
+ ],
+ "excluded": [
+  {
+   "path": "AGENTS.md",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "CLAUDE.md",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "DESIGN.md",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "PLAN.md",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "README.md",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "TIMELINE.md",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "boards/arena-federated-search/README.md",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "boards/arena-federated-search/lane-1.md",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "boards/blade-workspace/README.md",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "boards/blade-workspace/lane-1.md",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "boards/is-even/README.md",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "boards/is-even/lane-1.md",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "boards/is-even/work/test_is_even.py",
+   "reason": "default_path"
+  },
+  {
+   "path": "boards/portfolio-engineering/README.md",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "boards/portfolio-engineering/lane-1.md",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "boards/roman-evaluator-java/README.md",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "boards/roman-evaluator-java/lane-1.md",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "boards/roman-evaluator-java/lane-2.md",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "boards/roman-evaluator-java/work/roman-cli/src/test/java/com/example/roman/RomanMainTest.java",
+   "reason": "default_path"
+  },
+  {
+   "path": "boards/roman-evaluator-java/work/roman-cli/src/test/java/com/example/roman/RomanNumeralTest.java",
+   "reason": "default_path"
+  },
+  {
+   "path": "boards/roman-evaluator-java/work/roman-service/src/test/java/com/example/roman/service/EvaluateContractTest.java",
+   "reason": "default_path"
+  },
+  {
+   "path": "boards/roman-evaluator-java/work/roman-service/src/test/java/com/example/roman/service/RomanEvaluationServiceTest.java",
+   "reason": "default_path"
+  },
+  {
+   "path": "boards/roman-evaluator-java/work/roman-service/src/test/java/com/example/roman/service/RomanServiceIT.java",
+   "reason": "default_path"
+  },
+  {
+   "path": "boards/roman-evaluator-js/README.md",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "boards/roman-evaluator-js/lane-1.md",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "boards/roman-evaluator-js/work/package-lock.json",
+   "reason": "too_large"
+  },
+  {
+   "path": "boards/roman-evaluator-js/work/roman.test.js",
+   "reason": "default_path"
+  },
+  {
+   "path": "bots/README.md",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "bots/card-adapter.txt",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "driver/flow.drawio",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "driver/flow.mmd",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "template/card-bodies/_plan-checklist.txt",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "template/card-bodies/_result-field.txt",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "template/card-bodies/_toolchain-boundary.txt",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "template/card-bodies/_worker-contract.txt",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "template/card-bodies/c-body.txt",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "template/card-bodies/gc-body.txt",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "template/card-bodies/gi-body.txt",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "template/card-bodies/gp-body.txt",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "template/card-bodies/i-body.txt",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "template/card-bodies/p-body.txt",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "template/card-bodies/rva-body.txt",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "template/card-bodies/rvc-body.txt",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "template/card-bodies/rvp-body.txt",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "template/card-bodies/ti-body.txt",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "template/card-bodies/tw-body.txt",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "template/roles/README.md",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "template/roles/coder/SOUL.md",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "template/roles/researcher/SOUL.md",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "template/roles/trader/SOUL.md",
+   "reason": "unsupported_ext"
+  },
+  {
+   "path": "tests/test_acquire_lock.py",
+   "reason": "default_path"
+  },
+  {
+   "path": "tests/test_board_schema.py",
+   "reason": "default_path"
+  },
+  {
+   "path": "tests/test_bots_audit.py",
+   "reason": "default_path"
+  },
+  {
+   "path": "tests/test_bots_driver.py",
+   "reason": "default_path"
+  },
+  {
+   "path": "tests/test_card_bodies.py",
+   "reason": "default_path"
+  },
+  {
+   "path": "tests/test_card_stops.py",
+   "reason": "default_path"
+  },
+  {
+   "path": "tests/test_chain_log.py",
+   "reason": "default_path"
+  },
+  {
+   "path": "tests/test_cli_timeouts.py",
+   "reason": "default_path"
+  },
+  {
+   "path": "tests/test_doc_chain.py",
+   "reason": "default_path"
+  },
+  {
+   "path": "tests/test_file_lanes.py",
+   "reason": "default_path"
+  },
+  {
+   "path": "tests/test_gate_action.py",
+   "reason": "default_path"
+  },
+  {
+   "path": "tests/test_lane_resolution.py",
+   "reason": "default_path"
+  },
+  {
+   "path": "tests/test_lanes_graph.py",
+   "reason": "default_path"
+  },
+  {
+   "path": "tests/test_lanes_ideas.py",
+   "reason": "default_path"
+  },
+  {
+   "path": "tests/test_layer_boundary.py",
+   "reason": "default_path"
+  },
+  {
+   "path": "tests/test_model_override.py",
+   "reason": "default_path"
+  },
+  {
+   "path": "tests/test_open_lane.py",
+   "reason": "default_path"
+  },
+  {
+   "path": "tests/test_refile_leaves_work_alone.py",
+   "reason": "default_path"
+  },
+  {
+   "path": "tests/test_refinement_option.py",
+   "reason": "default_path"
+  },
+  {
+   "path": "tests/test_render_body.py",
+   "reason": "default_path"
+  },
+  {
+   "path": "tests/test_render_flow.py",
+   "reason": "default_path"
+  },
+  {
+   "path": "tests/test_result_note.py",
+   "reason": "default_path"
+  },
+  {
+   "path": "tests/test_rework_loop.py",
+   "reason": "default_path"
+  },
+  {
+   "path": "tests/test_run_audit.py",
+   "reason": "default_path"
+  },
+  {
+   "path": "tests/test_run_directories.py",
+   "reason": "default_path"
+  },
+  {
+   "path": "tests/test_runs_report.py",
+   "reason": "default_path"
+  },
+  {
+   "path": "tests/test_runs_util.py",
+   "reason": "default_path"
+  },
+  {
+   "path": "tests/test_shipped_boards.py",
+   "reason": "default_path"
+  },
+  {
+   "path": "tests/test_tool_clis.py",
+   "reason": "default_path"
+  },
+  {
+   "path": "tests/test_unstarted_mint.py",
+   "reason": "default_path"
+  },
+  {
+   "path": "tests/test_validate_armed.py",
+   "reason": "default_path"
+  },
+  {
+   "path": "tests/test_workdir_drift.py",
+   "reason": "default_path"
+  }
+ ],
+ "unaccounted": [],
+ "symlinks": []
+}
