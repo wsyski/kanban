@@ -6,7 +6,9 @@
   "default-workdir": "/home/wos/.hermes/profiles/trader",
   "integration-tests": false,
   "auto-gates": [
-    "Gi"
+    "Gi",
+    "Gp",
+    "Gc"
   ],
   "goal-cards": [
     "C"
