@@ -22,7 +22,7 @@ how its runs went is not kept here — the runs describe themselves (§4).
 | board | idea | lanes | gates, per-card ceiling |
 |---|---|---|---|
 | `is-even` | one Python function (`is_even`) and its tests — the cheap smoke board, no build tool, no dependencies. Was `minimal-development` until 2026-09-13. It runs on the profiles' cloud models with the goal judge on `C` only (the canary for the judge after a `hermes update`); its README says how to point it at the local rig, and records the local-model runs | 1 | auto, 25 min |
-| `roman-evaluator-js` | a browser page: `roman-evaluator.html`, a DOM-free parsing module with unit tests, `run.sh`, two launch modes | 1 | auto, 20 min |
+| `roman-evaluator-js` | a browser page: `roman-evaluator.html`, a DOM-free parsing module with unit tests, `run.sh`, two launch modes | 1 | auto, 30 min |
 | `roman-evaluator-java` | the same problem twice: a roman CLI (`roman-cli/`) then a spec-first Spring Boot service (`roman-service/`) consuming lane 1's rule; needs JDK 17, Maven, a warm `~/.m2` | 2 | auto, 20 min |
 | `portfolio-engineering` | a GPW small-cap research pipeline built into the Hermes `trader` profile (external `default-workdir`) | 1 | Gi auto; Gp/Gc human, 60 min (default) |
 | `blade-workspace` | implements a committed plan, task by task, in an **external** repository (`default-workdir`): refinement, unit and integration tests on, the goal judge on `C` and `TI` only | 1 | Gi auto; Gp/Gc human, 60 min |

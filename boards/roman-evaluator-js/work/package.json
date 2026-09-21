@@ -1,12 +1,15 @@
 {
   "name": "roman-evaluator",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "NODE_OPTIONS=--experimental-vm-modules jest"
+    "test": "NODE_OPTIONS=--experimental-vm-modules npx jest"
+  },
+  "dependencies": {
+    "bootstrap": "5.3.8"
   },
   "devDependencies": {
-    "jest": "^30.5.1"
+    "jest": "30.5.2"
   }
 }

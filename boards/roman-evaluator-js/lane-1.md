@@ -61,16 +61,28 @@ Structure:
   `export`), loaded by the page with `<script type="module">`. The roman
   parsing logic is its own module with no DOM access, so it can be tested
   alone.
-- CSS lives in its own file.
+- Bootstrap supplies the page's styling; `style.css` is its own file and holds
+  only the few rules Bootstrap does not cover.
 - The parsing module is unit-tested. The page itself is not: its behaviour
   is checked by a human at the code gate (see Done means).
 
-Technology preferences:
+Technology:
 
-- Plain HTML, CSS and JavaScript; no JavaScript libraries in the page.
-- Bootstrap is the preferred CSS framework, not a requirement: plain CSS is
-  fine where it is simpler. If used, it is a local copy — no CDN, the page
-  must work offline.
+- Plain HTML, CSS and JavaScript; no JavaScript libraries in the page —
+  Bootstrap's CSS only, never `bootstrap.bundle.js` or any other script.
+- The page is styled with Bootstrap 5 (the current 5.x release), using its
+  own classes rather than hand-rolled equivalents: the input as
+  `form-control`, the two buttons as `btn btn-primary` / `btn btn-secondary`
+  in one row, the display area and page shell laid out with Bootstrap's
+  container and spacing utilities.
+- Bootstrap is served from a local copy, never a CDN: the page must work
+  offline. It is a normal dependency — `bootstrap` in `package.json`,
+  installed with npm alongside the test tooling — and the page links it
+  relatively. `node_modules/` is not committed, so both launches, and the
+  hand-check at the gate, run after `npm install` in the work directory:
+
+      <link rel="stylesheet" href="./node_modules/bootstrap/dist/css/bootstrap.min.css">
+
 - Jest is the preferred test runner for the parsing module, testing the ES
   module as it is — no bundling or build step for the page.
 
@@ -100,14 +112,17 @@ above.
   wrote it or improved what was already there: the entry
   page, its CSS and JS module files, the executable `run.sh`, the module
   tests, and the test tooling they need (package manifest, test config,
-  installed packages). Those are deliverables, not scratch — nothing else is
-  left behind.
+  installed packages, Bootstrap among them). Those are deliverables, not
+  scratch — nothing else is left behind.
 - The unit tests pass, covering at least `XIV` → 14, `MMMCMXCIX` → 3999,
   and rejection of `IIII`, `VX`, `IXX`, empty input and a character outside
   `MDCLXVI`.
-- `./run.sh --headless --dump-dom` prints the page's DOM and exits.
+- `./run.sh --headless --dump-dom` prints the page's DOM and exits, and that
+  DOM carries the local Bootstrap stylesheet link and the Bootstrap classes on
+  the input and buttons.
 - Checked by hand at the code gate, in both launches — served over HTTP, and
   from `file://` via `./run.sh` with no server running — using the same
   unmodified files: evaluating `XIV` appends exactly one row `XIV = 14`;
   evaluating `IIII` shows an alert and appends nothing; Reset clears input and
-  display.
+  display. The page is visibly Bootstrap-styled in both launches with no
+  network available, so no CDN is reachable.

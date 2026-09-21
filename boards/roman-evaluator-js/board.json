@@ -13,7 +13,7 @@
   "goal-cards": [
     "C"
   ],
-  "max-runtime": "20m",
+  "max-runtime": "30m",
   "max-reworks": 2,
   "model": "qwen38-27b",
   "provider": "llama-swap",

@@ -1,22 +1,16 @@
-#!/usr/bin/env bash
-# Open roman-evaluator.html from file:// in a throwaway Chrome profile.
-set -u
+#!/usr/bin/env sh
+set -eu
+
+dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
 if ! command -v google-chrome >/dev/null 2>&1; then
-  echo "run.sh: google-chrome not found on PATH" >&2
+  echo "run.sh: error: google-chrome not found on PATH" >&2
   exit 1
 fi
 
-dir="$(cd "$(dirname "$0")" && pwd)"
+profile=$(mktemp -d)
+trap 'rm -rf "$profile"' EXIT
 
-if ! profile="$(mktemp -d)"; then
-  echo "run.sh: could not create a temporary profile directory" >&2
-  exit 1
-fi
-
-cleanup() {
-  rm -rf "$profile"
-}
-trap cleanup EXIT INT TERM
-
-google-chrome --allow-file-access-from-files --user-data-dir="$profile" "$@" "file://$dir/roman-evaluator.html"
+google-chrome --allow-file-access-from-files \
+  --user-data-dir="$profile" "$@" \
+  "file://$dir/roman-evaluator.html"
