@@ -1,0 +1,10 @@
+{
+  "include": [
+    "tests/**/*.py",
+    "template/card-bodies/*.txt"
+  ],
+  "exclude": [
+    "boards/*/work/**"
+  ],
+  "rules": []
+}

@@ -1,0 +1,1013 @@
+{
+  "files": [
+    {
+      "path": ".github/workflows/ci.yml",
+      "status": "scan",
+      "insertions": 43,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": ".gitignore",
+      "status": "scan",
+      "insertions": 28,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": ".opencodereview/rule.json",
+      "status": "scan",
+      "insertions": 10,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "AGENTS.md",
+      "status": "scan",
+      "insertions": 44,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "unsupported_ext"
+    },
+    {
+      "path": "CLAUDE.md",
+      "status": "scan",
+      "insertions": 1,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "unsupported_ext"
+    },
+    {
+      "path": "DESIGN.md",
+      "status": "scan",
+      "insertions": 674,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "unsupported_ext"
+    },
+    {
+      "path": "README.md",
+      "status": "scan",
+      "insertions": 587,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "unsupported_ext"
+    },
+    {
+      "path": "TIMELINE.md",
+      "status": "scan",
+      "insertions": 429,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "unsupported_ext"
+    },
+    {
+      "path": "boards/arena-federated-search/README.md",
+      "status": "scan",
+      "insertions": 154,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "unsupported_ext"
+    },
+    {
+      "path": "boards/arena-federated-search/board.json",
+      "status": "scan",
+      "insertions": 23,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "boards/arena-federated-search/lane-1.md",
+      "status": "scan",
+      "insertions": 54,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "unsupported_ext"
+    },
+    {
+      "path": "boards/blade-workspace/README.md",
+      "status": "scan",
+      "insertions": 113,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "unsupported_ext"
+    },
+    {
+      "path": "boards/blade-workspace/board.json",
+      "status": "scan",
+      "insertions": 24,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "boards/blade-workspace/lane-1.md",
+      "status": "scan",
+      "insertions": 48,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "unsupported_ext"
+    },
+    {
+      "path": "boards/is-even/README.md",
+      "status": "scan",
+      "insertions": 138,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "unsupported_ext"
+    },
+    {
+      "path": "boards/is-even/board.json",
+      "status": "scan",
+      "insertions": 23,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "boards/is-even/lane-1.md",
+      "status": "scan",
+      "insertions": 42,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "unsupported_ext"
+    },
+    {
+      "path": "boards/is-even/work/is_even.py",
+      "status": "scan",
+      "insertions": 2,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "user_exclude"
+    },
+    {
+      "path": "boards/is-even/work/test_is_even.py",
+      "status": "scan",
+      "insertions": 17,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "user_exclude"
+    },
+    {
+      "path": "boards/portfolio-engineering/README.md",
+      "status": "scan",
+      "insertions": 61,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "unsupported_ext"
+    },
+    {
+      "path": "boards/portfolio-engineering/board.json",
+      "status": "scan",
+      "insertions": 20,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "boards/portfolio-engineering/lane-1.md",
+      "status": "scan",
+      "insertions": 342,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "unsupported_ext"
+    },
+    {
+      "path": "boards/roman-evaluator-java/README.md",
+      "status": "scan",
+      "insertions": 46,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "unsupported_ext"
+    },
+    {
+      "path": "boards/roman-evaluator-java/board.json",
+      "status": "scan",
+      "insertions": 26,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "boards/roman-evaluator-java/lane-1.md",
+      "status": "scan",
+      "insertions": 51,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "unsupported_ext"
+    },
+    {
+      "path": "boards/roman-evaluator-java/lane-2.md",
+      "status": "scan",
+      "insertions": 49,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "unsupported_ext"
+    },
+    {
+      "path": "boards/roman-evaluator-java/work/pom.xml",
+      "status": "scan",
+      "insertions": 50,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "user_exclude"
+    },
+    {
+      "path": "boards/roman-evaluator-java/work/roman-cli/pom.xml",
+      "status": "scan",
+      "insertions": 39,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "user_exclude"
+    },
+    {
+      "path": "boards/roman-evaluator-java/work/roman-cli/src/main/java/com/example/roman/RomanMain.java",
+      "status": "scan",
+      "insertions": 41,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "user_exclude"
+    },
+    {
+      "path": "boards/roman-evaluator-java/work/roman-cli/src/main/java/com/example/roman/RomanNumeral.java",
+      "status": "scan",
+      "insertions": 66,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "user_exclude"
+    },
+    {
+      "path": "boards/roman-evaluator-java/work/roman-cli/src/test/java/com/example/roman/RomanMainTest.java",
+      "status": "scan",
+      "insertions": 76,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "user_exclude"
+    },
+    {
+      "path": "boards/roman-evaluator-java/work/roman-cli/src/test/java/com/example/roman/RomanNumeralTest.java",
+      "status": "scan",
+      "insertions": 58,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "user_exclude"
+    },
+    {
+      "path": "boards/roman-evaluator-java/work/roman-service/pom.xml",
+      "status": "scan",
+      "insertions": 126,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "user_exclude"
+    },
+    {
+      "path": "boards/roman-evaluator-java/work/roman-service/src/main/java/com/example/roman/RomanServiceApplication.java",
+      "status": "scan",
+      "insertions": 12,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "user_exclude"
+    },
+    {
+      "path": "boards/roman-evaluator-java/work/roman-service/src/main/java/com/example/roman/service/EvaluateController.java",
+      "status": "scan",
+      "insertions": 31,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "user_exclude"
+    },
+    {
+      "path": "boards/roman-evaluator-java/work/roman-service/src/main/java/com/example/roman/service/RomanApiExceptionHandler.java",
+      "status": "scan",
+      "insertions": 27,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "user_exclude"
+    },
+    {
+      "path": "boards/roman-evaluator-java/work/roman-service/src/main/java/com/example/roman/service/RomanEvaluationService.java",
+      "status": "scan",
+      "insertions": 23,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "user_exclude"
+    },
+    {
+      "path": "boards/roman-evaluator-java/work/roman-service/src/main/resources/openapi/roman-service.yaml",
+      "status": "scan",
+      "insertions": 54,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "user_exclude"
+    },
+    {
+      "path": "boards/roman-evaluator-java/work/roman-service/src/test/java/com/example/roman/service/EvaluateContractTest.java",
+      "status": "scan",
+      "insertions": 102,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "user_exclude"
+    },
+    {
+      "path": "boards/roman-evaluator-java/work/roman-service/src/test/java/com/example/roman/service/RomanEvaluationServiceTest.java",
+      "status": "scan",
+      "insertions": 38,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "user_exclude"
+    },
+    {
+      "path": "boards/roman-evaluator-java/work/roman-service/src/test/java/com/example/roman/service/RomanServiceIT.java",
+      "status": "scan",
+      "insertions": 69,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "user_exclude"
+    },
+    {
+      "path": "boards/roman-evaluator-js/README.md",
+      "status": "scan",
+      "insertions": 34,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "unsupported_ext"
+    },
+    {
+      "path": "boards/roman-evaluator-js/board.json",
+      "status": "scan",
+      "insertions": 22,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "boards/roman-evaluator-js/lane-1.md",
+      "status": "scan",
+      "insertions": 128,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "unsupported_ext"
+    },
+    {
+      "path": "boards/roman-evaluator-js/work/package-lock.json",
+      "status": "scan",
+      "insertions": 4554,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "user_exclude"
+    },
+    {
+      "path": "boards/roman-evaluator-js/work/package.json",
+      "status": "scan",
+      "insertions": 15,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "user_exclude"
+    },
+    {
+      "path": "boards/roman-evaluator-js/work/roman-evaluator.html",
+      "status": "scan",
+      "insertions": 32,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "user_exclude"
+    },
+    {
+      "path": "boards/roman-evaluator-js/work/roman-parse.js",
+      "status": "scan",
+      "insertions": 33,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "user_exclude"
+    },
+    {
+      "path": "boards/roman-evaluator-js/work/roman-parse.test.js",
+      "status": "scan",
+      "insertions": 65,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "user_exclude"
+    },
+    {
+      "path": "boards/roman-evaluator-js/work/roman.js",
+      "status": "scan",
+      "insertions": 32,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "user_exclude"
+    },
+    {
+      "path": "boards/roman-evaluator-js/work/run.sh",
+      "status": "scan",
+      "insertions": 16,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "user_exclude"
+    },
+    {
+      "path": "boards/roman-evaluator-js/work/style.css",
+      "status": "scan",
+      "insertions": 5,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "user_exclude"
+    },
+    {
+      "path": "docs/reviews/2026-09-20-code-review.md",
+      "status": "scan",
+      "insertions": 372,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "unsupported_ext"
+    },
+    {
+      "path": "docs/reviews/2026-09-20-code-review/report-code.md",
+      "status": "scan",
+      "insertions": 306,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "unsupported_ext"
+    },
+    {
+      "path": "docs/reviews/2026-09-20-code-review/report-comments.md",
+      "status": "scan",
+      "insertions": 334,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "unsupported_ext"
+    },
+    {
+      "path": "docs/reviews/2026-09-20-code-review/report-errors.md",
+      "status": "scan",
+      "insertions": 753,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "unsupported_ext"
+    },
+    {
+      "path": "docs/reviews/2026-09-20-code-review/report-tests.md",
+      "status": "scan",
+      "insertions": 327,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "unsupported_ext"
+    },
+    {
+      "path": "docs/reviews/2026-09-20-code-review/report-types.md",
+      "status": "scan",
+      "insertions": 434,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "unsupported_ext"
+    },
+    {
+      "path": "docs/reviews/2026-09-20-code-review/scope/brief.md",
+      "status": "scan",
+      "insertions": 31,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "unsupported_ext"
+    },
+    {
+      "path": "docs/reviews/2026-09-20-code-review/scope/manifest.json",
+      "status": "scan",
+      "insertions": 388,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "docs/reviews/2026-09-20-code-review/scope/manifest.txt",
+      "status": "scan",
+      "insertions": 50,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "unsupported_ext"
+    },
+    {
+      "path": "docs/reviews/2026-09-20-code-review/scope/tests.txt",
+      "status": "scan",
+      "insertions": 39,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "unsupported_ext"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-09-20-drop-bots-driver.md",
+      "status": "scan",
+      "insertions": 967,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "unsupported_ext"
+    },
+    {
+      "path": "driver/arm.sh",
+      "status": "scan",
+      "insertions": 73,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "driver/create-board.sh",
+      "status": "scan",
+      "insertions": 514,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "driver/doc-chain.py",
+      "status": "scan",
+      "insertions": 265,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "driver/driver-pid.sh",
+      "status": "scan",
+      "insertions": 34,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "driver/file_lanes.py",
+      "status": "scan",
+      "insertions": 318,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "driver/flow.drawio",
+      "status": "scan",
+      "insertions": 145,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "unsupported_ext"
+    },
+    {
+      "path": "driver/flow.mmd",
+      "status": "scan",
+      "insertions": 58,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "unsupported_ext"
+    },
+    {
+      "path": "driver/render-flow.py",
+      "status": "scan",
+      "insertions": 184,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "driver/reset.sh",
+      "status": "scan",
+      "insertions": 188,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "driver/review-package.sh",
+      "status": "scan",
+      "insertions": 38,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "driver/run-audit.py",
+      "status": "scan",
+      "insertions": 582,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "driver/run.py",
+      "status": "scan",
+      "insertions": 3814,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "driver/runs-report.py",
+      "status": "scan",
+      "insertions": 183,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "driver/runs_util.py",
+      "status": "scan",
+      "insertions": 190,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "driver/start-board.sh",
+      "status": "scan",
+      "insertions": 113,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "driver/timing-report.py",
+      "status": "scan",
+      "insertions": 253,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "template/board.schema.json",
+      "status": "scan",
+      "insertions": 217,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "template/board_schema.py",
+      "status": "scan",
+      "insertions": 724,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "template/card-bodies/_plan-checklist.txt",
+      "status": "scan",
+      "insertions": 9,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "template/card-bodies/_result-field.txt",
+      "status": "scan",
+      "insertions": 5,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "template/card-bodies/_toolchain-boundary.txt",
+      "status": "scan",
+      "insertions": 4,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "template/card-bodies/_worker-contract.txt",
+      "status": "scan",
+      "insertions": 9,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "template/card-bodies/c-body.txt",
+      "status": "scan",
+      "insertions": 17,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "template/card-bodies/gc-body.txt",
+      "status": "scan",
+      "insertions": 22,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "template/card-bodies/gi-body.txt",
+      "status": "scan",
+      "insertions": 22,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "template/card-bodies/gp-body.txt",
+      "status": "scan",
+      "insertions": 21,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "template/card-bodies/i-body.txt",
+      "status": "scan",
+      "insertions": 38,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "template/card-bodies/p-body.txt",
+      "status": "scan",
+      "insertions": 34,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "template/card-bodies/rva-body.txt",
+      "status": "scan",
+      "insertions": 26,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "template/card-bodies/rvc-body.txt",
+      "status": "scan",
+      "insertions": 23,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "template/card-bodies/rvp-body.txt",
+      "status": "scan",
+      "insertions": 18,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "template/card-bodies/ti-body.txt",
+      "status": "scan",
+      "insertions": 17,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "template/card-bodies/tw-body.txt",
+      "status": "scan",
+      "insertions": 19,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "template/card_render.py",
+      "status": "scan",
+      "insertions": 164,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "template/driver_lock.py",
+      "status": "scan",
+      "insertions": 80,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "template/lanes.py",
+      "status": "scan",
+      "insertions": 489,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "template/roles/README.md",
+      "status": "scan",
+      "insertions": 106,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "unsupported_ext"
+    },
+    {
+      "path": "template/roles/coder/SOUL.md",
+      "status": "scan",
+      "insertions": 151,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "unsupported_ext"
+    },
+    {
+      "path": "template/roles/researcher/SOUL.md",
+      "status": "scan",
+      "insertions": 166,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "unsupported_ext"
+    },
+    {
+      "path": "template/roles/trader/SOUL.md",
+      "status": "scan",
+      "insertions": 163,
+      "deletions": 0,
+      "will_review": false,
+      "exclude_reason": "unsupported_ext"
+    },
+    {
+      "path": "test.sh",
+      "status": "scan",
+      "insertions": 18,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "tests/conftest.py",
+      "status": "scan",
+      "insertions": 8,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "tests/test_acquire_lock.py",
+      "status": "scan",
+      "insertions": 151,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "tests/test_board_schema.py",
+      "status": "scan",
+      "insertions": 539,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "tests/test_card_bodies.py",
+      "status": "scan",
+      "insertions": 506,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "tests/test_card_stops.py",
+      "status": "scan",
+      "insertions": 1236,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "tests/test_chain_log.py",
+      "status": "scan",
+      "insertions": 448,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "tests/test_cli_timeouts.py",
+      "status": "scan",
+      "insertions": 46,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "tests/test_doc_chain.py",
+      "status": "scan",
+      "insertions": 259,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "tests/test_file_lanes.py",
+      "status": "scan",
+      "insertions": 273,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "tests/test_gate_action.py",
+      "status": "scan",
+      "insertions": 402,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "tests/test_lane_resolution.py",
+      "status": "scan",
+      "insertions": 104,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "tests/test_lanes_graph.py",
+      "status": "scan",
+      "insertions": 168,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "tests/test_lanes_ideas.py",
+      "status": "scan",
+      "insertions": 128,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "tests/test_layer_boundary.py",
+      "status": "scan",
+      "insertions": 65,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "tests/test_model_override.py",
+      "status": "scan",
+      "insertions": 474,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "tests/test_open_lane.py",
+      "status": "scan",
+      "insertions": 896,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "tests/test_refile_leaves_work_alone.py",
+      "status": "scan",
+      "insertions": 69,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "tests/test_refinement_option.py",
+      "status": "scan",
+      "insertions": 152,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "tests/test_render_body.py",
+      "status": "scan",
+      "insertions": 113,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "tests/test_render_flow.py",
+      "status": "scan",
+      "insertions": 16,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "tests/test_result_note.py",
+      "status": "scan",
+      "insertions": 37,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "tests/test_rework_loop.py",
+      "status": "scan",
+      "insertions": 691,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "tests/test_run_audit.py",
+      "status": "scan",
+      "insertions": 683,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "tests/test_run_directories.py",
+      "status": "scan",
+      "insertions": 439,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "tests/test_runs_report.py",
+      "status": "scan",
+      "insertions": 134,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "tests/test_runs_util.py",
+      "status": "scan",
+      "insertions": 88,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "tests/test_shipped_boards.py",
+      "status": "scan",
+      "insertions": 263,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "tests/test_tool_clis.py",
+      "status": "scan",
+      "insertions": 123,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "tests/test_unstarted_mint.py",
+      "status": "scan",
+      "insertions": 260,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "tests/test_validate_armed.py",
+      "status": "scan",
+      "insertions": 169,
+      "deletions": 0,
+      "will_review": true
+    },
+    {
+      "path": "tests/test_workdir_drift.py",
+      "status": "scan",
+      "insertions": 165,
+      "deletions": 0,
+      "will_review": true
+    }
+  ],
+  "total_insertions": 18437,
+  "total_deletions": 0,
+  "total_files": 135,
+  "reviewable_count": 76,
+  "excluded_count": 59
+}
