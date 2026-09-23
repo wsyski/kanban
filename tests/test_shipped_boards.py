@@ -255,9 +255,9 @@ def test_every_shipped_board_renders_every_card_it_files(tmp_path):
     assert not bad, "\n".join(f"{k}: {v}" for k, v in bad.items())
     # Not vacuous: `assert cards` above is satisfied by ONE card per lane, so a silent
     # option-resolution change would still read as "clean" here. These are the counts the
-    # boards file today — 2026-09-20, 6 boards, 7 lanes, 67 cards. A smaller number means
+    # boards file today — 2026-09-23, 7 boards, 8 lanes, 76 cards. A smaller number means
     # an option default or an idea header moved, not that the tree got cleaner.
     assert filed == {"arena-federated-search": 9, "blade-workspace": 11, "is-even": 9,
                      "portfolio-engineering": 9, "roman-evaluator-java": 20,
-                     "roman-evaluator-js": 9}, filed
-    assert sum(filed.values()) == 67, filed
+                     "roman-evaluator-js": 9, "roman-evaluator-liferay-client-ext": 9}, filed
+    assert sum(filed.values()) == 76, filed

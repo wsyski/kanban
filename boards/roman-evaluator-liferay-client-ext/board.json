@@ -1,0 +1,22 @@
+{
+  "$schema": "../../template/board.schema.json",
+  "slug": "roman-evaluator-liferay-client-ext",
+  "name": "Roman Evaluator Liferay client extension",
+  "lanes": 1,
+  "integration-tests": false,
+  "auto-gates": [
+    "Gi",
+    "Gp",
+    "Gc"
+  ],
+  "sequential": true,
+  "goal-cards": [
+    "C"
+  ],
+  "max-runtime": "60m",
+  "max-reworks": 2,
+  "model": "qwen38-27b",
+  "provider": "llama-swap",
+  "model_override": "glm-5.3-flash",
+  "provider_override": "opencode-go"
+}
