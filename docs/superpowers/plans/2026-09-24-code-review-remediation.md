@@ -15,14 +15,80 @@
 
 - **Never commit.** Per the operator's standing rule: `git add` the changed files, run `git status --short`, report, then STOP and ask. Every "Stage" step below is **stage-and-ask**, and a subagent implementer ends its turn there.
 - Repo root for every command: `/opt/projects/kanban/main/kanban`.
-- **`./test.sh` always runs the WHOLE suite, whatever you pass it** (`test.sh:14` is `exec "$py" -m pytest -q "$REPO/tests" "$@"`). Use it for the whole-suite gate; for one file run `/usr/bin/python3 -m pytest -q tests/<file>.py` directly. **Baseline measured 2026-09-24 at HEAD `edea8ab`: `666 passed in 12.88s`.** A task that adds tests states its own expected delta; a task that changes no test must leave the count at 666 and all green.
-- **`file:line` in both reviews refers to commit `59bc279`; HEAD is `edea8ab`** (two commits later, both titled "Generic kanban plan"). Every task's Step 1 re-verifies its own site before editing; a site that has moved is edited where it now is, and a finding that no longer reproduces is reported on the card, not "fixed" anyway.
+- **`./test.sh` always runs the WHOLE suite, whatever you pass it** (`test.sh:14` is `exec "$py" -m pytest -q "$REPO/tests" "$@"`). Use it for the whole-suite gate; for one file run `/usr/bin/python3 -m pytest -q tests/<file>.py` directly. **Baseline re-measured 2026-09-24 at HEAD `c2d2aee`: `666 passed in 12.56s`** (that commit adds only this plan file, so the count and every cited line are the same as at `edea8ab`). A task that adds tests states its own expected delta; a task that changes no test must leave the count at 666 and all green.
+- **`file:line` in both reviews refers to commit `59bc279`; HEAD is `c2d2aee`** (three commits later — `df46382` and `edea8ab`, both "Generic kanban plan", then `c2d2aee` "Code improvment", which adds only this plan file). Every task's Step 1 re-verifies its own site before editing; a site that has moved is edited where it now is, and a finding that no longer reproduces is reported on the card, not "fixed" anyway.
 - **Do not touch** `boards/*/work/**` (the repo's own `ocr` config excludes them), `TIMELINE.md`, `boards/*/README.md`, or any run directory under `boards/*/runs/`.
 - **`template/board.schema.json` is generated.** Never hand-edit it; change `board_schema.py` and run `python3 template/board_schema.py --write-schema`.
 - Backups for any file you replace wholesale go to `/opt/backup/agents/<YYYYMMDD-HHMMSS>-review-remediation/`, keeping the relative layout, and the message that reports the change says where the backup went.
 - No git worktrees. Work in this checkout.
 - Tests in this repo import engine modules by `sys.path.insert(0, .../template)` + `.../driver` at the top of the file, or load a `driver/*.py` CLI through `importlib.util.spec_from_file_location` (see `tests/test_run_audit.py:8-11`, `tests/test_doc_chain.py:8-11`). Follow whichever the file you are editing already uses.
 - No `typing` import and no function annotations anywhere in this repo — the 09-23 review states this as fact and the tests aspect leans on it. Do not introduce them.
+
+## Verified before execution (2026-09-24, HEAD `c2d2aee`)
+
+Every claim below was re-measured against the live tree after this plan was written, in scratch
+COPIES of the repo (the shared checkout was never written to). Where a number or an expectation
+below disagrees with a task's own Step, the block here is the later measurement.
+
+- **Suite baseline: `666 passed`** (`PYTHON=/usr/bin/python3 ./test.sh`, 12.56s, tree clean).
+  `test.sh:14` is `exec "$py" -m pytest -q "$REPO/tests" "$@"` — the whole suite, whatever you pass.
+- **`driver/create-board.sh:447`** still writes `"auto-gates": false`; `:52` prints `[]`;
+  `board_schema.OPTIONS["auto-gates"]` is `("gates", [], False, None)`, and
+  `board_schema.validate({"slug": "b", "auto-gates": False})` returns the
+  `expected a list of gate codes` problem. `start-board.sh:14-21` wraps that in `exit 2`
+  (the validator itself exits 1).
+- **Task 1's test, verbatim, needs one harness repair the task text now carries**: the stub
+  `hermes profile list` must name `researcher` as well as `coder` (`lanes.required_profiles`
+  derives both from a default manifest). Measured after that: red on `assert False == []`, green
+  after `false` → `[]`. **Task 1 + Task 2 together: `670 passed`** — the chain's arithmetic holds.
+- **Task 2's snippet is correct as written**: with it applied, `tests/test_acquire_lock.py` is
+  `13 passed`, and the `-k never_visible` step is genuinely red before it (`assert []`).
+- **Task 3's first draft crashed on the case it exists to fix** (`AttributeError: 'NoneType'
+  object has no attribute 'get'` at the `slug = cfg.get(...)` line) and wrote its malformed
+  fixture one directory too high. Both are corrected in the task text; with the corrections the
+  four new tests pass.
+- **Task 4's first draft did not close its own case**: `run_beginning` (`:70`) and
+  `starts = [r for r in recs if r["event"] == "start"]` (`:90`) index unguarded, and the guard
+  was placed inside a loop, so `starts` stayed unfiltered and `sorted(starts, key=...)` (`:113`)
+  raised `KeyError: 'ts'`. The task text now filters the list and normalizes `recs` up front.
+  `tests/test_doc_chain.py` holds **17** tests, not ~24.
+- **Task 5**: `--write-schema` exits 0 today and `OPTIONS`' kinds equal `_KIND_SCHEMA`'s keys
+  exactly — there is no missing kind and no KeyError. `test_every_option_kind_has_a_schema_entry`
+  therefore PASSES on the pristine tree (6 of the 7 new tests fail). `json_schema()`'s `required`
+  is `["lanes"]` and `validate` treats `lanes` as optional; `name` carries no pattern while
+  `validate` refuses a whitespace-only name; `targets` carries no `uniqueItems` and duplicates
+  pass today. `duration_seconds("0m")` is `None` and `validate` accepts `"0m"` today.
+  The lookahead duration pattern first drafted here rejects the validator-legal `1h30m0s` and
+  accepts the validator-illegal `0.0m`; it is replaced with `_DURATION_RE`'s own language.
+- **Task 6**: the three `main()` tests and both `--json` tests pass against the unmodified engine
+  (`5 passed`). The `preserve_artifacts` replacement test **cannot pass in Task 6** —
+  `preserve_artifacts` hardcodes `~/.hermes` (`run.py:3223-3224`), the fixture file was named
+  `patch.diff` while the copier globs `*.patch`, and the patched `hermes_kanban_dir` omitted the
+  `kanban` segment. It moved to Task 10, which owns that fix.
+- **Task 7**: `board_runs`' real callers are `driver/run.py:554`, `:1348`, `:1380`, `:1977`
+  (already guarded), `:3302` and `driver/timing-report.py:113`; `driver/runs-report.py` has none,
+  and `tests/test_runs_util.py:67` pins the current `== []`. Uncorrected, the change was
+  `4 failed, 668 passed`.
+- **Task 9**: a `^run-\d{8}-\d{6}$` guard on `use_run` breaks **17 tests** (`"r1"`,
+  `"b-20260912-090000"` and `"r-deleted-by-hand"` are the repo's own ids) — the step is dropped
+  and recorded. Of Task 9's three new tests, only `max_reworks` is red today
+  (`assert 3 == 0`); the other two pass on the pristine tree.
+- **Task 10**: `--timeout-min=120` raises `IndexError` and a repeated flag reads the first value
+  (reproduced); `render-flow.py` tracebacks on a missing README today, and the first draft's
+  guard made `--check` report clean and exit 0 — the guard is corrected to keep README in
+  `targets`. `arm.sh:36-37` aborts on a headingless idea under `set -euo pipefail` (reproduced),
+  and `|| true` fixes it.
+- **Task 11**: `_options_line`'s signature is `(repo, board, lane, text, workdir=None)`; the
+  first draft's call order bound an `int` to `repo` and the function's own `except Exception`
+  swallowed the `TypeError` into an "unavailable" line.
+- **Task 12**: the duplicated key in `tests/test_lanes_ideas.py:78-80` is `"unit-tests": True`
+  (twice), not `False`; `parse_elapsed_minutes` has no caller anywhere; `file_lanes` has no
+  `set_current_run` yet; the `runs/current` writer is duplicated between
+  `create-board.sh:480-484` and `run.mint_run` (`run.py:186-189`).
+- **Files the plan names**: all exist. No cited line exceeds its file's length.
+- **Deliberately NOT changed**: `boards/*/work/**`, `TIMELINE.md`, `boards/*/README.md`, and
+  everything under `boards/*/runs/` — dated records that keep their old names by design, so no
+  later sweep should re-flag them.
 
 ## Review Focus
 
@@ -87,7 +153,7 @@ def _stub_hermes(tmp_path):
     stub.write_text(
         "#!/usr/bin/env bash\n"
         "if [ \"$1\" = \"profile\" ] && [ \"$2\" = \"list\" ]; then\n"
-        "  printf '  coder deepseek stopped\\n'\n"
+        "  printf '  coder deepseek stopped\\n  researcher deepseek stopped\\n'\n"
         "  exit 0\n"
         "fi\n"
         "if [ \"$1\" = \"kanban\" ]; then\n"
@@ -148,7 +214,7 @@ def test_the_default_manifest_validates(tmp_path):
 - [ ] **Step 2: Run it to verify it fails**
 
 Run: `/usr/bin/python3 -m pytest -q tests/test_create_board_default.py -v`
-Expected: FAIL — `assert False == []` on `cfg["auto-gates"]`, and/or `validate` returning the `'auto-gates' expected a list of gate codes` problem. If the test errors on the harness (lsof, path) rather than on the assertion, fix the harness before touching the script.
+Expected: FAIL — `assert False == []` on `cfg["auto-gates"]` (measured: with the stub above that is the ONLY failure; the script runs to completion and writes the manifest). The stub's `hermes profile list` output must name `researcher` as well as `coder`: `lanes.required_profiles` derives both from a default manifest, and a stub naming only `coder` dies at `create-board.sh:311` — "profile researcher not available" — long before the assertion, which is a harness bug, not a red step.
 
 - [ ] **Step 3: Fix the script**
 
@@ -182,7 +248,7 @@ Report the two paths and the measured test result, then STOP. Do not commit.
 - Modify: `tests/test_acquire_lock.py` (append)
 
 **Interfaces:**
-- Consumes: `driver_lock.take(runs_dir, why) -> (path, note)`; `driver_lock.pid_alive(pid) -> bool`. Callers that must keep working: `driver/run.py:3629` (`acquire_lock`), `driver/start-board.sh:86`, `driver/reset.sh:116`, `driver/create-board.sh:427` (via `driver/driver-pid.sh`).
+- Consumes: `driver_lock.take(runs_dir, why) -> (path, note)`; `driver_lock.pid_alive(pid) -> bool`. The only caller of `take()` in the tree is `driver/run.py:3629` (`acquire_lock`). `driver/start-board.sh:86`, `driver/reset.sh:116` and `driver/create-board.sh:427` do NOT call it — they are lock-LIVENESS probes through `driver/driver-pid.sh`'s `live_driver_pid`, which reads `runs/driver.lock` and asks whether the pid runs this repo's driver. They are unaffected by the publication order, but listed because they read the same file: a lock left visibly stale would read as "already running".
 - Produces: `take` keeps its exact signature and return contract; only the publication order changes.
 
 Today `take()` does `os.open(path, O_CREAT|O_EXCL|O_WRONLY)` at `:55`, writes the pid at `:63`, and a reader in that window sees `""`; `pid_alive("")` is false, so the `O_TRUNC` takeover at `:61` destroys a **live** driver's lock. Two drivers on one `work/` is the exact state the module exists to prevent.
@@ -304,7 +370,6 @@ def test_a_truncated_summary_is_a_finding_not_a_traceback(tmp_path):
     is neither a verdict nor a readable one. run-summary.json is written
     non-atomically, so a kill mid-write makes this the normal state of a dead run."""
     runs = fixture(tmp_path)
-    (os.path.join(runs, "run-summary.json"))  # exists
     open(os.path.join(runs, "run-summary.json"), "w").write('{"wall_min": 13.1, "car')
     findings, rows, stats = ra.audit(runs)
     assert ("ERROR", "E4") in [(s, c) for s, c, _ in findings]
@@ -313,7 +378,7 @@ def test_a_truncated_summary_is_a_finding_not_a_traceback(tmp_path):
 
 def test_a_malformed_board_json_is_a_finding_not_a_traceback(tmp_path):
     runs = fixture(tmp_path)
-    board = os.path.dirname(os.path.dirname(runs))
+    board = os.path.dirname(runs)        # fixture() returns <tmp>/boards/<slug>/runs
     open(os.path.join(board, "board.json"), "w").write("{not json")
     findings, _rows, _stats = ra.audit(runs)
     assert any(c == "E4" and "board.json" in t for _s, c, t in findings)
@@ -324,7 +389,7 @@ def test_a_missing_board_json_is_reported_not_defaulted(tmp_path):
     same run that had already lost its summary — two silent downgrades from one
     absent file."""
     runs = fixture(tmp_path)
-    board = os.path.dirname(os.path.dirname(runs))
+    board = os.path.dirname(runs)        # fixture() returns <tmp>/boards/<slug>/runs
     os.unlink(os.path.join(board, "board.json"))
     findings, _rows, _stats = ra.audit(runs)
     assert any(c == "E4" and "board.json" in t for _s, c, t in findings)
@@ -340,7 +405,7 @@ def test_a_malformed_summary_exits_nonzero_through_the_cli(tmp_path, monkeypatch
 - [ ] **Step 2: Run them to verify they fail**
 
 Run: `/usr/bin/python3 -m pytest -q tests/test_run_audit.py -v -k "malformed or truncated or missing_board"`
-Expected: FAIL — `json.decoder.JSONDecodeError` raised out of `ra.audit`, and the missing-`board.json` test finds no `E4`.
+Expected: FAIL on all four (measured `4 failed, 47 deselected`): the truncated-summary, malformed-`board.json` and `--json` tests with `json.decoder.JSONDecodeError` out of `ra.audit`, and `test_a_missing_board_json_is_reported_not_defaulted` on `assert any(c == "E4" ...)` — today the absent manifest silently becomes `cfg = {}`.
 
 - [ ] **Step 3: Implement the tolerant reader**
 
@@ -357,8 +422,12 @@ def read_json(path):
     try:
         with open(path) as f:
             return json.load(f), None
-    except OSError:
+    except FileNotFoundError:
         return None, None
+    except OSError as e:
+        # Present but unreadable is NOT absent: the audit must not report a
+        # permission error as "no board.json at ..." and then disarm E6.
+        return None, f"{path} cannot be read — {e}"
     except ValueError as e:
         return None, f"{os.path.basename(path)} is not valid JSON — {e}"
 ```
@@ -372,7 +441,11 @@ def audit(runs_dir, board_dir=None):
     cfg_path = os.path.join(board_dir, "board.json")
     cfg, cfg_problem = read_json(cfg_path)
     if cfg_problem:
+        # Report it AND carry on with no options: without this `cfg = {}` the next
+        # line raises AttributeError on the very manifest this task exists to
+        # survive (measured: `'NoneType' object has no attribute 'get'`).
         findings.append(("ERROR", "E4", cfg_problem))
+        cfg = {}
     elif cfg is None:
         # NOT a silent default: with no manifest the per-card ceiling and the
         # auto-gates list are both unknown, so the audit says so instead of
@@ -477,6 +550,15 @@ def test_a_record_with_no_ts_is_dropped_not_indexed(tmp_path):
     dc.analyze(dc.load(str(tmp_path)), str(tmp_path))     # must not raise
 
 
+def test_a_record_with_no_lane_is_dropped_not_indexed(tmp_path):
+    """The review names `r["lane"]` among the unguarded reads (C6/I26): a record that
+    parsed without one raised `KeyError: 'lane'` at the `sorted(starts, ...)` line."""
+    recs = chain(tmp_path)
+    recs[1] = {k: v for k, v in recs[1].items() if k != "lane"}
+    (tmp_path / "chain.jsonl").write_text("\n".join(json.dumps(r) for r in recs) + "\n")
+    dc.analyze(dc.load(str(tmp_path)), str(tmp_path))     # must not raise
+
+
 def test_the_cli_reports_a_broken_chain_rather_than_tracebacking(tmp_path, capsys):
     chain(tmp_path)
     (tmp_path / "chain.jsonl").write_text("not json at all\n")
@@ -512,17 +594,21 @@ def load(runs_dir):
     return recs
 ```
 
-In `analyze()`, guard the record reads. Replace the `for r in starts:` body's first two statements and the `rows.append(...)` tail:
+Guard the record reads at their own comprehensions. **The guard must FILTER the list it feeds, not skip inside a loop** — a `continue` inside the producers loop leaves `starts` unfiltered and `sorted(starts, key=lambda r: (r["lane"], r["ts"]))` (`:113`) then raises the same `KeyError` one line later (measured). It must also NOT filter `recs` itself: `run_beginning` reads the timestamp of EVERY record, `lane_open` ones included, and those carry no `card_id` — dropping them moves the run's start to the first card and re-introduces the F3 false positive that `test_a_snapshot_written_as_the_lane_opened_is_not_a_leftover` pins (measured: `F3 P1 lane 1: IDEA written ... BEFORE the run started ...`). Replace the three comprehensions at `:90-92`:
 
 ```python
+    # A record that parsed but is not a card start has nothing to judge it against,
+    # and indexing it is the KeyError this closes (2026-09-23 C6). `lane` is in the
+    # filter because `sorted(starts, ...)` at :113 indexes it.
+    starts = [r for r in recs if isinstance(r, dict) and r.get("event") == "start"
+              and r.get("code") and r.get("ts") and r.get("lane")]
+    dones = {r["card_id"]: r for r in recs
+             if isinstance(r, dict) and r.get("event") == "done" and r.get("card_id")}
+    reworks = [r for r in recs if isinstance(r, dict) and r.get("event") == "rework"]
     for r in starts:
-        if not isinstance(r, dict) or not r.get("code") or not r.get("ts"):
-            # A record that parsed but is not a card start: nothing to judge it
-            # against, and indexing it is the KeyError this closes (2026-09-23 C6).
-            continue
         for role, code in PRODUCED_BY.items():
             if r["code"].startswith(code) and (r.get("inputs") or {}).get(role):
-                producers.setdefault((r["lane"], role), r)
+                producers.setdefault((r.get("lane"), role), r)
 ```
 
 and the tail:
@@ -535,12 +621,12 @@ and the tail:
                      "result": done.get("result", ""), "verdict": verdict})
 ```
 
-Also change `producers.setdefault((r["lane"], role), r)` to use `r.get("lane")` (already covered by the line above). Check the `for r in sorted(starts, key=lambda r: (r["lane"], r["ts"]))` line at `:114` — after the guard, every record in `starts` has both keys, so it is safe; keep it as is.
+`run_beginning` is the OTHER unguarded site C6/I26 names, and it runs before all of the above: `stamps = [parse_ts(r["ts"]) for r in recs]` (`:70`) indexes every record, torn one included. Make it `stamps = [parse_ts(r["ts"]) for r in recs if isinstance(r, dict) and r.get("ts")]` — a FILTER, not a skip, and note it drops nothing a lane_open record contributes. With `starts` filtered on event+code+ts+lane, the `sorted(starts, ...)` line (`:113`, not `:114`) is safe as it stands.
 
 - [ ] **Step 4: Run the tests**
 
 Run: `/usr/bin/python3 -m pytest -q tests/test_doc_chain.py -v`
-Expected: PASS — all new tests plus the pre-existing ones (`tests/test_doc_chain.py` has ~24).
+Expected: PASS — all five new tests plus the 17 pre-existing ones (measured: `--collect-only` reports 17, not ~24).
 
 - [ ] **Step 5: Stage and ask**
 
@@ -555,7 +641,7 @@ Report, then STOP.
 ## Task 5: `board_schema.py` — the validator and the generated schema agree (09-23 I1–I5, I17, I12-part)
 
 **Files:**
-- Modify: `template/board_schema.py` — `duration_seconds`/`_DURATION_RE` (`:154-175`), `_kind_error` (`:187-225`), `gate_is_auto` (`:139-141`), the provider⇄model rule (`:319-331`), `workdir_notices` (`:487-491`), `_KIND_SCHEMA` (`:607-622`), `json_schema` (`:648-660`)
+- Modify: `template/board_schema.py` — `duration_seconds`/`_DURATION_RE` (`:156-175`), `_kind_error` (`def` at `:178`, the branches cited below at `:203-206` and `:222-225`), `gate_is_auto` (`:139-141`), the provider⇄model rule (`:326-330`), `workdir_notices` (`:487-491`), `_KIND_SCHEMA` (`:607-622`), `json_schema` (`def` at `:625`, its return literal at `:648-660`)
 - Regenerate: `template/board.schema.json`
 - Modify: `tests/test_board_schema.py` (append; reuse `problems()` at `:23-24`)
 
@@ -565,7 +651,7 @@ Report, then STOP.
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `tests/test_board_schema.py`:
+Append to `tests/test_board_schema.py` (`test_a_duration_the_auditor_reads_as_zero_is_rejected` at `:96` covers the same branch for non-zero values; this one pins the zero case it misses):
 
 ```python
 def test_a_duration_that_reads_as_zero_is_refused():
@@ -611,7 +697,7 @@ def test_the_generated_schema_and_the_validator_agree():
     (2026-09-23 I2)."""
     schema = board_schema.json_schema()
     # 1. `lanes` has a default of 1, so it is not required by the validator.
-    assert "lanes" not in schema["required"]
+    assert "lanes" not in schema.get("required", [])   # step (g) drops the key entirely
     assert schema["properties"]["lanes"]["default"] == 1
     # 2. any $-prefixed key is a meta-key to the validator.
     assert schema.get("patternProperties", {}).get("^\\$") is not None
@@ -649,7 +735,7 @@ def test_a_failing_index_read_is_not_a_clean_index(tmp_path, monkeypatch):
 - [ ] **Step 2: Run them to verify they fail**
 
 Run: `/usr/bin/python3 -m pytest -q tests/test_board_schema.py -v -k "reads_as_zero or absolute_path or refuses_a_string or same_lanes or agree or schema_entry or clean_index"`
-Expected: FAIL on all seven.
+Expected: FAIL on SIX of the seven (measured `6 failed, 1 passed`). `test_every_option_kind_has_a_schema_entry` PASSES on the pristine tree — `OPTIONS`' kinds and `_KIND_SCHEMA`'s keys are the same ten — so it is a regression pin, not a red step.
 
 - [ ] **Step 3: Implement the fixes**
 
@@ -689,9 +775,9 @@ Expected: FAIL on all seven.
 def gate_is_auto(value, code):
     """Does `auto-gates` hand gate `code` ('Gi') to the driver?
 
-    A LIST only. `code in value` was substring containment on a string, so
-    `gate_is_auto('Gi', 'Gi')` was True for a value the schema refuses
-    (2026-09-23 I5)."""
+    A LIST only. The body was `code in (value or [])`, which on a STRING is
+    substring containment, so `gate_is_auto('Gi', 'Gi')` was True for a value the
+    schema refuses (2026-09-23 I5)."""
     return isinstance(value, list) and code in value
 ```
 
@@ -704,19 +790,25 @@ def gate_is_auto(value, code):
             continue
         lanes = cfg.get("lanes", OPTIONS["lanes"][1])
         lanes = lanes if isinstance(lanes, int) and not isinstance(lanes, bool) else 1
-        prov = cfg[provider_key]
-        mod = cfg.get(model_key)
-        # A per-lane list pairs by INDEX, not by presence: a board that names two
-        # providers and one model files lane 2 with lane 1's model, and a spawn
-        # failure is final (2026-09-23 I1).
-        prov_list = prov if isinstance(prov, list) else [prov] * lanes
-        mod_list = mod if isinstance(mod, list) else [mod] * lanes
-        missing = [i for i, p in enumerate(prov_list, start=1)
-                   if p and not mod_list[i - 1]]
-        if missing:
-            problems.append(f"{where}: {provider_key!r} is set for lane(s) "
-                            f"{missing} with no {model_key!r} — a provider alone "
-                            f"does not say which model to run")
+        prov, mod = cfg[provider_key], cfg.get(model_key)
+        # A per-lane pair is by INDEX, so both halves must be per-lane to be pairable:
+        # a scalar broadcast over a list files lane 2 with lane 1's value, and a spawn
+        # failure is final (2026-09-23 I1). A list on EITHER side therefore requires a
+        # list of exactly `lanes` on BOTH — a scalar beside a list is the same defect
+        # seen from the other end.
+        if isinstance(prov, list) or isinstance(mod, list):
+            if not isinstance(prov, list) or not isinstance(mod, list):
+                problems.append(
+                    f"{where}: {provider_key!r} and {model_key!r} must both be lists "
+                    f"with one value per lane when either is — a scalar beside a list "
+                    f"pairs one lane's value with another's")
+            elif len(prov) != lanes or len(mod) != lanes:
+                problems.append(
+                    f"{where}: {provider_key!r}/{model_key!r} must have exactly "
+                    f"{lanes} value(s) — one per lane — got {len(prov)}/{len(mod)}")
+        elif not mod:
+            problems.append(f"{where}: {provider_key!r} requires {model_key!r} "
+                            f"— a provider alone does not say which model to run")
 ```
 
 **(e) workdir index returncode** — in `workdir_notices`, after the `staged = subprocess.run(...)` call (`:487-488`):
@@ -728,7 +820,7 @@ def gate_is_auto(value, code):
                 f"board's view of what is staged is unknown, not clean"]
 ```
 
-**(f) `_KIND_SCHEMA`** — add the two missing kinds and tighten the string kinds:
+**(f) `_KIND_SCHEMA`** — tighten the string kinds. It is NOT missing any kind: `OPTIONS`' kinds and `_KIND_SCHEMA`'s keys are the same ten (measured), and `--write-schema` exits 0 on the pristine tree, so there is no KeyError here to fix. `path` and `unchecked` are `_kind_error` branches (`:187`, `:237`), never OPTIONS kinds; the two entries below are placeholders for them, not repairs.
 
 ```python
 _KIND_SCHEMA = {
@@ -736,7 +828,7 @@ _KIND_SCHEMA = {
     "text":     {"type": "string", "minLength": 1, "pattern": "\\S"},
     "count":    {"type": "integer", "minimum": 1},
     "bool":     {"type": "boolean"},
-    "duration": {"type": "string", "pattern": "^(?:(?!0+[hms])[0-9.]+[hms])+$"},
+    "duration": {"type": "string", "pattern": "^(?:\\d+(?:\\.\\d+)?[hms])+$"},
     "abspath":  {"type": "string", "pattern": "^/"},
     "path":     {"type": "string", "minLength": 1},
     "paths":    {"type": "array", "uniqueItems": True,
@@ -752,7 +844,7 @@ _KIND_SCHEMA = {
 }
 ```
 
-(The `duration` pattern is a best-effort mirror; `validate` remains the authority for the zero check — say so in the comment above `_KIND_SCHEMA`, which already says exactly that.)
+(The `duration` pattern mirrors `_DURATION_RE` VERBATIM and that is deliberate: the zero case is NOT expressible in this regex without also rejecting values `validate` accepts — a lookahead form was measured rejecting the legal `1h30m0s` and accepting the illegal `0.0m`. `validate` stays the authority for it, which is what the comment above `_KIND_SCHEMA` already says.)
 
 **(g) `json_schema`** — add `patternProperties` and drop the false `required`:
 
@@ -777,7 +869,7 @@ Expected: PASS. `test_the_generated_schema_is_current` (`:43`) now compares agai
 - [ ] **Step 5: Whole-suite gate (this task changes an accepted-value rule)**
 
 Run: `PYTHON=/usr/bin/python3 ./test.sh`
-Expected: **685 passed** — the baseline 666, plus Task 1's 1, Task 2's 3, Task 3's 4, Task 4's 4 and this task's 7. If any shipped board or idea file now fails validation, that is a real finding: report it on the card rather than loosening the rule.
+Expected: **686 passed** — the baseline 666, plus Task 1's 1, Task 2's 3, Task 3's 4, Task 4's 5 and this task's 7. If any shipped board or idea file now fails validation, that is a real finding: report it on the card rather than loosening the rule.
 
 - [ ] **Step 6: Stage and ask**
 
@@ -802,26 +894,7 @@ Each of these three paths decides whether a run is finished, and none is execute
 
 - [ ] **Step 1: Replace the source-grep tests with behavioural ones**
 
-In `tests/test_run_directories.py`, replace `test_patches_land_in_the_runs_own_directory_without_a_second_timestamp` (`:410-418`) with:
-
-```python
-def test_preserve_artifacts_copies_a_cards_patch_into_the_run(tmp_path, monkeypatch):
-    """It was never executed by any test — only grepped in the source — so a dead
-    copier kept reporting success (2026-09-23 C8)."""
-    import run as r
-    monkeypatch.setattr(r, "BOARD", "b")
-    monkeypatch.setattr(r, "REPO", str(tmp_path))
-    monkeypatch.setattr(r, "log", lambda msg: None)
-    monkeypatch.setattr(r, "hermes_kanban_dir", lambda: str(tmp_path / "home"))
-    monkeypatch.setattr(r, "board",
-                        lambda: {"C1: implement - lane 1": {"id": "t_c1"}})
-    monkeypatch.setattr(r.STATE, "run_dir", str(tmp_path / "runs" / "run-x"))
-    src = tmp_path / "home" / "kanban" / "boards" / "b" / "attachments" / "t_c1"
-    src.mkdir(parents=True)
-    (src / "patch.diff").write_text("diff\n")
-    r.preserve_artifacts()
-    assert (tmp_path / "runs" / "run-x" / "patches" / "t_c1.patch").read_text() == "diff\n"
-```
+In `tests/test_run_directories.py`, DELETE `test_patches_land_in_the_runs_own_directory_without_a_second_timestamp` (`:410-418`) — a source-grep test that cannot fail when the behaviour breaks. Its behavioural replacement belongs to **Task 10**, which owns the fix it needs: `preserve_artifacts` hardcodes `~/.hermes` at `run.py:3223-3224`, so a test written here fails against today's engine (measured) and would carry a red test into the next task. Task 6 deletes the grep and stages the deletion.
 
 In `tests/test_open_lane.py`, replace `test_a_halt_stops_the_loop_before_it_can_refile` (`:815-820`) with:
 
@@ -904,13 +977,13 @@ def test_json_output_exits_one_when_a_warning_was_raised(tmp_path, monkeypatch, 
 
 - [ ] **Step 2: Run the new tests**
 
-Run: `/usr/bin/python3 -m pytest -q tests/test_open_lane.py tests/test_run_directories.py tests/test_run_audit.py -v -k "main_ or preserve_artifacts or json_output"`
-Expected: PASS. If `preserve_artifacts` or `main` needs one more attribute patched (module-level globals vary by call order), patch that attribute and note it in the test docstring — do not edit `driver/run.py` in this task.
+Run: `/usr/bin/python3 -m pytest -q tests/test_run_audit.py tests/test_run_directories.py tests/test_open_lane.py -v -k "main_ or json_output"` — `tests/test_open_lane.py` imports `card_render` at `:1` before it inserts `template/` on `sys.path` at `:5-6`, so listed FIRST it dies at collection with `ModuleNotFoundError: No module named 'card_render'` (measured). `./test.sh` collects alphabetically, which is why the suite never sees this.
+Expected: PASS — measured against the unmodified engine: the three `main()` tests and both `--json` tests pass (`5 passed`), with no extra attribute to patch. Do not edit `driver/run.py` in this task.
 
 - [ ] **Step 3: Whole-suite gate**
 
 Run: `PYTHON=/usr/bin/python3 ./test.sh`
-Expected: green, count = 685 + 4 (this task: two replaced by behavioural equivalents, three added) = **689 passed**.
+Expected: green, count = 686 + 3 (one source-grep test deleted — its behavioural replacement moved to Task 10 — one replaced by three, two appended) = **689 passed**.
 
 - [ ] **Step 4: Stage and ask**
 
@@ -930,7 +1003,7 @@ Report, then STOP.
 
 **Interfaces:**
 - Consumes: `file_lanes._board_cfg(board_dir)`, `lanes._board_default(defaults, key, lane, ...)`, `runs_util.board_runs(board, card_id, timeout=30)`, `driver/driver-pid.sh`'s `live_driver_pid`.
-- Produces: `runs_util.board_runs` returns **`None`** on failure and `[]` only for a genuine "no runs"; every caller in `driver/run.py:554-559`, `driver/timing-report.py:178-235` and `driver/runs-report.py` must handle `None`.
+- Produces: `runs_util.board_runs` returns **`None`** on failure and `[]` only for a genuine "no runs"; every caller must handle `None`. Measured, they are `driver/run.py:554` (this task), `:1348`, `:1380`, `:3302` (`for r in runs:` — reached by `tests/test_chain_log.py`) and `:1977` (already inside a `try/except`), plus `driver/timing-report.py:113` (`for r in runs_util.board_runs(...)`). `driver/runs-report.py` does not call it at all, and `tests/test_runs_util.py:67` pins the current `== []` and must become `is None` in this task.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -958,9 +1031,10 @@ def test_an_unreadable_manifest_stops_the_filing(tmp_path):
     board = tmp_path / "boards" / "b"
     board.mkdir(parents=True)
     (board / "board.json").write_text("{ not json")
-    with pytest.raises(Exception) as e:
+    with pytest.raises(ValueError):       # json.JSONDecodeError is one — and its own
         file_lanes.file_board("b", str(tmp_path), str(tmp_path / "w"), 1, "run-x")
-    assert "board.json" in str(e.value)
+                                         # message carries no path, so asserting on
+                                         # "board.json" here cannot pass
 ```
 
 - [ ] **Step 2: Run them to verify they fail**
@@ -1041,7 +1115,7 @@ In `driver/run.py:554-559`, treat `None` as "no evidence":
     closed_ok = [r for r in (runs or []) if r.get("outcome") == "completed"]
 ```
 
-In `driver/timing-report.py:170-181` and `driver/runs-report.py`, guard with `or []` where the value is summed, and skip the row when it is `None`. Grep the call sites first: `grep -rn "board_runs(" driver/`.
+In `driver/timing-report.py:113`, `driver/run.py:1348`, `:1380` and `:3302`, guard with `or []` where the value is iterated or summed, and skip the row when it is `None` (`driver/run.py:1977` is already wrapped). Change `tests/test_runs_util.py:67`'s `== []` to `is None`. Grep the call sites first: `grep -rn "board_runs(" driver/` — measured: `driver/timing-report.py:113`, `driver/run.py:554/1348/1380/1977/3302`; `driver/runs-report.py` has none.
 
 Run: `/usr/bin/python3 -m pytest -q tests/test_runs_util.py tests/test_file_lanes.py tests/test_open_lane.py tests/test_runs_report.py tests/test_tool_clis.py -v`
 Expected: PASS.
@@ -1064,7 +1138,7 @@ Report, then STOP.
 ## Task 8: doc corrections — five paragraphs that currently mislead (09-23 I37–I44)
 
 **Files:**
-- Modify: `driver/run.py:206-218` (comment), `:524` (docstring); `template/card-bodies/_result-field.txt:1`; `template/card-bodies/rvp-body.txt:5`; `driver/create-board.sh:59`, `:120-123`, `:140`; `driver/run.py:2048` + `driver/start-board.sh:95-97`; `template/card-bodies/gc-body.txt:3`; `template/lanes.py:84`; `driver/run.py:2216`; `driver/run.py:207-210`
+- Modify: `driver/run.py:206-218` (comment), `:524` (docstring); `template/card-bodies/_result-field.txt:1`; `template/card-bodies/rvp-body.txt:5`; `driver/create-board.sh:59`, `:64`, `:120-123`, `:140`; `driver/run.py:2048` + `driver/start-board.sh:95-97`; `template/card-bodies/gc-body.txt:3`; `template/lanes.py:84`; `driver/run.py:2216`; `driver/run.py:207-210`
 
 **Interfaces:**
 - Consumes: nothing. **Produces:** nothing importable. This task changes text only — no code path, no test.
@@ -1073,10 +1147,10 @@ Every one of these is a load-bearing sentence a worker or a maintainer reads and
 
 - [ ] **Step 1: Fix the five behaviour-misstating docs**
 
-1. `driver/run.py:524` — the docstring says *"Only the card's result field counts"*, and 26 lines below (`:549-558`) a completed run's `summary` is used when `result` is empty, with two tests pinning that fallback. Rewrite to: `"The card's result field decides, and a done card with an empty result falls back to its closing RUN's summary — never to a parking block's (see below). Falling back to every run summary, as this first did, read RVp1's parking block summary as a verdict and held Gp forever."`
+1. `driver/run.py:524` — the docstring says *"Only the card's result field counts"*, and 25 lines below (`:549-559`) a completed run's `summary` is used when `result` is empty, with two tests pinning that fallback. Rewrite to: `"The card's result field decides, and a done card with an empty result falls back to its closing RUN's summary — never to a parking block's (see below). Falling back to every run summary, as this first did, read RVp1's parking block summary as a verdict and held Gp forever."`
 2. `template/card-bodies/_result-field.txt:1` — *"a card completed with a summary only has reported nothing to the board"* is false (same fallback). Replace that clause with: `"…so a card completed with a summary only has reported nothing in the field the driver reads first — a done card with an empty `result` falls back to its closing run's summary, which is a supported path but not the one to rely on."`
 3. `template/card-bodies/rvp-body.txt:5` — *"the parent card **staged** a plan at `<PLAN>`"*: the plan is a run hand-off, never staged (checklist item 8, `DESIGN.md:24`, `run.py:1278-1280`). Change to: `"the parent card wrote a plan to <PLAN> — a run hand-off, not a staged file; read it at that path and never look for it in the git index."`
-4. `driver/run.py:214-216` — the fallback manifest is claimed to equal "the defaults `create-board.sh` prints in `--help`", but it sets `integration-tests: False` while the help says both levels on and `board_schema`'s default is `True`. Make both true by aligning the fallback with the schema:
+4. `driver/run.py:214-218` — the comment above the fallback claims it equals "the defaults `create-board.sh` prints in `--help`", but the dict (`:217-218`) sets `integration-tests: False` while `board_schema`'s default is `True` and the help's example prints `"integration-tests": [false, true]` — a per-lane list, not "both levels on". Make the fallback the schema's own defaults and let the comment say that:
 
 ```python
     except FileNotFoundError:
@@ -1104,6 +1178,8 @@ with". `auto-gates` is a BOARD option and has no per-lane form.
       "assignees": {"coder": "coder"},            # optional: role -> hermes profile
 ```
 (and note in the line's comment that the roles are `researcher`, `coder`, `human-gate`.)
+
+`driver/create-board.sh:64` — the `targets` example is `["~/.hermes/profiles/trader"]`, and Task 5's new rule refuses any target that is not absolute, so the script's own table would produce a board its own validator rejects. Change it to an absolute example: `"targets": ["/abs/path/to/write/root"],   # optional: write roots outside the workdir; ABSOLUTE, like default-workdir`
 
 - [ ] **Step 3: Fix the retired-step and tombstone references**
 
@@ -1182,7 +1258,7 @@ def test_the_filing_defaults_are_the_option_tables():
 - [ ] **Step 2: Run them to verify they fail**
 
 Run: `/usr/bin/python3 -m pytest -q tests/test_lane_resolution.py tests/test_file_lanes.py -v -k "never_paired or zero_as_a_cap or filing_defaults"`
-Expected: FAIL — the board provider travels with the lane model, `max_reworks({"max-reworks": 0})` returns 3, and one of the two constants is a literal.
+Expected: FAIL on ONE of the three (measured `tests/test_lane_resolution.py .F`): `test_max_reworks_reads_a_zero_as_a_cap_not_as_unset` fails with `assert 3 == 0`. `test_a_lane_model_is_never_paired_with_the_boards_provider` and `test_the_filing_defaults_are_the_option_tables` PASS on the pristine tree — regression pins for behaviour that is already right, so the `max_reworks` edit is the only one here with a failing receipt.
 
 - [ ] **Step 3: Implement**
 
@@ -1195,7 +1271,7 @@ Expected: FAIL — the board provider travels with the lane model, `max_reworks(
     return int(cfg["max-reworks"])
 ```
 
-- `template/lanes.py:278-303` — `model_args`: document the third parameter and make the pairing rule explicit in the docstring: *"`lane_cfg` is the lane's RESOLVED options (`resolve_lane_options`) — `{model, provider}`, both possibly `None`. A lane model is paired only with the lane's own provider; the board's provider belongs to the board's model and must never travel with a lane's."* The code already does this (`_model_pair(lane_cfg.get("model"), lane_cfg.get("provider"))`); the failing test is fixed by checking the **call sites** that pass the wrong shape — `driver/run.py:1508` passes `opts` (the full resolved dict, correct) while `:721`, `:741`, `:2422`, `:2441`, `:2738` pass `lane_model_opts(lane)`. Make `lane_model_opts` return exactly `{"model": ..., "provider": ...}` and nothing else, and give it a docstring saying so.
+- `template/lanes.py:278-303` — `model_args`: document the third parameter and make the pairing rule explicit in the docstring: *"`lane_cfg` is the lane's RESOLVED options (`resolve_lane_options`) — `{model, provider}`, both possibly `None`. A lane model is paired only with the lane's own provider; the board's provider belongs to the board's model and must never travel with a lane's."* The code already does this (`_model_pair(lane_cfg.get("model"), lane_cfg.get("provider"))`) and the test passes on the pristine tree, so this is a documentation item, not a repair. **Leave `lane_model_opts` alone**: its body is `return {k: headers[k] for k in ("model", "provider") if k in headers}` and its docstring says "Deliberately NOT the resolved options: `resolve_lane_options` fills a missing provider from the board" — the first draft here would have replaced that deliberate design with its opposite. The call sites are `driver/run.py:721`, `:741`, `:2422`, `:2441`, `:2738` (`lane_model_opts(lane)`) and `:1508` (`opts`, the resolved dict); `driver/run.py:1509` and `driver/file_lanes.py:198` call `model_args` with two arguments and are unaffected.
 - `driver/run.py:302-309` — give `lane_options()` a docstring naming its two shapes: *"the lane's resolved options (the 6 typed keys plus `'idea'`), or **None** when the lane file is absent or blank. `None` is a state, not an empty dict: callers that index directly must handle it (`:2368-2374` breaks the lane scan on it, `:1742-1748` falls back to the board default)."* Then remove the dead `.get("refinement", True)` fallbacks the review names — grep `lane_refinement` call sites first: `grep -rn "lane_refinement\|lane_options(" driver/run.py`.
 - `driver/run.py:1229-1235` — the manifest read is unvalidated everywhere but `validate_armed`. Add one line to `auto_gates()`'s docstring recording that the driver deliberately does NOT re-validate the manifest per tick (the door scripts do), so the choice is visible rather than accidental.
 - `driver/file_lanes.py:34`, `:42` — replace the literals with table reads, placed with the module's other `board_schema` imports:
@@ -1206,19 +1282,8 @@ DEFAULT_MAX_RUNTIME = board_schema.OPTIONS["max-runtime"][1]
 DEFAULT_MAX_RETRIES = board_schema.OPTIONS["max-retries"][1]
 ```
 (Keep the two explanatory comment blocks above them; only the values move.)
-- `driver/file_lanes.py:95-107` — `next_run_key` already documents the `run-<YYYYmmdd-HHMMSS>` shape in prose only. Add the pattern as a module constant and a test-visible check:
+- `driver/file_lanes.py:95-107` — `next_run_key` already documents the `run-<YYYYmmdd-HHMMSS>` shape in prose only, and its docstring names `create-board.sh` as its only caller. **Do NOT add a guard to `run.use_run`** — the first draft of this step did, and it is wrong: `use_run` is a READER, and the repo's own run ids are not all `run-<ts>`. Measured, a `^run-\d{8}-\d{6}$` guard there breaks **17 tests** (`tests/test_run_directories.py:51/167/182/253` use `"r1"`, `tests/test_refile_leaves_work_alone.py:39` uses `"b-20260912-090000"`, and `mint_run`'s own callers pass the same shapes), and it would refuse to start a driver on any board whose `runs/current` still names a pre-rename run. The shape is enforced where an id is MINTED: `next_run_key` (`file_lanes.py:107`) is the one generator and its docstring already states the shape. Record the ruling on the card; add no code here.
 
-```python
-RUN_ID_RE = re.compile(r"^run-\d{8}-\d{6}$")
-```
-and in `next_run_key`, after building the fresh key, `assert RUN_ID_RE.match(key), key` is **not** the right fix (a filing must not die on a clock); instead make `card_render.run_dir` / `use_run` reject a run id that does not match, since `use_run` joins any string onto `RUNS_ROOT` (`run.py:143-153`). Add to `run.use_run`:
-
-```python
-def use_run(run_id):
-    ...
-    if run_id and not re.match(r"^run-\d{8}-\d{6}$", run_id):
-        raise ValueError(f"not a run id: {run_id!r} — a run is `run-<YYYYmmdd-HHMMSS>`")
-```
 - `template/lanes.py:358-360` — `base_code`'s regex is fine; the mixed rework grammars (`:358-360`) are a Suggestion and are handled in Task 12.
 
 - [ ] **Step 4: Run the tests**
@@ -1245,7 +1310,7 @@ Report, then STOP.
 
 **Files:**
 - Modify: `driver/run.py:2540-2548` + `:3771` (tick-halt keying), `:3029-3034` + `:2675-2677` (unreadable card), `:1735` (`ledger`), `:3223` (`preserve_artifacts` path), `:3710-3712` (`--timeout-min`); `driver/timing-report.py:81`; `driver/render-flow.py:168`; `driver/arm.sh:36-37`
-- Modify: `tests/test_cli_timeouts.py` (append), `tests/test_runs_report.py` (append), `tests/test_render_flow.py` (append), `tests/test_open_lane.py` (append)
+- Modify: `tests/test_cli_timeouts.py` (append), `tests/test_runs_report.py` (append), `tests/test_render_flow.py` (append), `tests/test_open_lane.py` (append), `tests/test_run_directories.py` (the `preserve_artifacts` test moved here from Task 6)
 
 **Interfaces:**
 - Consumes: `run.note_tick_outcome(exc)`, `run.board_removed_exit(exc, idle)`, `run.is_reasonless_block(card)`, `run.ledger(record)`, `run.preserve_artifacts()`, `timing-report._args(argv)`, `render-flow.main()`.
@@ -1289,21 +1354,71 @@ def test_a_repeated_timeout_flag_is_not_an_indexerror(monkeypatch):
 Run: `/usr/bin/python3 -m pytest -q tests/test_render_flow.py tests/test_cli_timeouts.py -v -k "missing_readme or repeated_timeout"`
 Expected: FAIL — `FileNotFoundError` from `open(README)`, and `AttributeError: parse_timeout`.
 
+Append to `tests/test_open_lane.py` (it already imports `run`), plus the `preserve_artifacts` test moved here from Task 6:
+
+```python
+def test_preserve_artifacts_copies_a_cards_patch_into_the_run(tmp_path, monkeypatch):
+    """It was never executed by any test — only grepped in the source — so a dead
+    copier kept reporting success (2026-09-23 C8). It needs THIS task's fix: the
+    copier hardcoded ~/.hermes, so the hermes_kanban_dir patch was inert before."""
+    import run as r
+    monkeypatch.setattr(r, "BOARD", "b")
+    monkeypatch.setattr(r, "REPO", str(tmp_path))
+    monkeypatch.setattr(r, "log", lambda msg: None)
+    monkeypatch.setattr(r, "hermes_kanban_dir", lambda: str(tmp_path / "home" / "kanban"))
+    monkeypatch.setattr(r, "board",
+                        lambda: {"C1: implement - lane 1": {"id": "t_c1"}})
+    monkeypatch.setattr(r.STATE, "run_dir", str(tmp_path / "runs" / "run-x"))
+    src = tmp_path / "home" / "kanban" / "boards" / "b" / "attachments" / "t_c1"
+    src.mkdir(parents=True)
+    (src / "t_c1.patch").write_text("diff\n")      # the copier globs *.patch
+    r.preserve_artifacts()
+    assert (tmp_path / "runs" / "run-x" / "patches" / "t_c1.patch").read_text() == "diff\n"
+
+
+def test_a_message_that_merely_contains_the_slug_is_not_a_removal(monkeypatch):
+    """The match keys on the CLI's own phrase `board '<slug>' does not exist`, not on
+    the slug appearing anywhere: a one-letter slug is inside the word "board" itself,
+    so a substring test on the slug alone reads every unrelated "does not exist" as a
+    removed board and exits the driver (2026-09-23 I19)."""
+    import run as r
+    monkeypatch.setattr(r, "BOARD", "b")
+    monkeypatch.setattr(r, "log", lambda msg: None)
+    assert r.board_removed_exit(Exception("the workdir does not exist"), 0) is None
+    assert r.board_removed_exit(Exception("board 'b' is still running"), 0) is None
+    assert r.board_removed_exit(Exception("Board 'b' does not exist"), True) == 0
+    assert r.board_removed_exit(Exception("board 'b' does not exist"), False) == 1
+
+
+def test_the_tick_halt_counter_ignores_a_varying_id():
+    """The key is the type plus the FIRST line, so an id or a timestamp on a LATER
+    line of a multi-line CLI failure no longer resets the counter every tick
+    (2026-09-23 I18). The residual — an id ON the first line still varies — is
+    recorded in the deferred roll-up, not papered over here."""
+    import run as r
+    assert r._tick_signature(Exception("tick failed\ncard t_1 unreadable at 12:00:00")) == \
+        r._tick_signature(Exception("tick failed\ncard t_2 unreadable at 12:00:01"))
+    assert r._tick_signature(Exception("a")) == "Exception: a"
+```
+
 - [ ] **Step 3: Implement**
 
 - `driver/render-flow.py:166-169` — guard the README read before `--check`:
 
 ```python
-    readme = None
     try:
         with open(README) as f:
-            readme = f.read()
+            targets[README] = splice(f.read(), readme_block(mermaid()))
     except OSError:
-        readme = None
-    if readme is not None:
-        targets[README] = splice(readme, readme_block(mermaid()))
+        # None, not absent: `stale` below is built FROM `targets`, so a README left
+        # out of the dict is never examined and `--check` reports a clean tree
+        # (measured: no output, exit 0) — the opposite of what this step is for
+        # (2026-09-23 I20).
+        targets[README] = None
+    stale = [p for p, want in targets.items()
+             if want is None or not os.path.exists(p) or open(p).read() != want]
 ```
-(`targets[README]` absent → the `stale` list at `:170-171` already contains it via the `not os.path.exists(p)` branch, so `--check` prints `stale: README.md` and exits 1.)
+(The write path at `:176-178` must skip the sentinel too: `for p, want in targets.items():` / `if want is None: continue` before the `open(p, "w")`. The first draft of this step set `readme = None` and left README OUT of `targets`; because `stale` is built from `targets`, `--check` then printed nothing and exited 0 — measured.)
 
 - `driver/run.py:3707-3712` — extract the flag parse into a helper and use it in `main()`:
 
@@ -1355,9 +1470,12 @@ and in `main()`:
 ```python
 def _tick_signature(exc):
     """A stable name for a tick exception: its type and the FIRST line of its text.
+
     The whole message was the key, and a message carrying a varying id (a card id, a
-    timestamp) reset the counter every tick, so a loop never halted
-    (2026-09-23 I18)."""
+    timestamp) reset the counter every tick, so a loop never halted (2026-09-23 I18).
+    The residual is deliberate and recorded in the deferred roll-up: an id on the
+    FIRST line still varies, so the counter coalesces multi-line failures that share
+    a first line, not single-line ones that differ in a token."""
     first = str(exc).splitlines()[0] if str(exc) else ""
     return f"{type(exc).__name__}: {first}"
 ```
@@ -1367,7 +1485,11 @@ and use `sig = _tick_signature(exc) if exc is not None else None` in `note_tick_
 
 ```python
     text = str(exc).lower()
-    if "does not exist" not in text or BOARD.lower() not in text:
+    # The CLI's own phrase, case-insensitively — NOT the bare slug: a one-letter slug
+    # is a substring of the word "board" itself, so `BOARD.lower() in text` matches any
+    # message that says "does not exist" and exits the driver on an unrelated fault
+    # (2026-09-23 I19).
+    if "does not exist" not in text or f"board '{BOARD.lower()}'" not in text:
         return None
 ```
 
@@ -1407,7 +1529,7 @@ Expected: PASS.
 - [ ] **Step 5: Whole-suite gate**
 
 Run: `PYTHON=/usr/bin/python3 ./test.sh`
-Expected: green, count = 694 + 2 = **696 passed**.
+Expected: green, count = 694 + 5 = **699 passed** (two appended tests, the two guards' negative cases, and the `preserve_artifacts` test moved here from Task 6).
 
 - [ ] **Step 6: Stage and ask**
 
@@ -1426,7 +1548,7 @@ Report, then STOP.
 - No engine file is edited in this task.
 
 **Interfaces:**
-- Consumes: `ra._proc_state`, `ra.worker_outlived_run`, `ra.work_noise_findings`, `ra.card_log_findings`, `run.reset_attempt_budgets`, `file_lanes._options_line`, `runs_report._size` / `runs_in` / `main`.
+- Consumes: `ra._proc_state`, `ra.worker_outlived_run`, `ra.work_noise_findings`, `ra.card_log_findings`, `run.reset_attempt_budgets`, `file_lanes._options_line`, `runs_report._size` / `runs_in` / `main`. `_options_line`'s real signature is `(repo, board, lane, text, workdir=None)` — measured; the first draft's call passed them in the wrong order, and the function's own `except Exception` swallowed the resulting `TypeError` into an "unavailable" line.
 - Produces: tests only.
 
 - [ ] **Step 1: Add the tests**
@@ -1501,12 +1623,12 @@ Append to `tests/test_file_lanes.py`:
 
 ```python
 def test_the_options_line_reports_a_header_that_conflicts(tmp_path):
-    """`_options_line`'s success/CONFLICTS path never runs — every test passes
-    `/repo`, so it takes the `except` (2026-09-23 I31)."""
+    """`_options_line`'s success/CONFLICTS path never runs — no test calls it at all
+    (measured: `grep -rn _options_line tests/` is empty) (2026-09-23 I31)."""
     board = tmp_path / "boards" / "b"
     board.mkdir(parents=True)
     (board / "board.json").write_text(json.dumps({"slug": "b", "unit-tests": True}))
-    line = file_lanes._options_line("b", 1, str(tmp_path),
+    line = file_lanes._options_line(str(tmp_path), "b", 1,
                                     "<!-- unit-tests: false -->\n# Idea\n### Done means\nx\n",
                                     workdir=None)
     assert "CONFLICTS" in line
@@ -1533,7 +1655,7 @@ Expected: PASS. If a test reveals a real defect (rather than a missing test), **
 - [ ] **Step 3: Whole-suite gate**
 
 Run: `PYTHON=/usr/bin/python3 ./test.sh`
-Expected: green, count = 696 + 8 = **704 passed**.
+Expected: green, count = 699 + 8 = **707 passed**.
 
 - [ ] **Step 4: Stage and ask**
 
@@ -1548,14 +1670,14 @@ Report, then STOP.
 ## Task 12: suggestions and hygiene, one pass (09-23 Suggestions + 09-20 leftovers)
 
 **Files:**
-- Modify: `tests/test_lanes_ideas.py:78`, `tests/test_render_flow.py:14-16`, `tests/test_run_directories.py:103`, `tests/test_shipped_boards.py:176`; `driver/timing-report.py:122`; `driver/create-board.sh:474-487`; `driver/run-audit.py:455`, `:510`, `:523`, `:400`; `driver/run.py:2805`; `template/card-bodies/gc-body.txt:3` (done in Task 8)
+- Modify: `tests/test_lanes_ideas.py:78`, `tests/test_render_flow.py:14-16`, `tests/test_run_directories.py:103`, `tests/test_shipped_boards.py:176`; `driver/timing-report.py:122`; `driver/create-board.sh:473-484`; `driver/run-audit.py:455`, `:510`, `:523`, `:400`; `driver/run.py:2805`; `template/card-bodies/gc-body.txt:3` (done in Task 8)
 
 **Interfaces:**
 - Consumes: nothing new. **Produces:** nothing new.
 
 - [ ] **Step 1: Fix the weak/vacuous tests**
 
-- `tests/test_lanes_ideas.py:78-80` — the expected dict has a duplicated `"unit-tests"` key that silently overrides itself, so the assertion is weaker than it reads. Delete the first `"unit-tests": False,` (the `"true"` header wins, so the surviving entry is `"unit-tests": True`).
+- `tests/test_lanes_ideas.py:78-80` — the expected dict names `"unit-tests": True` TWICE (`:79` and `:80`), so the literal is one entry weaker than it reads. Delete the SECOND one and keep the line `"unit-tests": True, "model": None, "provider": None}`. There is no `"unit-tests": False` in the expected dict — that value is in the INPUT defaults at `:75`.
 - `tests/test_render_flow.py:14-16` — `assert "failsafe" not in text` is vacuous (the word appears nowhere in `driver/` or `template/`). Replace with a check that bites: assert the diagram names no `bots` driver and that `--check` fails on a stale file:
 
 ```python
@@ -1579,7 +1701,7 @@ def test_check_fails_when_a_diagram_is_stale(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "argv", ["render-flow.py", "--check"])
     assert rf.main() == 1
 ```
-- `tests/test_run_directories.py:103` and `tests/test_shipped_boards.py:176` — docstrings still name the retired `RUN_DIR` global. Replace `RUN_DIR` with `STATE.run_dir` in both docstrings.
+- `tests/test_run_directories.py:103`, `tests/test_shipped_boards.py:176`, `driver/run.py:146` and `driver/run.py:2114` — docstrings still name the retired `RUN_DIR` global (no such global is defined any more; the tests patch `run.RUNS_ROOT` and `run.STATE.run_dir`). Replace `RUN_DIR` with `STATE.run_dir` in all four.
 
 - [ ] **Step 2: Delete the dead code the review named**
 
@@ -1590,7 +1712,7 @@ def test_check_fails_when_a_diagram_is_stale(tmp_path, monkeypatch):
 
 - [ ] **Step 3: Collapse the double writer of `runs/current`**
 
-`driver/create-board.sh:473-487` — the heredoc calls `unstarted_mint` twice (`:473` directly, then again inside `next_run_key` at `:474`) and re-implements `run.mint_run`'s pointer write. Replace `:473-484` with:
+`driver/create-board.sh:473-484` — the heredoc re-implements `run.mint_run`'s `runs/current` pointer write (`:480-484`). (The two `unstarted_mint` calls — `:473` and the one inside `next_run_key` at `file_lanes.py:104` — are both READ-ONLY probes of `runs/current`; leave them. The duplication that matters is the writer.) Replace `:473-484` with:
 
 ```python
 reused = file_lanes.unstarted_mint(repo, slug)
@@ -1600,12 +1722,12 @@ if reused:
 run_dir = card_render.run_dir(repo, slug, key)
 os.makedirs(run_dir, exist_ok=True)
 ```
-and use `file_lanes`' own pointer write for `runs/current` — add `file_lanes.set_current_run(repo, slug, key)` (a three-line function: write `<runs>/current.tmp`, `os.replace`) and call it here, so there is one writer of that file in the tree. Keep `run.mint_run` as the driver's own path and note in both docstrings which one a caller wants.
+and use `file_lanes`' own pointer write for `runs/current` — add `file_lanes.set_current_run(repo, slug, key)`: `runs = card_render.run_dir(repo, slug, None)`; write `key + "\n"` to `os.path.join(runs, "current.tmp")`; `os.replace(tmp, os.path.join(runs, "current"))` — and call it here, so there is one writer of that file in the tree (measured: `grep -rn set_current_run` is empty today; the two writers are this heredoc and `run.mint_run` at `run.py:186-189`). Keep `run.mint_run` as the driver's own path and note in both docstrings which one a caller wants.
 
 - [ ] **Step 4: Run the tests**
 
 Run: `PYTHON=/usr/bin/python3 ./test.sh`
-Expected: green, count = 704 + 1 (one test replaced by two; the rest net-zero) = **705 passed**. `python3 driver/render-flow.py --check` must still exit 0.
+Expected: green, count = 707 + 1 (one test replaced by two; the rest net-zero) = **708 passed**. `python3 driver/render-flow.py --check` must still exit 0.
 
 - [ ] **Step 5: Stage and ask**
 
@@ -1617,22 +1739,77 @@ Report, then STOP.
 
 ---
 
+## Deferred — mapped but not implemented, and carried forward
+
+Recorded so a later run does not re-derive it and no implementer "fixes" it while passing through.
+Nothing here is a task in this plan.
+
+**Mapped to a task, not implemented by it** (measured against the 09-23 review):
+- **I12** — the gate/goal vocabularies declared four times (`board_schema.py:132,136`; `run.py:1056,1057,2337`; `lanes.py:365`) with no equality test. No task pins two of them equal; Task 5's `_KIND_SCHEMA` adds a fifth restatement, not a test.
+- **I32** — `template/driver_lock.py:32-33, :79-80` (`PermissionError → alive`, `_release`'s `OSError`). No test in Task 2 or Task 11.
+- **I35** — `board_schema.py:706-716`: `--check-schema`'s stale branch and `--write-schema` through the CLI. No task invokes the module CLI.
+- **I6** — the manifest's two shapes and which keys are optional. Task 9 marks the site "done in Task 8", and Task 8 changes only a docstring there.
+- **I34** — `doc-chain.py:183`, `:191-192`, `:224-227` (no ledger, a malformed ledger line, the exit-2 path). Task 4 covers the chain, not the ledger.
+- **I36** — `runs-report.py:37-42, :88-91, :148-155`. Task 11 tests `_size` and `runs_in` only; `superseded`, `--board` and `main([])` stay untested.
+
+**The Self-Review's coverage claim is over the 09-23 MAIN document, but this plan's Spec makes the
+five per-aspect reports normative too.** Findings that live only in those reports have no 09-23
+number and no step here — roughly: code S2–S5, S7, S9–S18, S20; tests S4–S8; errors I11, I12, I14,
+S1–S4, S6–S14, S16; types S7, S9, S10.
+
+**The 09-20 disposition sentence is the plan's weakest claim.** Beyond `bots/` (K4/K5/K9) it names
+nothing, while the 09-23 reports' own prior-status tables still mark ~68 09-20 findings unfixed
+(17 code, 8 tests, 14 comments, 13 types, 16 errors), and the board-product findings (code
+S26/S27, types T-11/T-12/T-25/T-26, errors I5/S9) are equally N/A but unnamed. If the goal is
+"close the findings of the two `ocr-review` runs", this plan closes the main documents' findings
+and the Suggestions — say so on the card rather than leaving the wider claim standing.
+
+**Suggestions not taken:** `template/lanes.py:358-360`'s mixed rework grammars (an earlier draft
+claimed Task 12 carried them; it does not).
+
+**Residual accepted (I18):** `_tick_signature` keys on the exception type plus its FIRST line, so a
+failure whose varying id sits on the first line still resets the counter — the counter coalesces
+multi-line failures that share a first line. Closing it fully means normalizing ids/timestamps out
+of the text, which is a guess about every message shape; recorded rather than guessed at.
+
+**Dated records that keep their old names by design:** `TIMELINE.md`, `boards/*/README.md`,
+`boards/*/work/**` and everything under `boards/*/runs/` — no later sweep should re-flag them.
+
 ## Self-Review
 
-**1. Spec coverage.** Every Critical in `2026-09-23-code-review.md` maps to a task: C1→T1, C2→T2, C3+C4→T3, C5+C6→T4, C7→T6, C8→T6, C9→T6. Every Important: I1–I5→T5, I6–I12→T9, I13–I16→T7, I17→T5, I18–I26→T10 (I26 is C6's site, done in T4), I27→T3, I28–I33→T11, I34→T4, I35→T5 (schema CLI), I36→T11, I37–I44→T8. Suggestions→T12. The 09-20 run's `bots/` findings (K4, K5, K9) are **N/A** — that tree was deleted by `docs/superpowers/plans/2026-09-20-drop-bots-driver.md`, and the 09-23 run confirms it. The 09-20 findings that survive are carried into the 09-23 numbering and are covered above.
+**1. Spec coverage.** Every Critical in `2026-09-23-code-review.md` maps to a task: C1→T1, C2→T2, C3+C4→T3, C5+C6→T4, C7→T6, C8→T6, C9→T6. Every Important: I1–I5→T5, I6–I12→T9, I13–I16→T7, I17→T5, I18–I26→T10 (I26 is C6's site, done in T4), I27→T3, I28–I33→T11, I34→T4, I35→T5 (schema CLI), I36→T11, I37–I44→T8. Suggestions→T12. The 09-20 run's `bots/` findings (K4, K5, K9) are **N/A** — that tree was deleted by `docs/superpowers/plans/2026-09-20-drop-bots-driver.md`, and the 09-23 run confirms it. The 09-20 findings that survive are carried into the 09-23 numbering only where a 09-23 number exists; the ones that are not, and the three 09-23 Important items mapped to a task that does not implement them, are recorded in the deferred roll-up below.
 
 **2. Placeholder scan.** No "TBD", no "handle edge cases", no "similar to Task N": every code step carries the code, every test step carries the test and its expected failure.
 
-**3. Type consistency.** `read_json` (T3) returns `(value, problem)` and is used at all three of its sites. `parse_timeout` (T10) returns seconds or `None`. `board_runs` (T7) returns `list | None`, and every caller named in the task is updated in the same task. `RUN_ID_RE` (T9) is used by `use_run`. `_KIND_SCHEMA` (T5) gains `path` and `unchecked`, which `_kind_error` already names.
+**3. Type consistency.** `read_json` (T3) returns `(value, problem)` and is used at all three of its sites. `parse_timeout` (T10) returns seconds or `None`. `board_runs` (T7) returns `list | None`, and every caller named in the task is updated in the same task. `_KIND_SCHEMA` (T5) gains `path` and `unchecked`, which `_kind_error` already names.
 
 **4. Review Focus.** All five listed failure modes have a test in the task that owns the code: empty lock (T2), malformed manifest/summary (T3), torn chain line (T4), zero duration (T5), boolean `auto-gates` (T1).
 
-**5. Baseline arithmetic.** 666 (HEAD `edea8ab`) → 667 (T1) → 670 (T2) → 674 (T3) → 678 (T4) → 685 (T5) → 689 (T6) → 691 (T7) → 691 (T8, text only) → 694 (T9) → 696 (T10) → 704 (T11) → 705 (T12). A task that lands a different count says so on its card and reconciles before the next one starts.
+**5. Baseline arithmetic.** 666 (HEAD `c2d2aee`) → 667 (T1) → 670 (T2) → 674 (T3) → 679 (T4) → 686 (T5) → 689 (T6) → 691 (T7) → 691 (T8, text only) → 694 (T9) → 699 (T10) → 707 (T11) → 708 (T12). A task that lands a different count says so on its card and reconciles before the next one starts.
 
 ## Execution Handoff
 
 The operator has not named an execution method, and the tasks are **interface-coupled**: T3 changes `findings` ordering that T6's `--json` test reads, T7 changes `board_runs`' return type that T9's call-site work and T11's tests depend on, and T5 changes a value rule that every other task's suite run gates on. They must land in order, one at a time, in one checkout — and each task's whole-suite run needs the tree to itself.
 
 **Recommended: subagent-driven.** One fresh implementer per task, one fresh reviewer before the next task starts, then a whole-branch review. The tasks are small and independently testable, the coupling is only through named interfaces that each task declares, and the cost of a shipped mistake here is high (the auditor's exit code is the board's DONE signal).
+
+**Controller-side record (required before the first dispatch).** The tasks are stage-only, so a
+controller session keeps, outside the repo: a ledger (repo, branch, **BASE commit `c2d2aee`**, the
+suite baseline `666 passed`, the per-task expected counts from the Self-Review, and every ruling);
+a machine-local scratch exclusion (`.git/info/exclude`) for whatever scratch dir the run uses,
+never committed — the `git status --short` receipts every Stage step depends on would otherwise
+pick it up; the **conflict pairs**, written down so the ordering is not re-derived: T3×T6×T11 on
+`tests/test_run_audit.py`, T6×T10×T11×T12 on `tests/test_open_lane.py` and
+`tests/test_run_directories.py` (T6 replaces a block in each, T10/T11 append, T12 edits a
+docstring), T7×T8 on `driver/run.py:524-560` (T8 rewrites the docstring at `:524` and describes
+the `:549-559` fallback; T7 changes the code at `:554-559` — the rewording must not read as if the
+`None` case were covered), T8×T9 on `driver/run.py:206-218` (T8 only), T9×T12 on
+`driver/file_lanes.py`; and a **ruling on the review package** — the execution skill assumes a
+commit to diff, this plan is stage-only, so each task's package is its own Files list diffed
+against the working tree, and the implementer's reported staged set is compared against that Files
+list BEFORE its reviewer is dispatched (cost if wrong: a file a task touched but did not list
+escapes review). The final whole-change review runs over the working tree, not a branch:
+`git diff -U10 HEAD` in full, deletions included, plus `git status --short` and the deferred
+roll-up above.
 
 **Plan complete and saved to `docs/superpowers/plans/2026-09-24-code-review-remediation.md`. Please review the plan. Does it capture what you want, and should we run it subagent-driven?**
