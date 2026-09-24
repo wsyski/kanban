@@ -12,9 +12,11 @@
 
 ## How this version was produced — every code block is measured
 
-Every task's test and implementation below is a `git diff` taken from a copy of this repo at HEAD `c2d2aee` where the task was actually implemented and run, in plan order. Replaying all the patches in order onto a clean copy of the baseline gives **805 passed, 1 skipped** (the skip is Task 2's unreadable-lock test, which cannot be made under root; it runs on zeus). `--check-schema` reports current and `render-flow.py --check` exits 0 after the last task. Each task also records its measured red state: which new tests fail before the fix, and which are pins that pass already.
+Every task's test and implementation below is a `git diff` taken from a copy of this repo at HEAD `c2d2aee` where the task was actually implemented and run, in plan order. Replaying all the patches in order onto a clean copy of the baseline gives **806 passed** on a non-root host (as root, **805 passed, 1 skipped** — the skip is Task 2's unreadable-lock test, which cannot be made under root; it runs on zeus). `--check-schema` reports current and `render-flow.py --check` exits 0 after the last task. Each task also records its measured red state: which new tests fail before the fix, and which are pins that pass already.
 
 **Baseline: `666 passed`** (`PYTHON=/usr/bin/python3 ./test.sh`). Every task gives the whole-suite count it must reach. The arithmetic: 666 + 1 (Task 0) + 2 + 8 + 7 + 11 + 18 + 1 + 2 + 5 + 3 + 2 + 15 + 7 + 2 + 2 + 3 + 4 + 6 + 1 + 1 + 2 + 2 + 2 + 3 + 1 + 3 + 5 + 5 + 0 + 4 + 0 + 5 + 1 + 6 = **806**. A task that lands a different count reconciles it before the next one starts.
+
+**Replayed independently, 2026-09-24 (non-root):** all 64 patches applied in order onto a fresh clone at `c2d2aee` — **806 passed, 0 skipped**; all 34 per-task gate counts matched; the three mutation proofs (Tasks 5, 7, 26) each turned the named test red and restored byte-identical; `--check-schema` and `render-flow.py --check` exit 0; the CI board gate passes over all seven boards. Three corrections from that pass are in place: the replay total above (non-root primary), Task 0's Step 2 (its red is pre-patch), and the `RUN_DIR` docstring line in Carried forward.
 
 ## Rulings — where the sources disagreed, and what this plan does
 
@@ -176,7 +178,7 @@ index 0000000..4c08d0c
 
 Run: `/usr/bin/python3 -m pytest -q tests/test_chain_log.py tests/test_open_lane.py tests/test_refinement_option.py tests/test_suite_hygiene.py`
 
-Expected: the red state above. A test that fails for a DIFFERENT reason is a finding about this task — report it, do not bend the test.
+Expected: the red state above — which is PRE-patch. This task's fix and its new test land in one patch, so after Step 1 the command above is already green (measured 2026-09-24: 88 passed). To observe the red on the pre-patch tree: the three named files die at collection with `ModuleNotFoundError: No module named 'card_render'`, and `test_suite_hygiene.py` alone fails naming exactly the three offenders. A test that fails for a DIFFERENT reason is a finding about this task — report it, do not bend the test.
 
 - [ ] **Step 4: Run the task's tests, then the whole suite**
 
@@ -7578,7 +7580,7 @@ Nothing below is a task in this plan. It is recorded here so that no later run h
   - `pytest.ini` with `testpaths = tests`
   - an autouse `STATE` reset in `conftest.py`
   - the duplicate `"unit-tests"` key in `tests/test_lanes_ideas.py:78-80` (09-23 S1)
-  - `RUN_DIR` in two test docstrings (`tests/test_run_directories.py:105`, `tests/test_shipped_boards.py:176`)
+  - `RUN_DIR` in two test docstrings (`tests/test_run_directories.py:103`, `tests/test_shipped_boards.py:176`)
   - the per-site disposition of the source-text assertions (tests S2)
   - the sleep-stub rename (tests S8)
   - one opt-in real-CLI contract test (tests S7)
