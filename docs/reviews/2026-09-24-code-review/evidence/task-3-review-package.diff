@@ -1,0 +1,436 @@
+## git status --short
+M  driver/create-board.sh
+M  driver/run-audit.py
+M  driver/run.py
+M  template/driver_lock.py
+M  tests/test_acquire_lock.py
+M  tests/test_chain_log.py
+M  tests/test_open_lane.py
+M  tests/test_refinement_option.py
+M  tests/test_run_audit.py
+M  tests/test_run_directories.py
+A  tests/test_suite_hygiene.py
+M  tests/test_unstarted_mint.py
+
+## diff --stat HEAD
+ driver/run-audit.py           | 97 +++++++++++++++++++++++++++++++++++--------
+ driver/run.py                 | 10 ++++-
+ tests/test_run_audit.py       | 95 ++++++++++++++++++++++++++++++++++++++++++
+ tests/test_run_directories.py | 23 ++++++++++
+ 4 files changed, 205 insertions(+), 20 deletions(-)
+
+## diff -U10 HEAD
+diff --git a/driver/run-audit.py b/driver/run-audit.py
+index 38c5cc4..371a553 100644
+--- a/driver/run-audit.py
++++ b/driver/run-audit.py
+@@ -8,20 +8,21 @@ rather than a matter of reading the log.
+   ERROR    the run did not do what the board's contract says it does
+   WARNING  it did it in a way that wastes budget or hides evidence
+   INFO     a note about the tree — metrics, and what a lane left behind. The board
+            deletes nothing (`work/` and `runs/` included), so litter is REPORTED and
+            left exactly where it is; a note never fails a run
+ 
+ Usage:
+   driver/run-audit.py --runs boards/<slug>/runs [--board boards/<slug>] [--json]
+ """
+ import argparse
++import fcntl
+ import importlib.util
+ import json
+ import os
+ import re
+ import subprocess
+ import sys
+ 
+ HERE = os.path.dirname(os.path.abspath(__file__))
+ REPO = os.path.dirname(HERE)
+ sys.path.insert(0, HERE)
+@@ -98,25 +99,44 @@ WARN_LINE = re.compile(r"(?i)(^\s*warnings?\s*:|:\s*warnings?\s*:)|"
+                        r"(DeprecationWarning|RuntimeWarning|UserWarning|FutureWarning)")
+ # A possessive is prose in a verdict too ("item 4's warning does not apply"), so the
+ # same guard applies to the result field: only the word standing on its own counts.
+ WARN_TEXT = re.compile(r"(?i)(?<!no )(?<!'s )(?<!\b0 )(?<!\bzero )warnings?\b")
+ 
+ 
+ def _driver_alive(root):
+     """(alive, pid) for the driver runs/driver.lock names — the board's own lock, the
+     one start-board.sh and acquire_lock check. It tells "audited too early" from a
+     driver that died without a halt; a pgrep for the command line matched any board's
+-    driver, and missed a serve driver started without --timeout-min."""
+-    pid = None
++    driver, and missed a serve driver started without --timeout-min.
++
++    The KERNEL lock answers first: a driver holds a flock on the file for its whole
++    life (driver_lock.take), so a lock we cannot share is a live driver whatever pid
++    the file names. The pid read below is the fallback for a driver that predates the
++    flock. `pid` is "" when the file exists and names nothing readable, and None when
++    there is no file — the wording in audit() tells the two apart (errors S14).
++    """
++    path = os.path.join(root, "driver.lock")
++    try:
++        fd = os.open(path, os.O_RDONLY)
++    except OSError:
++        return False, None
++    try:
++        pid = os.read(fd, 64).decode(errors="replace").strip()
++        try:
++            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
++        except BlockingIOError:
++            return True, pid
++        except OSError:
++            pass
++    finally:
++        os.close(fd)
+     try:
+-        with open(os.path.join(root, "driver.lock")) as f:
+-            pid = f.read().strip()
+         if int(pid) <= 0:
+             return False, pid
+         os.kill(int(pid), 0)
+     except PermissionError:
+         return True, pid
+     except (OSError, ValueError, OverflowError):
+         return False, pid
+     return True, pid
+ 
+ 
+@@ -395,57 +415,98 @@ def board_findings(slug, runs_dir):
+         for line in procs.stdout.splitlines():
+             if line.strip():
+                 text = worker_outlived_run(line, cards)
+                 if text:
+                     out.append(("WARNING", "E8", text))
+     except Exception:
+         pass
+     return out
+ 
+ 
++def _load_json(path, code, what):
++    """(value, finding) for a manifest or a summary the audit depends on.
++
++    A malformed file is a FINDING, never a traceback: this tool's exit code is the
++    board's definition of done, and a file that will not parse is exactly when a human
++    needs the report (2026-09-23 review, Critical 4). A missing file is (None, None) —
++    what absence means differs per file, so the caller says it. A file that parses to
++    something other than an object is malformed too: every reader below calls .get().
++    """
++    try:
++        with open(path, encoding="utf-8") as f:
++            value = json.load(f)
++    except FileNotFoundError:
++        return None, None
++    except (OSError, ValueError) as e:
++        return None, ("ERROR", code, f"{what} is not readable JSON ({e})")
++    if not isinstance(value, dict):
++        return None, ("ERROR", code, f"{what} is not a JSON object "
++                                     f"(got {type(value).__name__})")
++    return value, None
++
++
+ def audit(runs_dir, board_dir=None):
+     board_dir = board_dir or board_dir_for(runs_dir)
+-    cfg = {}
+     cfg_path = os.path.join(board_dir, "board.json")
+-    if os.path.exists(cfg_path):
+-        cfg = json.load(open(cfg_path))
++    cfg, cfg_finding = _load_json(cfg_path, "E4", "board.json")
++    if cfg is None and cfg_finding is None:
++        # NOT a silent `cfg = {}`: an empty cfg disarms the per-card ceiling
++        # (ceiling_minutes -> None, and E6 is guarded on it), empties auto-gates (a held
++        # auto-gate grades INFO instead of WARNING) and makes the slug the directory
++        # name. Measured 2026-09-23: 90 agent minutes under a 60m ceiling, no
++        # board.json -> exit 0, "0 error(s), 0 warning(s)" (review Critical 3).
++        cfg_finding = ("ERROR", "E4",
++                       f"no board.json at {cfg_path} — the per-card ceiling, auto-gates "
++                       f"and the board's end state could not be checked")
++    cfg = cfg or {}
+     slug = cfg.get("slug") or os.path.basename(board_dir)
+     ceiling = ceiling_minutes(cfg.get("max-runtime"))
+ 
+     findings, stats = driver_findings(read(os.path.join(runs_dir, "driver.log")),
+                                      cfg.get("auto-gates") or ())
++    # BEFORE the mid-flight block: that block rewrites only E1 lines, so this finding
++    # survives it, and "the manifest is gone" is worth saying even mid-flight.
++    if cfg_finding:
++        findings.append(cfg_finding)
+     if any(c == "E1" and "did not finish" in t for _s, c, t in findings):
+         # Mid-flight: one line beats a cascade of E4/E7/E12 that all mean the
+         # same thing (the auditor was run too early), and the cause is a person
+         # reading a board that is still working.
+         #
+         # The refusal is about THIS RUN, never about the driver: a serve-mode driver
+         # stays up after `ALL GATES COMPLETE` by design, and a finished run audits
+         # perfectly well underneath it. A live driver is the good case here — it says the
+         # run will finish — so the line names the run's state and gives the driver as the
+         # reason to WAIT. Naming the process first reads as "kill it to audit", which is
+         # never the answer and throws away a driver that was about to write the banner.
+         alive, pid = _driver_alive(runs_root(runs_dir))
+         wording = (f"this run has not finished yet — no ALL GATES COMPLETE in its "
+                    f"driver.log, and the board's driver (pid {pid}) is still working. "
+                    f"Wait for the banner, then audit; the driver may keep serving."
+                    if alive
+                    else f"the driver died without a halt or the finish banner — no live "
+-                        f"process holds runs/driver.lock (pid {pid or 'none'}); restart "
++                        f"process holds runs/driver.lock "
++                        f"(pid {'none' if pid is None else (pid or 'unreadable')}); restart "
+                         f"it with start-board.sh")
+         findings = [(s, c, wording if c == "E1" else t) for s, c, t in findings]
+         return findings, [], {}
+-    s_findings, s_stats = summary_findings(
+-        json.load(open(os.path.join(runs_dir, "run-summary.json")))
+-        if os.path.exists(os.path.join(runs_dir, "run-summary.json")) else None, ceiling)
+-    findings += s_findings
+-    stats.update(s_stats)
++    summary, s_finding = _load_json(os.path.join(runs_dir, "run-summary.json"),
++                                    "E4", "run-summary.json")
++    if s_finding:
++        # ONE finding, not a cascade: "the run wrote no summary" would be a lie about a
++        # file that is there and truncated, and the malformed file is the cause a human
++        # needs. summary_findings is skipped so it cannot report the absence underneath.
++        findings.append(s_finding)
++    else:
++        s_findings, s_stats = summary_findings(summary, ceiling)
++        findings += s_findings
++        stats.update(s_stats)
+ 
+     recs = CHAIN.load(runs_dir)
+     rows, chain_findings = CHAIN.analyze(recs, runs_dir) if recs else ([], [])
+     for f in chain_findings:
+         findings.append(("ERROR", "E3", f))
+     findings += result_findings(rows)
+     findings += result_text_findings(rows)
+     started = None
+     for rec in reversed(recs or []):
+         ts = rec.get("ts")
+@@ -563,20 +624,20 @@ def main(argv=None):
+         # `ALL GATES COMPLETE`), which is a phantom E1.
+         sys.stderr.write(
+             f"{runs} is not a kanban run — run-audit.py reads run-summary.json, "
+             f"chain.jsonl and verdicts.jsonl, and this directory has no "
+             f"run-summary.json. Nothing in this tree audits it.\n")
+         return 2
+     findings, rows, stats = audit(runs, a.board)
+     if a.json:
+         print(json.dumps({"findings": findings, "rows": rows, "stats": stats}, indent=2))
+         return 1 if any(f[0] in ("ERROR", "WARNING") for f in findings) else 0
+-    cfg_path = os.path.join(a.board or board_dir_for(a.runs), "board.json")
+-    ceiling = None
+-    if os.path.exists(cfg_path):
+-        rt = json.load(open(cfg_path)).get("max-runtime")
+-        ceiling = ceiling_minutes(rt)
++    # audit() already reported a missing or malformed manifest; the human report only
++    # needs the ceiling, and must not traceback on the file audit() just reported.
++    cfg, _finding = _load_json(os.path.join(a.board or board_dir_for(a.runs), "board.json"),
++                               "E4", "board.json")
++    ceiling = ceiling_minutes((cfg or {}).get("max-runtime"))
+     return report(findings, rows, stats, ceiling)
+ 
+ 
+ if __name__ == "__main__":
+     sys.exit(main())
+diff --git a/driver/run.py b/driver/run.py
+index 527604e..f0fdebd 100755
+--- a/driver/run.py
++++ b/driver/run.py
+@@ -3346,23 +3346,29 @@ def write_summary(state):
+         "lanes_with_ideas": [l for l in range(1, board_lane_count(state) + 1)
+                              if lane_options(l) is not None],
+         # Where this run's work is staged, and therefore where a gate commit lands.
+         # A run whose work directory is another repository has to say so, or its
+         # record does not describe where the deliverable went.
+         "workdir": os.path.abspath(WORKDIR),
+         "commit_target": commit_target(),
+         "workdir_facts": expected_workdir_facts(),
+         "workdir_drift": sorted(STATE.drift) if not STATE.run_finished[0] else [],
+     }
+-    with open(os.path.join(STATE.run_dir, "run-summary.json"), "w") as f:
++    # temp + os.replace, the pattern mint_run already uses for its pointer file: a kill
++    # between the open and the last byte left a TRUNCATED summary, and run-audit.py
++    # json.loads it — so one torn write made every later audit of that run die
++    # (2026-09-23 review, Critical 4).
++    tmp = path + ".tmp"
++    with open(tmp, "w") as f:
+         json.dump(summary, f, indent=2)
+-    log(f"summary written: {os.path.join(STATE.run_dir, 'run-summary.json')} ({total:.0f} min agent work)")
++    os.replace(tmp, path)
++    log(f"summary written: {path} ({total:.0f} min agent work)")
+ 
+ 
+ # Gates already announced this run — see gate_action.
+ # gate code -> what opened it. E4 reads the summary's gate text for "verdict PASS"
+ # (Gp/Gc) and "refined idea present" (Gi), and a human gate-holder's result is their
+ # decision, not that evidence — see gate_summary_text.
+ 
+ # The triage card body file_ideas writes always opens with this line, so a card
+ # the human typed from scratch in the dashboard is distinguishable from one the
+ # driver seeded — and the lane it belongs to is stated rather than guessed.
+diff --git a/tests/test_run_audit.py b/tests/test_run_audit.py
+index 29e8dbb..4a6b134 100644
+--- a/tests/test_run_audit.py
++++ b/tests/test_run_audit.py
+@@ -674,10 +674,105 @@ def test_an_escalated_triage_card_is_an_e12_and_a_resting_one_is_not(monkeypatch
+     _stub_board_cli(monkeypatch, [{"id": "t1", "title": "C1: implement - lane 1",
+                                    "status": "running"},
+                                   {"id": "t2", "title": "Idea 1", "status": "triage",
+                                    "assignee": "coder"}])
+     assert codes(ra.board_findings("b", "unused"), "ERROR") == ["E12", "E12"]
+ 
+     _stub_board_cli(monkeypatch, [{"id": "t1", "title": "C1: implement - lane 1",
+                                    "status": "done"},
+                                   {"id": "t2", "title": "Idea 1", "status": "triage"}])
+     assert codes(ra.board_findings("b", "unused"), "ERROR") == []
++
++
++def test_an_unreadable_lock_says_unreadable_not_none(tmp_path, monkeypatch):
++    """`pid none` read as "there is no lock file" when the file was there and named
++    nothing readable — a different claim, and the one a human needs to act on (errors
++    S14). The run here is mid-flight (no finish banner), which is the only path that
++    names the lock at all."""
++    clean_probe(monkeypatch)
++    runs = fixture(tmp_path, log=GOOD_LOG[:-1])            # no ALL GATES COMPLETE
++    (tmp_path / "boards" / "b" / "runs" / "driver.lock").write_text("")
++    findings, _rows, _stats = ra.audit(runs)
++    assert any("unreadable" in t for _s, _c, t in findings), findings
++
++
++def test_a_driver_holding_the_kernel_lock_is_alive_whatever_pid_it_names(tmp_path):
++    """The auditor asks the kernel first: a live driver holds a flock on runs/driver.lock
++    for its whole life, so "is the driver alive" no longer depends on a pid the OS may
++    have reused."""
++    import fcntl
++    root = tmp_path / "runs"
++    root.mkdir()
++    lock = root / "driver.lock"
++    lock.write_text("999999")                               # names a dead pid
++    fd = os.open(lock, os.O_RDWR)
++    fcntl.flock(fd, fcntl.LOCK_EX)
++    try:
++        assert ra._driver_alive(str(root)) == (True, "999999")
++    finally:
++        os.close(fd)
++    assert ra._driver_alive(str(root)) == (False, "999999")
++    assert ra._driver_alive(str(tmp_path / "nowhere")) == (False, None)
++
++
++def test_a_missing_manifest_is_an_error_not_a_clean_run(tmp_path, monkeypatch):
++    """Measured 2026-09-23: a run with a 90-minute card under a declared 60m ceiling and
++    NO board.json audited "0 error(s), 0 warning(s)", exit 0 — cfg = {} left the ceiling
++    None (E6 is guarded on it), emptied auto-gates and made the slug the directory name.
++    The auditor's exit code is the board's definition of DONE (review Critical 3)."""
++    clean_probe(monkeypatch)
++    runs = fixture(tmp_path)
++    os.unlink(os.path.join(os.path.dirname(runs), "board.json"))
++    findings, _rows, _stats = ra.audit(runs)
++    assert any(s == "ERROR" and c == "E4" and "no board.json" in t
++               for s, c, t in findings), findings
++
++
++def test_a_present_manifest_still_audits_clean(tmp_path, monkeypatch):
++    """The other side: the new E4 must not fire when the manifest is there, or every
++    shipped run audits red."""
++    clean_probe(monkeypatch)
++    runs = fixture(tmp_path, chain_recs=worker_chain())
++    findings, _rows, _stats = ra.audit(runs)
++    assert not [t for _s, c, t in findings if "board.json" in t], findings
++
++
++def test_a_truncated_summary_is_one_e4_not_a_traceback(tmp_path, monkeypatch):
++    """write_summary was not atomic, so a driver killed mid-write left a truncated
++    run-summary.json and every later audit of that run died with JSONDecodeError
++    (review Critical 4). ONE finding — not also "the run wrote no summary"."""
++    clean_probe(monkeypatch)
++    runs = fixture(tmp_path)
++    with open(os.path.join(runs, "run-summary.json"), "w") as f:
++        f.write('{"wall_min": 13.1, "agent_w')
++    findings, _rows, _stats = ra.audit(runs)
++    summary_lines = [t for _s, c, t in findings if c == "E4" and "summary" in t]
++    assert len(summary_lines) == 1 and "not readable JSON" in summary_lines[0], findings
++
++
++def test_a_truncated_manifest_is_an_error_not_a_traceback(tmp_path, monkeypatch):
++    """The manifest half of the same finding — and the wording names the file's state,
++    not "no board.json" (review Critical 4)."""
++    clean_probe(monkeypatch)
++    runs = fixture(tmp_path)
++    (tmp_path / "boards" / "b" / "board.json").write_text('{"slug": "b", "auto-gates": [')
++    findings, _rows, _stats = ra.audit(runs)
++    assert any(s == "ERROR" and c == "E4" and "board.json is not readable JSON" in t
++               for s, c, t in findings), findings
++
++
++def test_a_manifest_that_is_not_an_object_is_an_error(tmp_path, monkeypatch):
++    """`[]` parses — and every reader calls .get() on it."""
++    clean_probe(monkeypatch)
++    runs = fixture(tmp_path)
++    (tmp_path / "boards" / "b" / "board.json").write_text("[]")
++    findings, _rows, _stats = ra.audit(runs)
++    assert any(c == "E4" and "not a JSON object" in t for _s, c, t in findings), findings
++
++
++def test_a_malformed_summary_exits_nonzero_through_the_cli(tmp_path, monkeypatch, capsys):
++    """Through main(), human report path: its own manifest read must not traceback."""
++    clean_probe(monkeypatch)
++    runs = fixture(tmp_path)
++    (tmp_path / "boards" / "b" / "board.json").write_text("{not json")
++    open(os.path.join(runs, "run-summary.json"), "w").write("{")
++    assert ra.main(["--runs", runs]) == 1
+diff --git a/tests/test_run_directories.py b/tests/test_run_directories.py
+index f4b18d6..93de870 100644
+--- a/tests/test_run_directories.py
++++ b/tests/test_run_directories.py
+@@ -11,20 +11,22 @@ something at the right time —
+     gate's STRUCTURE check, so the plan is built on the old idea,
+   * `snapshot_run_evidence` rotating what was about to be cleared.
+ 
+ A new directory cannot contain an old run's refined idea, so all three go. The
+ invariant moves from "we remembered to delete it" to "it was never the same path",
+ which is why these tests pin the paths rather than the absence of files.
+ """
+ import os
+ import sys
+ 
++import pytest
++
+ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "template"))
+ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "driver"))
+ import card_render
+ import file_lanes
+ import run
+ 
+ 
+ def test_a_lanes_hand_offs_live_under_its_own_run():
+     a = card_render.lane_paths("/repo", "b", 1, "b-20260912-090000")
+     z = card_render.lane_paths("/repo", "b", 1, "b-20260912-100000")
+@@ -430,10 +432,31 @@ def test_the_timing_report_is_written_again_when_the_run_finishes(monkeypatch, t
+     import subprocess
+     monkeypatch.setattr(subprocess, "run",
+                         lambda *a, **k: type("R", (), {"returncode": 0, "stdout": "report", "stderr": ""})())
+     r.STATE.timed.clear()
+     r.write_timing_report(1)
+     r.write_timing_report(1)                      # the gate holds for ticks; one copy only
+     assert open(tmp_path / "timing-report-lane-1.txt").read() == "report"
+     r.write_timing_report(1, final=True)          # the run's own end rewrites it
+     assert 1 in r.STATE.timed
+     r.STATE.timed.clear()
++
++
++def test_the_summary_is_never_visible_half_written(monkeypatch, tmp_path):
++    """os.replace is atomic: the file holds the old content or the new, never half.
++    Not cosmetic — run-audit.py json.loads this file, so one torn write made every
++    later audit of that run die (review Critical 4)."""
++    import run as r
++    monkeypatch.setattr(r.STATE, "run_dir", str(tmp_path))
++    monkeypatch.setattr(r, "log", lambda m: None)
++    monkeypatch.setattr(r, "board_lane_count", lambda state: 0)
++    monkeypatch.setattr(r, "commit_target", lambda: "main")
++    monkeypatch.setattr(r, "expected_workdir_facts", lambda: {})
++
++    def boom(obj, f, **kw):
++        f.write('{"wall_min": 13.1, "agent_w')
++        raise RuntimeError("killed mid-write")
++
++    monkeypatch.setattr(r.json, "dump", boom)
++    with pytest.raises(RuntimeError):
++        r.write_summary({})
++    assert not os.path.exists(os.path.join(str(tmp_path), "run-summary.json"))

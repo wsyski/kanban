@@ -1,0 +1,341 @@
+## git status --short
+M  driver/create-board.sh
+M  driver/doc-chain.py
+M  driver/run-audit.py
+M  driver/run.py
+M  template/driver_lock.py
+M  tests/test_acquire_lock.py
+M  tests/test_chain_log.py
+M  tests/test_doc_chain.py
+A  tests/test_driver_main.py
+M  tests/test_open_lane.py
+M  tests/test_refinement_option.py
+M  tests/test_run_audit.py
+M  tests/test_run_directories.py
+A  tests/test_suite_hygiene.py
+M  tests/test_unstarted_mint.py
+
+## diff --stat HEAD
+ driver/run.py                 | 68 ++++++++++++++++++++++++++++++++-------
+ tests/test_run_directories.py | 74 ++++++++++++++++++++++++++++++++++++++-----
+ 2 files changed, 123 insertions(+), 19 deletions(-)
+
+## diff -U10 HEAD
+diff --git a/driver/run.py b/driver/run.py
+index 527604e..b5bc6ed 100755
+--- a/driver/run.py
++++ b/driver/run.py
+@@ -1,20 +1,20 @@
+ #!/usr/bin/env python3
+ """Driver for generic kanban board missions.
+ 
+ The driver never commits. Gates wait for a human unless the lane's idea (or
+ the board default) sets auto-gates, in which case the gate auto-completes on
+ a PASS verdict with staged-file evidence — still no commit.
+ 
+ Usage: driver/run.py [--serve] [--once] [--timeout-min 120]
+ """
+-import contextlib, json, shutil, subprocess, sys, time, os, re, datetime
++import contextlib, json, math, shutil, subprocess, sys, time, os, re, datetime
+ 
+ # No default: this repo has no one board, and a stale default would drive the
+ # wrong one. Enforced in main(), not here — the test suite imports this module.
+ BOARD = os.environ.get("BOARD", "")
+ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ ONCE = "--once" in sys.argv
+ # The main scenario is a board that stays up: you type an idea into the
+ # dashboard, promote it out of Triage, and the run starts. Exiting when the
+ # gates close would make every new idea a terminal command again.
+ SERVE = "--serve" in sys.argv
+@@ -3208,31 +3208,42 @@ def preserve_artifacts():
+     and a patch is not one.
+ 
+     Called at each lane's code gate: the lane is finished, its cards are about
+     to be archived by the next refile, and this is the last moment the patches
+     are still collectable. They were written for exactly this and were never
+     called (found reading, not running — the one finding of that kind here).
+     """
+     import shutil, glob
+     out_dir = os.path.join(STATE.run_dir, "patches")
+     os.makedirs(out_dir, exist_ok=True)
++    # hermes_kanban_dir() honours HERMES_HOME and falls back to ~/.hermes, as
++    # worker_log_path already does. The literal ~/.hermes path copied NOTHING on a host
++    # whose HERMES_HOME is elsewhere, and the run still reported complete (2026-09-23
++    # review, Important 23).
++    attachments_root = os.path.join(hermes_kanban_dir(), "boards", BOARD, "attachments")
++    found = 0
+     st = board()
+     for title, card in st.items():
+         cid = (card or {}).get("id")
+         if not cid:
+             continue
+-        for src in glob.glob(os.path.expanduser(
+-                f"~/.hermes/kanban/boards/{BOARD}/attachments/{cid}/*.patch")):
++        for src in glob.glob(os.path.join(attachments_root, cid, "*.patch")):
++            found += 1
+             dst = os.path.join(out_dir, f"{cid}.patch")
+             if not os.path.exists(dst):
+                 shutil.copy2(src, dst)
+                 log(f"artifact kept: {os.path.relpath(dst, REPO)}")
++    if not found:
++        # A glob that matches nothing must not read like a run with nothing to keep:
++        # this function's whole job is provenance, and a silent empty return is how the
++        # hardcoded path went unnoticed.
++        log(f"artifacts: no provenance patches found under {attachments_root}")
+ 
+ def finish_run():
+     """Everything the driver does when the lane's last gate closes: the run's
+     summary, and then the banner that says the run is finished.
+ 
+     THE ORDER IS LOAD-BEARING. `run-audit.py` reads `ALL GATES COMPLETE` as "this
+     run finished" and only then demands `run-summary.json`; logged the other way
+     round (observed: 3 s in the is_even run of 2026-09-12) there is a window in
+     which an audit of a FINISHED run reports E4 "the run wrote no summary" — a
+     false finding that reads exactly like a missing artefact. A summary that fails
+@@ -3346,23 +3357,29 @@ def write_summary(state):
+         "lanes_with_ideas": [l for l in range(1, board_lane_count(state) + 1)
+                              if lane_options(l) is not None],
+         # Where this run's work is staged, and therefore where a gate commit lands.
+         # A run whose work directory is another repository has to say so, or its
+         # record does not describe where the deliverable went.
+         "workdir": os.path.abspath(WORKDIR),
+         "commit_target": commit_target(),
+         "workdir_facts": expected_workdir_facts(),
+         "workdir_drift": sorted(STATE.drift) if not STATE.run_finished[0] else [],
+     }
+-    with open(os.path.join(STATE.run_dir, "run-summary.json"), "w") as f:
++    # temp + os.replace, the pattern mint_run already uses for its pointer file: a kill
++    # between the open and the last byte left a TRUNCATED summary, and run-audit.py
++    # json.loads it — so one torn write made every later audit of that run die
++    # (2026-09-23 review, Critical 4).
++    tmp = path + ".tmp"
++    with open(tmp, "w") as f:
+         json.dump(summary, f, indent=2)
+-    log(f"summary written: {os.path.join(STATE.run_dir, 'run-summary.json')} ({total:.0f} min agent work)")
++    os.replace(tmp, path)
++    log(f"summary written: {path} ({total:.0f} min agent work)")
+ 
+ 
+ # Gates already announced this run — see gate_action.
+ # gate code -> what opened it. E4 reads the summary's gate text for "verdict PASS"
+ # (Gp/Gc) and "refined idea present" (Gi), and a human gate-holder's result is their
+ # decision, not that evidence — see gate_summary_text.
+ 
+ # The triage card body file_ideas writes always opens with this line, so a card
+ # the human typed from scratch in the dashboard is distinguishable from one the
+ # driver seeded — and the lane it belongs to is stated rather than guessed.
+@@ -3672,20 +3689,54 @@ def reset_attempt_budgets():
+                     "last_failure_error = NULL WHERE status != 'archived' "
+                     "AND (consecutive_failures != 0 OR last_failure_error IS NOT NULL)")
+             conn.close()
+             if cur.rowcount:
+                 log(f"attempt budgets reset for {cur.rowcount} card(s)")
+             return
+         except sqlite3.OperationalError as e:
+             log(f"WARNING: attempt-budget reset failed on {path}: {e}")
+ 
+ 
++def timeout_seconds(argv=None, serve=False):
++    """This driver's wall-clock cap in seconds, or None for no cap.
++
++    An explicit `--timeout-min N` (or `--timeout-min=N`) wins in BOTH modes, and a
++    repeated flag reads the LAST value, as argparse does everywhere else. start-board.sh
++    relies on the first rule: it launches `--serve --timeout-min <board's timeout-min>`.
++    With no flag, a serving driver has no cap — it is a standing process, and a 2h cap
++    would drop the board and leave the next idea unattended until cron noticed — and a
++    one-shot driver gets 120 minutes.
++
++    The old scan took sys.argv.index(a) + 1, so the `=` form raised IndexError at
++    startup and a repeated flag always read the FIRST value (2026-09-23 review,
++    Important 24; prior T-27). A value that is not a finite, positive number of
++    minutes is a usage error, never a traceback — `float()` also accepts 'nan' and
++    'inf', and a nan cap would never fire.
++    """
++    argv = list(sys.argv[1:] if argv is None else argv)
++    seen, value = False, None
++    for i, a in enumerate(argv):
++        if a == "--timeout-min":
++            seen, value = True, (argv[i + 1] if i + 1 < len(argv) else None)
++        elif a.startswith("--timeout-min="):
++            seen, value = True, a.split("=", 1)[1]
++    if not seen:
++        return None if serve else 120 * 60.0
++    try:
++        minutes = float(value)
++    except (TypeError, ValueError):
++        minutes = float("nan")
++    if not math.isfinite(minutes) or minutes <= 0:
++        raise SystemExit(f"--timeout-min wants a positive number of minutes, got {value!r}")
++    return minutes * 60
++
++
+ def main():
+     if not BOARD:
+         raise SystemExit("BOARD=<slug> is required — driver/start-board.sh sets it; "
+                          "there is no default board")
+     require_manifest()
+     acquire_lock()
+     # Say which run this process is on. A restart REJOINS the run runs/current
+     # names — it must not mint one, because the cards already filed carry their
+     # run's paths in their bodies and a new directory would leave every hand-off
+     # pointing at a tree nothing writes to.
+@@ -3697,26 +3748,21 @@ def main():
+     log(f"--- driver start: board={BOARD} pid={os.getpid()} "
+         f"run={joined or 'none yet'} ---")
+     if joined:
+         log(f"rejoined run {joined}: {os.path.relpath(STATE.run_dir, REPO)}")
+         rejoin_chain()
+     else:
+         log("no run yet — the first armed idea mints one")
+     reset_attempt_budgets()
+     t0 = time.time()
+     write_summary._t0 = t0          # wall_min in the summary is measured from here
+-    # A serving driver is a standing process; a 2h cap would drop the board every
+-    # two hours and leave the next idea unattended until cron noticed.
+-    timeout = None if SERVE else 120 * 60
+-    for a in sys.argv:
+-        if a.startswith("--timeout-min"):
+-            timeout = float(sys.argv[sys.argv.index(a) + 1]) * 60
++    timeout = timeout_seconds(serve=SERVE)
+     idle = False
+     before = STATE.mutations[0]
+     while True:
+         if STATE.halted["reason"]:
+             # Recorded mid-tick (escalate): stop before an armed idea is adopted, or a
+             # fresh run is minted and then abandoned by this same exit.
+             log("BOARD HALTED — driver exiting; board state left for human inspection")
+             return 1
+         try:
+             # A new idea outranks the current tick: adopt it, refile, and let the
+diff --git a/tests/test_run_directories.py b/tests/test_run_directories.py
+index f4b18d6..d455bcd 100644
+--- a/tests/test_run_directories.py
++++ b/tests/test_run_directories.py
+@@ -11,20 +11,22 @@ something at the right time —
+     gate's STRUCTURE check, so the plan is built on the old idea,
+   * `snapshot_run_evidence` rotating what was about to be cleared.
+ 
+ A new directory cannot contain an old run's refined idea, so all three go. The
+ invariant moves from "we remembered to delete it" to "it was never the same path",
+ which is why these tests pin the paths rather than the absence of files.
+ """
+ import os
+ import sys
+ 
++import pytest
++
+ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "template"))
+ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "driver"))
+ import card_render
+ import file_lanes
+ import run
+ 
+ 
+ def test_a_lanes_hand_offs_live_under_its_own_run():
+     a = card_render.lane_paths("/repo", "b", 1, "b-20260912-090000")
+     z = card_render.lane_paths("/repo", "b", 1, "b-20260912-100000")
+@@ -400,29 +402,64 @@ def test_drift_from_an_earlier_run_is_not_written_into_a_later_summary(monkeypat
+     assert sorted(r.STATE.drift) == []
+ 
+ 
+ def test_gate_announcements_are_keyed_by_a_title_that_repeats(monkeypatch, tmp_path):
+     """Why _ANNOUNCED has to be cleared rather than left to grow: the key is not
+     unique across runs."""
+     import lanes as L
+     assert L.card_title("Gc", 1) == L.card_title("Gc", 1)
+ 
+ 
+-def test_patches_land_in_the_runs_own_directory_without_a_second_timestamp():
+-    """The run directory already names the run; a timestamp inside it invited reading
+-    the inner name as a different run. And beside artifacts/, not inside — artifacts/
+-    holds the lane hand-offs the document chain stats, and a patch is not one."""
+-    import inspect
++def test_patches_land_in_the_runs_own_directory(monkeypatch, tmp_path):
++    """REPLACED 2026-09-24 — this test used to assert two strings in
++    inspect.getsource(r.preserve_artifacts), which passes whether the copier works,
++    copies nothing, or reads the wrong directory (2026-09-23 review, Critical 8). It
++    now DRIVES the function: one card, one attachment, one file where it belongs — in
++    runs/<run-id>/patches/, beside artifacts/ and with no second timestamp — and a
++    second call that must not overwrite what the first one kept.
++
++    The source is hermes_kanban_dir(), not a hardcoded ~/.hermes: on a host whose
++    HERMES_HOME is elsewhere the literal path copied nothing and the run still reported
++    complete (review Important 23)."""
+     import run as r
+-    src = inspect.getsource(r.preserve_artifacts)
+-    assert 'os.path.join(STATE.run_dir, "patches")' in src
+-    assert "strftime" not in src
++    monkeypatch.setattr(r.STATE, "run_dir", str(tmp_path / "run-20260924-000000"))
++    os.makedirs(r.STATE.run_dir)
++    monkeypatch.setattr(r, "BOARD", "b")
++    monkeypatch.setattr(r, "log", lambda m: None)
++    monkeypatch.setattr(r, "hermes_kanban_dir", lambda: str(tmp_path / "kanban"))
++    monkeypatch.setattr(r, "board", lambda: {"C1: implement - lane 1": {"id": "t_c"}})
++    attachments = tmp_path / "kanban" / "boards" / "b" / "attachments" / "t_c"
++    attachments.mkdir(parents=True)
++    (attachments / "t_c.patch").write_text("diff --git a/x b/x\n")
++    r.preserve_artifacts()
++    patches = os.path.join(r.STATE.run_dir, "patches")
++    assert sorted(os.listdir(patches)) == ["t_c.patch"]
++    assert open(os.path.join(patches, "t_c.patch")).read() == "diff --git a/x b/x\n"
++    # idempotent: a later, different copy of the same patch must not replace what was kept
++    (attachments / "t_c.patch").write_text("diff --git a/other b/other\n")
++    r.preserve_artifacts()
++    assert open(os.path.join(patches, "t_c.patch")).read() == "diff --git a/x b/x\n"
++
++
++def test_a_run_with_no_attachments_says_so(monkeypatch, tmp_path):
++    """The silent-empty case: a glob that matched nothing returned having logged
++    nothing, so a run whose patches were never collected read exactly like one that had
++    none (review Important 23)."""
++    import run as r
++    monkeypatch.setattr(r.STATE, "run_dir", str(tmp_path))
++    monkeypatch.setattr(r, "BOARD", "b")
++    monkeypatch.setattr(r, "hermes_kanban_dir", lambda: str(tmp_path / "kanban"))
++    monkeypatch.setattr(r, "board", lambda: {"C1: implement - lane 1": {"id": "t_c"}})
++    lines = []
++    monkeypatch.setattr(r, "log", lines.append)
++    r.preserve_artifacts()
++    assert any("no provenance patches" in m for m in lines), lines
+ 
+ 
+ def test_the_timing_report_is_written_again_when_the_run_finishes(monkeypatch, tmp_path):
+     """The gate copy stops two minutes short: it shows the code gate itself as `blocked`,
+     which is true when it is written and misleading afterwards."""
+     import inspect
+     import run as r
+     assert "write_timing_report(lane, final=True)" in inspect.getsource(r.finish_run)
+     written = []
+     monkeypatch.setattr(r.STATE, "run_dir", str(tmp_path))
+@@ -430,10 +467,31 @@ def test_the_timing_report_is_written_again_when_the_run_finishes(monkeypatch, t
+     import subprocess
+     monkeypatch.setattr(subprocess, "run",
+                         lambda *a, **k: type("R", (), {"returncode": 0, "stdout": "report", "stderr": ""})())
+     r.STATE.timed.clear()
+     r.write_timing_report(1)
+     r.write_timing_report(1)                      # the gate holds for ticks; one copy only
+     assert open(tmp_path / "timing-report-lane-1.txt").read() == "report"
+     r.write_timing_report(1, final=True)          # the run's own end rewrites it
+     assert 1 in r.STATE.timed
+     r.STATE.timed.clear()
++
++
++def test_the_summary_is_never_visible_half_written(monkeypatch, tmp_path):
++    """os.replace is atomic: the file holds the old content or the new, never half.
++    Not cosmetic — run-audit.py json.loads this file, so one torn write made every
++    later audit of that run die (review Critical 4)."""
++    import run as r
++    monkeypatch.setattr(r.STATE, "run_dir", str(tmp_path))
++    monkeypatch.setattr(r, "log", lambda m: None)
++    monkeypatch.setattr(r, "board_lane_count", lambda state: 0)
++    monkeypatch.setattr(r, "commit_target", lambda: "main")
++    monkeypatch.setattr(r, "expected_workdir_facts", lambda: {})
++
++    def boom(obj, f, **kw):
++        f.write('{"wall_min": 13.1, "agent_w')
++        raise RuntimeError("killed mid-write")
++
++    monkeypatch.setattr(r.json, "dump", boom)
++    with pytest.raises(RuntimeError):
++        r.write_summary({})
++    assert not os.path.exists(os.path.join(str(tmp_path), "run-summary.json"))

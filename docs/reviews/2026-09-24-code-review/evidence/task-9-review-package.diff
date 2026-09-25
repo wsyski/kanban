@@ -1,0 +1,570 @@
+## git status --short
+M  driver/create-board.sh
+M  driver/doc-chain.py
+M  driver/run-audit.py
+M  driver/run.py
+M  template/driver_lock.py
+M  tests/test_acquire_lock.py
+M  tests/test_chain_log.py
+M  tests/test_doc_chain.py
+A  tests/test_driver_main.py
+A  tests/test_manifest_shape.py
+M  tests/test_open_lane.py
+M  tests/test_refinement_option.py
+M  tests/test_run_audit.py
+M  tests/test_run_directories.py
+A  tests/test_suite_hygiene.py
+M  tests/test_unstarted_mint.py
+
+## diff --stat HEAD
+ driver/run.py                | 116 ++++++++++++++++++++++++++++++++++------
+ tests/test_driver_main.py    | 123 +++++++++++++++++++++++++++++++++++++++++++
+ tests/test_manifest_shape.py | 109 ++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 332 insertions(+), 16 deletions(-)
+
+## diff -U10 HEAD
+diff --git a/driver/run.py b/driver/run.py
+index 527604e..be9e759 100755
+--- a/driver/run.py
++++ b/driver/run.py
+@@ -1,20 +1,20 @@
+ #!/usr/bin/env python3
+ """Driver for generic kanban board missions.
+ 
+ The driver never commits. Gates wait for a human unless the lane's idea (or
+ the board default) sets auto-gates, in which case the gate auto-completes on
+ a PASS verdict with staged-file evidence — still no commit.
+ 
+ Usage: driver/run.py [--serve] [--once] [--timeout-min 120]
+ """
+-import contextlib, json, shutil, subprocess, sys, time, os, re, datetime
++import contextlib, json, math, shutil, subprocess, sys, time, os, re, datetime
+ 
+ # No default: this repo has no one board, and a stale default would drive the
+ # wrong one. Enforced in main(), not here — the test suite imports this module.
+ BOARD = os.environ.get("BOARD", "")
+ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ ONCE = "--once" in sys.argv
+ # The main scenario is a board that stays up: you type an idea into the
+ # dashboard, promote it out of Triage, and the run starts. Exiting when the
+ # gates close would make every new idea a terminal command again.
+ SERVE = "--serve" in sys.argv
+@@ -204,25 +204,30 @@ use_run(_read_current_run())
+ 
+ 
+ def manifest():
+     """Board manifest, through the SAME reader: `card_render`
+     owns the file's shape, and a second `json.load` here is one edit away from two
+     answers. REPO is template_root (control files); WORKDIR is the only tree git
+     ever runs in — they differ when a board points elsewhere."""
+     try:
+         return card_render.read_board(BOARD_DIR)
+     except FileNotFoundError:
+-        # Same defaults create-board.sh prints in --help, so a board that loses
+-        # its manifest degrades to the documented shape rather than silently
+-        # growing integration cards nobody asked for.
+-        return {"default-workdir": os.path.join(BOARD_DIR, "work"), "lanes": 1,
+-                "integration-tests": False, "auto-gates": []}
++        # Exactly what read_board returns for a board.json of `{}`: every consumer
++        # already falls back to board_schema.OPTIONS for a key the manifest omits, so
++        # "no manifest" and "a manifest that names nothing" now mean the same board —
++        # the option table's defaults, integration tests ON. The old four-key fallback
++        # said `integration-tests: False` against the table, create-board.sh's own
++        # --help and its profile pre-flight, while claiming to match the help
++        # (2026-09-23 review, Important 6 and the comment finding I40). main() refuses
++        # to start without a manifest (require_manifest), so this is the import-time
++        # and deleted-mid-run path only.
++        return {"slug": BOARD}
+ 
+ 
+ WORKDIR = manifest().get("default-workdir") or os.path.join(BOARD_DIR, "work")
+ 
+ 
+ 
+ def board_lane_count(state):
+     n = 0
+     for title in state:
+         m = re.match(r"^P(\d+):", title)
+@@ -293,20 +298,33 @@ def lane_graph(state):
+                                         for b in CODE_REWORK_BASES]
+                                        + [newest_round(f"RVa{lane}-r")]) if p]
+             if c["code"] in ("RVa", "Gc"):
+                 parents += code_rework
+             rows.append((c["title"], parents, c["code"].lower(), lane))
+             prev = c["id"]
+     return rows
+ 
+ 
+ def lane_options(lane):
++    """This lane's RESOLVED options, or None when the lane has no idea file yet.
++
++    Shape: `board_schema.PER_LANE | {"idea"}` — the six typed per-lane option keys,
++    plus the idea's own body text under "idea". Every key is always present
++    (resolve_lane_options fills each from the option table). The call sites that still
++    read `.get("refinement", True)` do so for the suite's stubs, which return partial
++    dicts (28 tests, measured 2026-09-24) — not because this function can omit it.
++
++    None means "there is no idea for this lane": callers decide out loud what that
++    means rather than reinterpreting it as "defaults apply" (2026-09-23 review,
++    Important 7). A lane file that exists and is blank is Task 10's: it must not share
++    this value.
++    """
+     parsed = lanes.read_idea(os.path.join(IDEAS_DIR, f"lane-{lane}.md"))
+     if parsed is None:
+         return None
+     headers, body = parsed
+     opts = lanes.resolve_lane_options(manifest(), headers, lane)
+     opts["idea"] = body
+     return opts
+ 
+ 
+ def lane_model_opts(lane):
+@@ -3208,31 +3226,42 @@ def preserve_artifacts():
+     and a patch is not one.
+ 
+     Called at each lane's code gate: the lane is finished, its cards are about
+     to be archived by the next refile, and this is the last moment the patches
+     are still collectable. They were written for exactly this and were never
+     called (found reading, not running — the one finding of that kind here).
+     """
+     import shutil, glob
+     out_dir = os.path.join(STATE.run_dir, "patches")
+     os.makedirs(out_dir, exist_ok=True)
++    # hermes_kanban_dir() honours HERMES_HOME and falls back to ~/.hermes, as
++    # worker_log_path already does. The literal ~/.hermes path copied NOTHING on a host
++    # whose HERMES_HOME is elsewhere, and the run still reported complete (2026-09-23
++    # review, Important 23).
++    attachments_root = os.path.join(hermes_kanban_dir(), "boards", BOARD, "attachments")
++    found = 0
+     st = board()
+     for title, card in st.items():
+         cid = (card or {}).get("id")
+         if not cid:
+             continue
+-        for src in glob.glob(os.path.expanduser(
+-                f"~/.hermes/kanban/boards/{BOARD}/attachments/{cid}/*.patch")):
++        for src in glob.glob(os.path.join(attachments_root, cid, "*.patch")):
++            found += 1
+             dst = os.path.join(out_dir, f"{cid}.patch")
+             if not os.path.exists(dst):
+                 shutil.copy2(src, dst)
+                 log(f"artifact kept: {os.path.relpath(dst, REPO)}")
++    if not found:
++        # A glob that matches nothing must not read like a run with nothing to keep:
++        # this function's whole job is provenance, and a silent empty return is how the
++        # hardcoded path went unnoticed.
++        log(f"artifacts: no provenance patches found under {attachments_root}")
+ 
+ def finish_run():
+     """Everything the driver does when the lane's last gate closes: the run's
+     summary, and then the banner that says the run is finished.
+ 
+     THE ORDER IS LOAD-BEARING. `run-audit.py` reads `ALL GATES COMPLETE` as "this
+     run finished" and only then demands `run-summary.json`; logged the other way
+     round (observed: 3 s in the is_even run of 2026-09-12) there is a window in
+     which an audit of a FINISHED run reports E4 "the run wrote no summary" — a
+     false finding that reads exactly like a missing artefact. A summary that fails
+@@ -3346,23 +3375,29 @@ def write_summary(state):
+         "lanes_with_ideas": [l for l in range(1, board_lane_count(state) + 1)
+                              if lane_options(l) is not None],
+         # Where this run's work is staged, and therefore where a gate commit lands.
+         # A run whose work directory is another repository has to say so, or its
+         # record does not describe where the deliverable went.
+         "workdir": os.path.abspath(WORKDIR),
+         "commit_target": commit_target(),
+         "workdir_facts": expected_workdir_facts(),
+         "workdir_drift": sorted(STATE.drift) if not STATE.run_finished[0] else [],
+     }
+-    with open(os.path.join(STATE.run_dir, "run-summary.json"), "w") as f:
++    # temp + os.replace, the pattern mint_run already uses for its pointer file: a kill
++    # between the open and the last byte left a TRUNCATED summary, and run-audit.py
++    # json.loads it — so one torn write made every later audit of that run die
++    # (2026-09-23 review, Critical 4).
++    tmp = path + ".tmp"
++    with open(tmp, "w") as f:
+         json.dump(summary, f, indent=2)
+-    log(f"summary written: {os.path.join(STATE.run_dir, 'run-summary.json')} ({total:.0f} min agent work)")
++    os.replace(tmp, path)
++    log(f"summary written: {path} ({total:.0f} min agent work)")
+ 
+ 
+ # Gates already announced this run — see gate_action.
+ # gate code -> what opened it. E4 reads the summary's gate text for "verdict PASS"
+ # (Gp/Gc) and "refined idea present" (Gi), and a human gate-holder's result is their
+ # decision, not that evidence — see gate_summary_text.
+ 
+ # The triage card body file_ideas writes always opens with this line, so a card
+ # the human typed from scratch in the dashboard is distinguishable from one the
+ # driver seeded — and the lane it belongs to is stated rather than guessed.
+@@ -3624,20 +3659,39 @@ def acquire_lock():
+ 
+     The rule itself — a DEAD holder's lockfile taken over rather than refused, a LIVE
+     one refused, release only while the lock is still ours — lives in `driver_lock`,
+     which every door takes: they all build in the same `work/`, so two of them must not
+     be able to disagree about who holds the board."""
+     _, note = driver_lock.take(RUNS_ROOT, "kill it or remove the lockfile")
+     if note:
+         log(note)
+ 
+ 
++def require_manifest_valid():
++    """Refuse a board whose manifest the engine cannot honour.
++
++    Every read of the manifest but validate_armed's was raw (2026-09-23 review,
++    Important 9), and board_schema's own docstring says a `max-runtime: "banana"`
++    reaches the engine — read by the auditor's parser as no ceiling at all. So a board
++    the option table refuses is not driven: the driver says what is wrong and stops
++    before it takes the lock or files anything.
++
++    A manifest edited WHILE the driver serves is still read leniently: this runs once,
++    at startup. That limit is deliberate — a live run is not killed by a mid-edit; the
++    next restart refuses it.
++    """
++    problems = board_schema.validate(manifest())
++    if problems:
++        raise SystemExit("board.json is not valid — the driver refuses to drive it:\n  "
++                         + "\n  ".join(problems))
++
++
+ def require_manifest():
+     """A driver with no manifest would silently run git in the template repo for
+     its whole life — the exact failure the template_root/workdir split exists to
+     prevent. Fail at startup instead. Import stays cheap so the tests can import
+     this module without a board."""
+     if not os.path.exists(BOARD_CFG):
+         raise SystemExit(
+             f"no manifest at {BOARD_CFG} — create the board first:\n"
+             f"  driver/create-board.sh --board boards/{BOARD}")
+ 
+@@ -3672,51 +3726,81 @@ def reset_attempt_budgets():
+                     "last_failure_error = NULL WHERE status != 'archived' "
+                     "AND (consecutive_failures != 0 OR last_failure_error IS NOT NULL)")
+             conn.close()
+             if cur.rowcount:
+                 log(f"attempt budgets reset for {cur.rowcount} card(s)")
+             return
+         except sqlite3.OperationalError as e:
+             log(f"WARNING: attempt-budget reset failed on {path}: {e}")
+ 
+ 
++def timeout_seconds(argv=None, serve=False):
++    """This driver's wall-clock cap in seconds, or None for no cap.
++
++    An explicit `--timeout-min N` (or `--timeout-min=N`) wins in BOTH modes, and a
++    repeated flag reads the LAST value, as argparse does everywhere else. start-board.sh
++    relies on the first rule: it launches `--serve --timeout-min <board's timeout-min>`.
++    With no flag, a serving driver has no cap — it is a standing process, and a 2h cap
++    would drop the board and leave the next idea unattended until cron noticed — and a
++    one-shot driver gets 120 minutes.
++
++    The old scan took sys.argv.index(a) + 1, so the `=` form raised IndexError at
++    startup and a repeated flag always read the FIRST value (2026-09-23 review,
++    Important 24; prior T-27). A value that is not a finite, positive number of
++    minutes is a usage error, never a traceback — `float()` also accepts 'nan' and
++    'inf', and a nan cap would never fire.
++    """
++    argv = list(sys.argv[1:] if argv is None else argv)
++    seen, value = False, None
++    for i, a in enumerate(argv):
++        if a == "--timeout-min":
++            seen, value = True, (argv[i + 1] if i + 1 < len(argv) else None)
++        elif a.startswith("--timeout-min="):
++            seen, value = True, a.split("=", 1)[1]
++    if not seen:
++        return None if serve else 120 * 60.0
++    try:
++        minutes = float(value)
++    except (TypeError, ValueError):
++        minutes = float("nan")
++    if not math.isfinite(minutes) or minutes <= 0:
++        raise SystemExit(f"--timeout-min wants a positive number of minutes, got {value!r}")
++    return minutes * 60
++
++
+ def main():
+     if not BOARD:
+         raise SystemExit("BOARD=<slug> is required — driver/start-board.sh sets it; "
+                          "there is no default board")
+     require_manifest()
++    require_manifest_valid()
+     acquire_lock()
+     # Say which run this process is on. A restart REJOINS the run runs/current
+     # names — it must not mint one, because the cards already filed carry their
+     # run's paths in their bodies and a new directory would leave every hand-off
+     # pointing at a tree nothing writes to.
+     joined = _read_current_run()
+     # A board-level log is append-only across runs, so mark where this driver's
+     # block begins: `tail` on a board driven several times in a day otherwise
+     # shows the previous run's last line as if it were this one's (measured
+     # 2026-09-13: a fresh run's lines sat under the previous night's).
+     log(f"--- driver start: board={BOARD} pid={os.getpid()} "
+         f"run={joined or 'none yet'} ---")
+     if joined:
+         log(f"rejoined run {joined}: {os.path.relpath(STATE.run_dir, REPO)}")
+         rejoin_chain()
+     else:
+         log("no run yet — the first armed idea mints one")
+     reset_attempt_budgets()
+     t0 = time.time()
+     write_summary._t0 = t0          # wall_min in the summary is measured from here
+-    # A serving driver is a standing process; a 2h cap would drop the board every
+-    # two hours and leave the next idea unattended until cron noticed.
+-    timeout = None if SERVE else 120 * 60
+-    for a in sys.argv:
+-        if a.startswith("--timeout-min"):
+-            timeout = float(sys.argv[sys.argv.index(a) + 1]) * 60
++    timeout = timeout_seconds(serve=SERVE)
+     idle = False
+     before = STATE.mutations[0]
+     while True:
+         if STATE.halted["reason"]:
+             # Recorded mid-tick (escalate): stop before an armed idea is adopted, or a
+             # fresh run is minted and then abandoned by this same exit.
+             log("BOARD HALTED — driver exiting; board state left for human inspection")
+             return 1
+         try:
+             # A new idea outranks the current tick: adopt it, refile, and let the
+diff --git a/tests/test_driver_main.py b/tests/test_driver_main.py
+new file mode 100644
+index 0000000..0eb6eb8
+--- /dev/null
++++ b/tests/test_driver_main.py
+@@ -0,0 +1,123 @@
++"""`run.main()` — the loop no test had ever executed.
++
++The finish / halt / timeout / serve-idle decisions all live in main(), and the only
++test that touched it was an `inspect.getsource` order comparison, which cannot fail
++when the loop breaks (2026-09-23 review, tests Critical 1 / Critical 7). These tests
++drive main() with every collaborator stubbed: no board, no CLI, no sleeping, no real
++clock.
++"""
++import itertools
++import os
++import sys
++
++import pytest
++
++sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "template"))
++sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "driver"))
++import run
++
++
++@pytest.fixture
++def driver(monkeypatch):
++    """main() with its side effects stubbed; returns the recorded log lines."""
++    lines = []
++    monkeypatch.setattr(run, "BOARD", "b")
++    monkeypatch.setattr(run, "log", lines.append)
++    monkeypatch.setattr(run, "require_manifest", lambda: None)
++    monkeypatch.setattr(run, "require_manifest_valid", lambda: None)
++    monkeypatch.setattr(run, "acquire_lock", lambda: None)
++    monkeypatch.setattr(run, "_read_current_run", lambda: None)
++    monkeypatch.setattr(run, "reset_attempt_budgets", lambda: None)
++    monkeypatch.setattr(run, "deadman_check", lambda: None)
++    monkeypatch.setattr(run, "board_removed_exit", lambda e, idle: None)
++    monkeypatch.setattr(run, "finish_run", lambda: None)
++    monkeypatch.setattr(run.time, "sleep", lambda s: None)
++    monkeypatch.setattr(run.STATE, "halted", {"reason": ""})
++    monkeypatch.setattr(run.STATE, "tick_error", {"n": 0, "sig": None})
++    monkeypatch.setattr(run.STATE, "mutations", [0])
++    monkeypatch.setattr(run, "SERVE", False)
++    monkeypatch.setattr(run.sys, "argv", ["run.py"])
++    return lines
++
++
++def test_once_returns_zero_after_one_tick(driver, monkeypatch):
++    """`--once` is the smoke-test switch: one tick, exit 0."""
++    monkeypatch.setattr(run, "ONCE", True)
++    monkeypatch.setattr(run, "tick", lambda: True)
++    assert run.main() == 0
++
++
++def test_a_halted_board_exits_one_before_the_tick(driver, monkeypatch):
++    """A halt recorded mid-tick must stop the driver BEFORE an armed idea is adopted:
++    adopting one and then exiting leaves a fresh run nobody drives."""
++    monkeypatch.setattr(run, "ONCE", True)
++    monkeypatch.setattr(run, "tick", lambda: pytest.fail("tick ran on a halted board"))
++    run.STATE.halted["reason"] = "the board is gone"
++    assert run.main() == 1
++    assert any("BOARD HALTED" in m for m in driver), driver
++
++
++def test_a_halt_raised_inside_the_tick_exits_one_without_finishing(driver, monkeypatch):
++    """The ORDER is load-bearing: a tick that returns "finished" and a halt in the same
++    pass must NOT write a run summary — the run did not finish."""
++    monkeypatch.setattr(run, "ONCE", True)
++
++    def tick_that_halts():
++        run.STATE.halted["reason"] = "a card escalated twice"
++        return True
++
++    monkeypatch.setattr(run, "tick", tick_that_halts)
++    monkeypatch.setattr(run, "finish_run",
++                        lambda: pytest.fail("finish_run ran on a halted run"))
++    assert run.main() == 1
++    assert any("BOARD HALTED" in m for m in driver), driver
++
++
++def test_the_timeout_stops_a_driver_that_never_finishes(driver, monkeypatch):
++    """`--timeout-min` is the only thing that stops a non-serve driver whose board never
++    reaches its banner; without it a wedged board holds the process for ever."""
++    monkeypatch.setattr(run, "ONCE", False)
++    monkeypatch.setattr(run, "tick", lambda: False)
++    monkeypatch.setattr(run.sys, "argv", ["run.py", "--timeout-min", "5"])
++    clock = itertools.count(start=1000.0, step=100.0)   # every read is 100 s later
++    monkeypatch.setattr(run.time, "time", lambda: next(clock))
++    assert run.main() == 1
++    assert any("timeout — stopping driver" in m for m in driver), driver
++
++
++@pytest.mark.parametrize("argv,serve,expected", [
++    (["--timeout-min", "5"], False, 300.0),
++    (["--timeout-min=5"], False, 300.0),                     # the form that raised IndexError
++    (["--timeout-min", "5", "--timeout-min", "10"], False, 600.0),   # last wins
++    (["--once"], False, 120 * 60.0),                          # no flag: one-shot default
++    (["--serve"], True, None),                                # no flag: serving has no cap
++    (["--serve", "--timeout-min", "30"], True, 1800.0),       # start-board.sh's serve cap
++])
++def test_the_timeout_flag_is_read_in_both_forms(argv, serve, expected):
++    """Measured 2026-09-24: the old scan took sys.argv.index(a) + 1, so
++    `--timeout-min=120` raised IndexError at startup and a repeated flag always read the
++    FIRST value (review Important 24). An explicit flag wins in serve mode too:
++    start-board.sh passes the board's own timeout-min beside --serve."""
++    assert run.timeout_seconds(argv, serve=serve) == expected
++
++
++@pytest.mark.parametrize("argv", [["--timeout-min", "soon"], ["--timeout-min"],
++                                  ["--timeout-min=soon"], ["--timeout-min", "nan"],
++                                  ["--timeout-min", "0"], ["--timeout-min", "-5"]])
++def test_a_timeout_that_is_not_positive_minutes_is_a_usage_error(argv):
++    """A bad flag is a SystemExit with a line, like every other entry point here — not
++    a ValueError traceback, and not a nan cap that never fires."""
++    with pytest.raises(SystemExit):
++        run.timeout_seconds(argv)
++
++
++def test_the_manifest_is_validated_before_the_lock_is_taken(driver, monkeypatch):
++    """The order is the point: refusing a board must not leave a lock behind for the
++    next restart to trip over (review Important 9)."""
++    order = []
++    monkeypatch.setattr(run, "require_manifest_valid", lambda: order.append("validate"))
++    monkeypatch.setattr(run, "acquire_lock", lambda: order.append("lock"))
++    monkeypatch.setattr(run, "ONCE", True)
++    monkeypatch.setattr(run, "tick", lambda: True)
++    assert run.main() == 0
++    assert order == ["validate", "lock"], order
+diff --git a/tests/test_manifest_shape.py b/tests/test_manifest_shape.py
+new file mode 100644
+index 0000000..214796e
+--- /dev/null
++++ b/tests/test_manifest_shape.py
+@@ -0,0 +1,109 @@
++"""The manifest dict has ONE meaning, whether or not the board still has its board.json.
++
++The old fallback was a four-key dict that said `integration-tests: False` against the
++option table, create-board.sh's own --help and its profile pre-flight (2026-09-23
++review, Important 6 and the comment finding I40). "No manifest" now means exactly what
++"a manifest that names nothing" means: the option table's defaults.
++"""
++import json
++import os
++import sys
++
++import pytest
++
++sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "template"))
++sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "driver"))
++import board_schema
++import lanes
++import run
++
++REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
++
++
++def _board(tmp_path, monkeypatch, manifest=None):
++    board_dir = tmp_path / "boards" / "b"
++    board_dir.mkdir(parents=True, exist_ok=True)
++    cfg = board_dir / "board.json"
++    if manifest is None:
++        if cfg.exists():
++            cfg.unlink()
++    else:
++        cfg.write_text(json.dumps(manifest))
++    monkeypatch.setattr(run, "BOARD", "b")
++    monkeypatch.setattr(run, "BOARD_DIR", str(board_dir))
++    monkeypatch.setattr(run, "IDEAS_DIR", str(board_dir))
++    return board_dir
++
++
++def test_no_manifest_means_the_same_board_as_an_empty_one(tmp_path, monkeypatch):
++    """The property that matters: a consumer cannot tell which one it got."""
++    _board(tmp_path, monkeypatch)
++    absent = run.manifest()
++    _board(tmp_path, monkeypatch, {})
++    assert absent == run.manifest() == {"slug": "b"}
++
++
++def test_a_board_without_its_manifest_keeps_its_integration_cards(tmp_path, monkeypatch):
++    """The fallback's `integration-tests: False` silently dropped every lane's
++    integration cards on a board whose manifest was gone — against the option table
++    (True) and the --help that promises "unit and integration tests on"."""
++    _board(tmp_path, monkeypatch)
++    resolved = lanes.resolve_lane_options(run.manifest(), {}, 1)
++    assert resolved["integration-tests"] is True
++    assert resolved["integration-tests"] == board_schema.OPTIONS["integration-tests"][1]
++
++
++def test_the_manifest_create_board_writes_does_not_contradict_its_help():
++    """The heredoc wrote `"integration-tests": false` while the same script's --help
++    says a --slug board gets "refinement, unit and integration tests on" and its profile
++    pre-flight already demanded the integration profiles. Omitting the key IS the
++    option table's default."""
++    src = open(os.path.join(REPO, "driver", "create-board.sh")).read()
++    heredoc = [l for l in src.splitlines() if l.lstrip().startswith("printf '{")]
++    assert heredoc, "the manifest printf moved — read create-board.sh"
++    assert all("integration-tests" not in l for l in heredoc), heredoc
++
++
++def test_the_resolved_lane_options_are_the_per_lane_keys_plus_the_idea(tmp_path, monkeypatch):
++    """`lane_options`' shape, pinned: every PER_LANE key plus the idea's own body under
++    "idea" — and `refinement` is ALWAYS present, which is what makes a
++    `.get("refinement", True)` on it dead code."""
++    board_dir = _board(tmp_path, monkeypatch, {"slug": "b", "lanes": 1})
++    (board_dir / "lane-1.md").write_text(
++        "## Idea 1: a lane\n\n<!-- integration-tests: false -->\n\n"
++        "### Done means\n\nit works\n")
++    opts = run.lane_options(1)
++    assert set(opts) == set(board_schema.PER_LANE) | {"idea"}, sorted(opts)
++    assert opts["refinement"] is True
++    assert opts["integration-tests"] is False        # the header won
++    assert "it works" in opts["idea"]
++
++
++def test_a_lane_without_an_idea_file_is_none(tmp_path, monkeypatch):
++    """The None state, pinned: no file at all. (A file that EXISTS and is blank is the
++    next task's — the two states must stop sharing one value.)"""
++    _board(tmp_path, monkeypatch, {"slug": "b", "lanes": 1})
++    assert run.lane_options(1) is None
++    assert run.lane_refinement(1) is True
++
++
++def test_a_manifest_the_option_table_refuses_stops_the_driver(tmp_path, monkeypatch):
++    """`max-runtime: "banana"` reached the engine: the auditor's parser reads it as no
++    ceiling. Every manifest read but validate_armed's was raw (review Important 9)."""
++    _board(tmp_path, monkeypatch, {"slug": "b", "lanes": 1, "max-runtime": "banana"})
++    with pytest.raises(SystemExit) as excinfo:
++        run.require_manifest_valid()
++    assert "max-runtime" in str(excinfo.value), str(excinfo.value)
++
++
++def test_every_shipped_manifest_passes_the_drivers_own_gate(monkeypatch):
++    """The other side, and the one that matters most: this gate must not halt a board
++    that ships (all seven, measured 2026-09-24)."""
++    boards = os.path.join(REPO, "boards")
++    slugs = [s for s in sorted(os.listdir(boards))
++             if os.path.exists(os.path.join(boards, s, "board.json"))]
++    assert len(slugs) >= 7, slugs
++    for slug in slugs:
++        monkeypatch.setattr(run, "BOARD", slug)
++        monkeypatch.setattr(run, "BOARD_DIR", os.path.join(boards, slug))
++        run.require_manifest_valid()                   # must not raise

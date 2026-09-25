@@ -1,0 +1,130 @@
+## git status --short
+M  tests/test_chain_log.py
+M  tests/test_open_lane.py
+M  tests/test_refinement_option.py
+A  tests/test_suite_hygiene.py
+
+## diff --stat HEAD
+ tests/test_chain_log.py         |  2 +-
+ tests/test_open_lane.py         |  2 +-
+ tests/test_refinement_option.py |  2 +-
+ tests/test_suite_hygiene.py     | 32 ++++++++++++++++++++++++++++++++
+ 4 files changed, 35 insertions(+), 3 deletions(-)
+
+## diff -U10 HEAD (staged + unstaged vs HEAD)
+diff --git a/tests/test_chain_log.py b/tests/test_chain_log.py
+index 5cd27aa..9fab9f5 100644
+--- a/tests/test_chain_log.py
++++ b/tests/test_chain_log.py
+@@ -1,17 +1,17 @@
+-import card_render
+ import json
+ import os
+ import sys
+ 
+ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "template"))
+ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "driver"))
++import card_render
+ import lanes
+ import run
+ 
+ 
+ def _env(monkeypatch, tmp_path):
+     monkeypatch.setattr(run.STATE, "run_dir", str(tmp_path / "runs"))
+     monkeypatch.setattr(run, "REPO", "/repo")
+     monkeypatch.setattr(run, "BOARD", "b")
+     monkeypatch.setattr(run.STATE, "chain_started", set())
+     monkeypatch.setattr(run.STATE, "chain_done", set())
+diff --git a/tests/test_open_lane.py b/tests/test_open_lane.py
+index b21629e..0c81b2c 100644
+--- a/tests/test_open_lane.py
++++ b/tests/test_open_lane.py
+@@ -1,17 +1,17 @@
+-import card_render
+ import json
+ import os
+ import sys
+ 
+ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "template"))
+ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "driver"))
++import card_render
+ import lanes
+ import run
+ 
+ 
+ def _state(root_status="ready"):
+     """One lane, its root already unblocked — the state --once leaves behind."""
+     st = {lanes.card_title(c, 1): {"id": f"id-{c}", "status": "blocked",
+                                    "title": lanes.card_title(c, 1)}
+           for c in ("Gi", "P", "RVp", "Gp", "TW", "C", "RVa", "TI", "RVc", "Gc")}
+     st[lanes.card_title("I", 1)] = {"id": "id-I", "status": root_status,
+diff --git a/tests/test_refinement_option.py b/tests/test_refinement_option.py
+index 5f05d8b..928af2d 100644
+--- a/tests/test_refinement_option.py
++++ b/tests/test_refinement_option.py
+@@ -1,26 +1,26 @@
+ """`refinement: false` — the lane that skips the researcher and the idea gate.
+ 
+ The option is the same shape as the test levels: a per-lane bool, so a board's
+ manifest sets the default and an idea's header overrides it either way. What it
+ drops is the lane's FIRST TWO cards, which is why the tests here are as much about
+ the lane ROOT as about the prune: I is the root when the lane refines, P when it
+ does not, and every root lookup has to be told which.
+ """
+ 
+-import card_render
+ import json
+ import os
+ import sys
+ 
+ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "template"))
+ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "driver"))
++import card_render
+ 
+ import board_schema
+ import lanes
+ 
+ 
+ def codes(cards):
+     return [c["code"] for c in cards]
+ 
+ 
+ def by_code(cards, code):
+diff --git a/tests/test_suite_hygiene.py b/tests/test_suite_hygiene.py
+new file mode 100644
+index 0000000..4c08d0c
+--- /dev/null
++++ b/tests/test_suite_hygiene.py
+@@ -0,0 +1,32 @@
++"""The suite's own contract: every test file runs ON ITS OWN.
++
++Three files imported `card_render` before inserting template/ on sys.path, so they
++collected only when an earlier file (alphabetically) had already done it — and every
++one-file `pytest tests/<file>` step in a plan died with ModuleNotFoundError (measured
++2026-09-24: test_chain_log, test_open_lane, test_refinement_option).
++"""
++import ast
++import os
++
++REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
++ENGINE = {os.path.splitext(n)[0] for layer in ("template", "driver")
++          for n in os.listdir(os.path.join(REPO, layer)) if n.endswith(".py")}
++
++
++def test_no_test_file_imports_an_engine_module_before_it_can_find_it():
++    offenders = []
++    for name in sorted(os.listdir(os.path.join(REPO, "tests"))):
++        if not (name.startswith("test_") and name.endswith(".py")):
++            continue
++        with open(os.path.join(REPO, "tests", name)) as f:
++            tree = ast.parse(f.read())
++        path_ready = False
++        for node in tree.body:
++            text = ast.unparse(node)
++            # sys.path.insert, or loading a driver CLI by path — run-audit.py and its
++            # siblings insert their own directories when executed
++            if "sys.path.insert" in text or "exec_module" in text:
++                path_ready = True
++            if isinstance(node, ast.Import) and not path_ready:
++                offenders += [f"{name}: {a.name}" for a in node.names if a.name in ENGINE]
++    assert not offenders, offenders

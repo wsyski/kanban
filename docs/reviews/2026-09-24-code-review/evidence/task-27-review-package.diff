@@ -1,0 +1,231 @@
+## git status --short
+M  driver/arm.sh
+M  driver/create-board.sh
+M  driver/doc-chain.py
+M  driver/file_lanes.py
+M  driver/render-flow.py
+M  driver/run-audit.py
+M  driver/run.py
+M  driver/runs-report.py
+M  driver/runs_util.py
+M  driver/start-board.sh
+M  driver/timing-report.py
+M  template/board.schema.json
+M  template/board_schema.py
+M  template/driver_lock.py
+M  template/lanes.py
+M  tests/test_acquire_lock.py
+A  tests/test_arm_script.py
+M  tests/test_board_schema.py
+M  tests/test_card_stops.py
+M  tests/test_chain_log.py
+M  tests/test_doc_chain.py
+A  tests/test_driver_main.py
+M  tests/test_file_lanes.py
+M  tests/test_lanes_graph.py
+A  tests/test_manifest_shape.py
+M  tests/test_open_lane.py
+M  tests/test_refinement_option.py
+M  tests/test_render_flow.py
+M  tests/test_rework_loop.py
+M  tests/test_run_audit.py
+M  tests/test_run_directories.py
+M  tests/test_runs_report.py
+M  tests/test_runs_util.py
+A  tests/test_suite_hygiene.py
+A  tests/test_timing_report.py
+M  tests/test_unstarted_mint.py
+
+## diff --stat HEAD
+ driver/runs-report.py     | 39 ++++++++++++++++++++-----------
+ tests/test_runs_report.py | 59 +++++++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 85 insertions(+), 13 deletions(-)
+
+## diff -U10 HEAD
+diff --git a/driver/runs-report.py b/driver/runs-report.py
+index f66a564..9bbb48f 100755
+--- a/driver/runs-report.py
++++ b/driver/runs-report.py
+@@ -82,41 +82,50 @@ def never_opened_a_lane(path):
+     researcher's `artifacts/` follows; a directory with neither never held a lane.
+     blade-workspace left one on 2026-09-15 — `…094225`, 12 archived cards and no lane,
+     superseded when the arm minted `…094418`. Reported here, never removed.
+     """
+     snaps = os.path.join(path, "snapshots")
+     if os.path.isdir(snaps) and any(f.startswith("lane-") for f in os.listdir(snaps)):
+         return False
+     return not os.path.isdir(os.path.join(path, "artifacts"))
+ 
+ 
+-def runs_in(runs):
+-    """Every run directory, newest first, with what it costs and what it holds."""
++def runs_in(runs, vanished=None):
++    """Every run directory, newest first, with what it costs and what it holds.
++
++    `vanished`, when given, collects the names of run directories that disappeared
++    between the listing and the stat — this tool's own advice is to `rm` them, so a
++    report taken while someone does must not die on one (2026-09-23 review, errors S9).
++    """
+     live = current_run(runs)
+     out = []
+     if not os.path.isdir(runs):
+         return out, live
+     for name in sorted(os.listdir(runs)):
+         path = os.path.join(runs, name)
+         if not os.path.isdir(path) or name in FLAT_SUBDIRS:
+             continue                    # a pre-per-run layout's own subdirectories
+         scratch = os.path.join(path, "scratch")
+-        out.append({
+-            "run": name,
+-            "current": name == live,
+-            "bytes": dir_size(path),
+-            "scratch_bytes": dir_size(scratch) if os.path.isdir(scratch) else 0,
+-            "modified": datetime.datetime.fromtimestamp(
+-                os.path.getmtime(path)).isoformat(timespec="seconds"),
+-            "superseded": never_opened_a_lane(path),
+-            "path": path,
+-        })
++        try:
++            out.append({
++                "run": name,
++                "current": name == live,
++                "bytes": dir_size(path),
++                "scratch_bytes": dir_size(scratch) if os.path.isdir(scratch) else 0,
++                "modified": datetime.datetime.fromtimestamp(
++                    os.path.getmtime(path)).isoformat(timespec="seconds"),
++                "superseded": never_opened_a_lane(path),
++                "path": path,
++            })
++        except FileNotFoundError:
++            if vanished is not None:
++                vanished.append(name)
+     if not out and os.path.isdir(runs) and os.listdir(runs):
+         # A board last run before per-run directories: its state sits flat in runs/.
+         # Reported as the one run it is, rather than as nothing at all.
+         out.append({"run": "(flat layout — before per-run directories)",
+                     "current": False, "bytes": dir_size(runs),
+                     "scratch_bytes": dir_size(os.path.join(runs, "scratch"))
+                     if os.path.isdir(os.path.join(runs, "scratch")) else 0,
+                     "modified": datetime.datetime.fromtimestamp(
+                         os.path.getmtime(runs)).isoformat(timespec="seconds"),
+                     "path": runs, "flat": True})
+@@ -144,21 +153,25 @@ def runs_in(runs):
+ def main(argv=None):
+     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+     ap.add_argument("--board", help="board slug")
+     ap.add_argument("--runs", help="a board's runs/ directory")
+     ap.add_argument("--json", action="store_true")
+     a = ap.parse_args(argv)
+     runs = a.runs or (os.path.join(REPO, "boards", a.board, "runs") if a.board
+                       else None)
+     if not runs:
+         ap.error("--board <slug> or --runs <dir> is required")
+-    rows, live = runs_in(runs)
++    vanished = []
++    rows, live = runs_in(runs, vanished)
++    if vanished:
++        print(f"{len(vanished)} run directory(ies) disappeared while reading — not "
++              f"listed: {', '.join(vanished)}", file=sys.stderr)
+     if a.json:
+         print(json.dumps({"runs": runs, "current": live, "entries": rows}, indent=2))
+         return 0
+     if not rows:
+         print(f"no runs under {runs}")
+         return 0
+     total = sum(r["bytes"] for r in rows)
+     print(f"{runs} — {len(rows)} run(s), {_size(total)} total")
+     print(f"{'run':34} {'size':>7} {'scratch':>8}  last written")
+     for r in rows:
+diff --git a/tests/test_runs_report.py b/tests/test_runs_report.py
+index 24300e6..f56ae6b 100644
+--- a/tests/test_runs_report.py
++++ b/tests/test_runs_report.py
+@@ -1,18 +1,20 @@
+ """`runs-report.py` makes the growth visible without taking the decision away.
+ 
+ Nothing in this template deletes a run directory: last week's log is how you find out
+ why a run wedged. The cost is that runs/ grows — `scratch/<card-id>/` without bound,
+ since a worker may write anything there. This tool reports and stops; the `rm` is the
+ human's to type.
+ """
+ import json
++
++import pytest
+ import os
+ import subprocess
+ import sys
+ 
+ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "template"))
+ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "driver"))
+ import importlib.util
+ 
+ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ SCRIPT = os.path.join(REPO, "driver", "runs-report.py")
+@@ -125,10 +127,67 @@ def test_no_runs_is_not_an_error(tmp_path):
+ 
+ 
+ def test_the_timing_report_prints_the_end_state_not_every_status_entered():
+     """A finished 12-card board printed `{'blocked': 11, 'running': 6, 'done': 8, …}` —
+     28 entries — and read as a stuck board."""
+     import importlib.util, os, subprocess, sys, json
+     path = os.path.join(os.path.dirname(__file__), "..", "driver", "timing-report.py")
+     src = open(path).read()
+     assert "end status histogram" not in src
+     assert 'c["status"] for c in card_snaps[-1]["cards"].values()' in src
++
++
++def test_size_scales():
++    """`_size` had no test at all (review tests I36)."""
++    assert rr._size(0) == "0B"
++    assert rr._size(999) == "999B"
++    assert rr._size(1536) == "2K"
++    assert rr._size(5 * 1024 ** 2) == "5M"
++    assert rr._size(3 * 1024 ** 3) == "3G"
++
++
++def test_a_run_that_opened_a_lane_is_not_superseded(tmp_path):
++    """The False direction of `never_opened_a_lane` was unreachable: the fixture made no
++    snapshots/ (review tests I36)."""
++    runs = _runs(tmp_path)
++    (runs / "r2" / "snapshots").mkdir()
++    (runs / "r2" / "snapshots" / "lane-1.md").write_text("idea\n")
++    rows, _live = rr.runs_in(str(runs))
++    by_run = {r["run"]: r for r in rows}
++    assert by_run["r2"]["superseded"] is False
++    assert by_run["r1"]["superseded"] is True
++
++
++def test_the_report_can_be_asked_for_by_board(tmp_path, monkeypatch, capsys):
++    """`--board` had no test (review tests I36): it resolves boards/<slug>/runs."""
++    board_runs = tmp_path / "boards" / "b"
++    board_runs.mkdir(parents=True)
++    _runs(board_runs)
++    monkeypatch.setattr(rr, "REPO", str(tmp_path))
++    assert rr.main(["--board", "b"]) == 0
++    assert "2 run(s)" in capsys.readouterr().out
++
++
++def test_no_arguments_is_a_usage_error(capsys):
++    with pytest.raises(SystemExit) as excinfo:
++        rr.main([])
++    assert excinfo.value.code == 2
++    assert "--board <slug> or --runs <dir> is required" in capsys.readouterr().err
++
++
++def test_a_run_removed_mid_report_does_not_lose_the_report(tmp_path, monkeypatch, capsys):
++    """`os.path.getmtime` was unguarded in the loop over a live runs/ directory, and this
++    tool's own advice tells a human to `rm -rf` those paths — one removal mid-read lost
++    the whole report (review errors S9)."""
++    runs = _runs(tmp_path)
++    real = os.path.getmtime
++
++    def vanishing(path):
++        if os.path.basename(path) == "r1":
++            raise FileNotFoundError(path)
++        return real(path)
++
++    monkeypatch.setattr(rr.os.path, "getmtime", vanishing)
++    assert rr.main(["--runs", str(runs)]) == 0
++    captured = capsys.readouterr()
++    assert "1 run(s)" in captured.out and "r2" in captured.out
++    assert "disappeared while reading" in captured.err and "r1" in captured.err

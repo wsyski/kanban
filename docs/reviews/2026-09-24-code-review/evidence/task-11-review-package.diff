@@ -1,0 +1,293 @@
+## git status --short
+M  driver/create-board.sh
+M  driver/doc-chain.py
+M  driver/run-audit.py
+M  driver/run.py
+M  template/board_schema.py
+M  template/driver_lock.py
+M  template/lanes.py
+M  tests/test_acquire_lock.py
+M  tests/test_board_schema.py
+M  tests/test_chain_log.py
+M  tests/test_doc_chain.py
+A  tests/test_driver_main.py
+M  tests/test_lanes_graph.py
+A  tests/test_manifest_shape.py
+M  tests/test_open_lane.py
+M  tests/test_refinement_option.py
+M  tests/test_run_audit.py
+M  tests/test_run_directories.py
+A  tests/test_suite_hygiene.py
+M  tests/test_unstarted_mint.py
+
+## diff --stat HEAD
+ template/board_schema.py   | 44 +++++++++++++++++++++++++++++++++++++----
+ template/lanes.py          |  5 +++--
+ tests/test_board_schema.py | 49 ++++++++++++++++++++++++++++++++++++++++++++++
+ tests/test_lanes_graph.py  |  8 ++++++++
+ 4 files changed, 100 insertions(+), 6 deletions(-)
+
+## diff -U10 HEAD
+diff --git a/template/board_schema.py b/template/board_schema.py
+index b2b422c..a5c5e21 100644
+--- a/template/board_schema.py
++++ b/template/board_schema.py
+@@ -130,37 +130,45 @@ ROLES = frozenset({"researcher", "coder", "human-gate"})
+ # The worker cards a goal judge may run on. Declared here for the same reason as
+ # ROLES; `lanes.goal_args` still refuses gates and reviews whatever a list says.
+ GOAL_CODES = ("I", "P", "TW", "C", "TI")
+ 
+ # The gates a board may hand to the driver. Declared beside ROLES for the same reason:
+ # a code that left the graph should fail this module's own test.
+ GATE_CODES = ("Gi", "Gp", "Gc")
+ 
+ 
+ def gate_is_auto(value, code):
+-    """Does `auto-gates` hand gate `code` ('Gi') to the driver?"""
+-    return code in (value or [])
++    """Does `auto-gates` hand gate `code` ('Gi') to the driver?
++
++    A LIST only. The body was `code in (value or [])`, which on a string is substring
++    containment: `gate_is_auto('xxGi', 'Gi')` was True (2026-09-23 review, Important 5).
++    validate refuses a string `auto-gates`, so the shape is unreachable through the
++    validated path — this function's own contract still must not answer yes to it.
++    """
++    return isinstance(value, (list, tuple)) and code in value
+ 
+ # Options whose VALUE the board's contract fixes, whatever their type allows. A
+ # failed card is FINAL (user rule, 2026-09-12): the dispatcher's breaker blocks it
+ # on that first failure and the driver halts the board. The only retry the board
+ # recognises is a REVIEW that failed, which asks for one by filing a revision
+ # card. `max-retries: 2` would re-enable the "run it again and hope" mechanism the
+ # rule removes, so it is refused where the board is declared rather than filed.
+ ONE_ATTEMPT = {
+     "max-retries": ("a failed card is final — only a REVIEW sends work back, by "
+                     "filing a revision card"),
+ }
+ 
+ # `<n><unit>` one or more times, as run-audit.py's ceiling parser reads it, so a
+ # manifest cannot state a ceiling the auditor scores as zero minutes.
+-_DURATION_RE = re.compile(r"^(?:\d+(?:\.\d+)?[hms])+$")
++# Whitespace between the parts is allowed because duration_seconds below reads it
++# ('1h 30m' is 5400 there): the regex and the parser used to disagree about it.
++_DURATION_RE = re.compile(r"^(?:\d+(?:\.\d+)?\s*[hms]\s*)+$")
+ 
+ 
+ def duration_seconds(text):
+     """`25m`, `90s`, `2h`, `1h30m` as seconds; None when nothing parses.
+ 
+     ONE parser for the manifest's spelling, beside the regex that validates it. The
+     other readers had their own copies and one of them was wrong: a second reader
+     matched a SINGLE unit, so the multi-unit form accepted above (`1h30m`) came back
+     None there, and a None budget means no `--run-budget` and no subprocess timeout —
+     a card that runs unbounded while its manifest names a ceiling. `run-audit.py`
+@@ -197,39 +205,55 @@ def _kind_error(kind, value):
+         # work/; name it and it is absolute.
+         if kind == "abspath" and not value.startswith("/"):
+             return (f"must be an absolute path, got {value!r}"
+                     + (" — `~` is not expanded; write the full path"
+                        if value.startswith("~") else "")
+                     + ". Omit the option for the board's own work/ directory.")
+     elif kind == "paths":
+         if not isinstance(value, list) or not all(
+                 isinstance(p, str) and p.strip() for p in value):
+             return f"expected a list of non-empty paths, got {value!r}"
++        # card_render.targets_text writes these into every card body, where the worker
++        # runs in WORKDIR: a relative target is read from the wrong tree (2026-09-23
++        # review, Important 4). `~` IS allowed here, unlike `abspath`: targets_text
++        # expands it (tests/test_render_body.py pins that), so `~/x` names one place.
++        bad = [p for p in value if not (p.startswith("/") or p == "~"
++                                        or p.startswith("~/"))]
++        if bad:
++            return (f"expected absolute (or ~/) paths — {bad} would be read relative to "
++                    f"each card's work directory")
+     elif kind == "gates":
+         if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+             return (f"expected a list of gate codes {list(GATE_CODES)} — [] is every "
+                     f"gate human, got {value!r}")
+         unknown = sorted(set(value) - set(GATE_CODES))
+         if unknown:
+             return (f"unknown gate code(s) {unknown} — the lane's gates are "
+                     f"{list(GATE_CODES)}")
+     elif kind == "cards":
+         if not isinstance(value, list) or not all(isinstance(c, str) for c in value):
+             return f"expected a list of card codes, got {value!r}"
+         unknown = sorted(set(value) - set(GOAL_CODES))
+         if unknown:
+             return (f"unknown card code(s) {unknown} — the goal judge runs on "
+                     f"worker cards only: {list(GOAL_CODES)}")
+     elif kind == "duration":
+         if not isinstance(value, str) or not _DURATION_RE.match(value.strip()):
+             return (f"expected a duration like '90s', '10m', '2h' or '1h30m', "
+                     f"got {value!r}")
++        if duration_seconds(value) is None:
++            # '0s'/'0m' pass the regex and then mean NO budget: duration_seconds
++            # collapses zero into None, so the card gets no --run-budget and no
++            # subprocess timeout, and the auditor's ceiling is None — E6 silently
++            # disabled (2026-09-23 review, Important 3).
++            return (f"expected a positive duration — {value!r} means no budget at all, "
++                    f"which disables the per-card ceiling")
+     elif kind == "roles":
+         if not isinstance(value, dict):
+             return f"expected a mapping of role to profile, got {value!r}"
+         unknown = sorted(set(value) - ROLES)
+         if unknown:
+             return (f"unknown role(s) {unknown} — the card graph fills "
+                     f"{sorted(ROLES)}")
+         bad = sorted(k for k, v in value.items()
+                      if not isinstance(v, str) or not v.strip())
+         if bad:
+@@ -318,23 +342,35 @@ def validate(cfg, *, where="board.json", only=None, lists=True):
+ 
+     # The engine's own rule (kanban_db._validate_model_override), refused where the
+     # board is declared rather than at spawn: a provider names a backend, not a
+     # model, so `provider_override` alone would ask the worker for a model nobody
+     # named — and a spawn failure is final.
+     # ...and the same rule for the work pair, in whichever scope it is declared:
+     # a lane that names only a provider would pair it with the board's model, and a
+     # model belongs to one provider — the flag pair is filed together or not at all.
+     for provider_key, model_key in (("provider_override", "model_override"),
+                                     ("provider", "model")):
+-        if provider_key in allowed and cfg.get(provider_key) and not cfg.get(model_key):
++        if provider_key not in allowed or not cfg.get(provider_key):
++            continue
++        prov, mod = cfg[provider_key], cfg.get(model_key)
++        if not mod:
+             problems.append(f"{where}: {provider_key!r} requires {model_key!r} "
+                             f"— a provider alone does not say which model to run")
++        elif isinstance(prov, list) and not isinstance(mod, list):
++            # Per-lane providers beside ONE model would file that model on every lane's
++            # provider, and a model belongs to one provider — a spawn failure is final
++            # (2026-09-23 review, Important 1). The other direction, one provider
++            # serving a different model per lane, is the normal local setup and stays
++            # valid.
++            problems.append(f"{where}: {provider_key!r} is per-lane but {model_key!r} is "
++                            f"one value — {mod!r} would be asked of every lane's provider; "
++                            f"give {model_key!r} one value per lane too")
+     return problems
+ 
+ 
+ # Options that were called something else before the naming rule, so the error
+ # message can name the replacement instead of only refusing. A rename is not a
+ # typo and punctuation-blindness cannot find it.
+ RENAMED = {"title": "name", "workdir": "default-workdir", "goal_mode": "goal-cards",
+            "goal-mode": "goal-cards", "goal": "goal-cards"}
+ 
+ 
+diff --git a/template/lanes.py b/template/lanes.py
+index ce3e5e5..de1031f 100644
+--- a/template/lanes.py
++++ b/template/lanes.py
+@@ -145,22 +145,23 @@ def goal_args(code, cards=(), max_turns=None):
+     card legitimately needs more turns than a /goal chat loop (observed: a P1
+     attempt died at 20/20 healthy, then finished in 51s with a fresh attempt).
+     agent.max_turns (80) is untouched — goal-mode workers measure against the
+     goal ceiling, not the agent one.
+ 
+     The gate/review refusal comes first, so a list naming one cannot arm it.
+     """
+     c = code.lower()
+     if c.startswith("g") or c.startswith("rv"):
+         return []
+-    if code not in (cards or ()):
+-        return []
++    if not isinstance(cards, (list, tuple)) or code not in cards:
++        return []            # a bare string is not a list of card codes: 'C' in 'TC' is
++                             # substring containment (gate_is_auto's defect, Important 5)
+     turns = max_turns or board_schema.OPTIONS["goal-max-turns"][1]
+     return ["--goal", "--goal-max-turns", str(turns)]
+ 
+ 
+ def skill_for(code):
+     """The skill a card of this code is filed with — rework rounds reuse it."""
+     for row in LANE_CARDS:
+         if row[0] == code:
+             return row[4]
+     raise KeyError(code)
+diff --git a/tests/test_board_schema.py b/tests/test_board_schema.py
+index bd5dcb6..75e57f3 100644
+--- a/tests/test_board_schema.py
++++ b/tests/test_board_schema.py
+@@ -530,10 +530,59 @@ def test_an_empty_gate_list_is_every_gate_human():
+     for code in board_schema.GATE_CODES:
+         assert board_schema.gate_is_auto([], code) is False
+ 
+ 
+ def test_an_empty_goal_card_list_arms_nothing():
+     """`[]` is the explicit "no card", the same shape `auto-gates: []` carries."""
+     import lanes
+     assert problems(slug="b", **{"goal-cards": []}) == []
+     assert problems(slug="b", **{"goal-cards": [], "goal-max-turns": 80}) == []
+     assert lanes.goal_args("C", cards=[]) == []
++
++
++import pytest  # noqa: E402  (appended section)
++
++
++@pytest.mark.parametrize("cfg,why", [
++    ({"max-runtime": "0s"}, "a zero duration means no ceiling at all"),
++    ({"max-runtime": "0m"}, "the same, in the other unit"),
++    ({"max-runtime": "0h0m"}, "and in two parts"),
++    ({"targets": ["relative/dir"]}, "a relative target is read from the work directory"),
++    ({"lanes": 2, "provider": ["p1", "p2"], "model": "m1"},
++     "one model asked of every lane's provider"),
++])
++def test_the_validator_refuses_what_the_engine_cannot_honour(cfg, why):
++    """Each was reproduced 2026-09-24. '0s' validated and then disabled the per-card
++    ceiling, so E6 never fired (review Important 3); a relative target is emitted into
++    every card body (Important 4); per-lane providers beside one model file that model
++    on every lane's provider (Important 1)."""
++    assert board_schema.validate({"slug": "b", "lanes": 1, **cfg}), f"{cfg} validated: {why}"
++
++
++@pytest.mark.parametrize("cfg", [
++    {"max-runtime": "10m"},
++    {"max-runtime": "1h 30m"},                     # the parser reads it; so does the regex now
++    {"targets": ["/abs/dir", "~/x"]},              # targets_text expands `~`
++    {"lanes": 2, "provider": "p1", "model": ["m1", "m2"]},   # one backend, a model per lane
++    {"lanes": 2, "provider": ["p1", "p2"], "model": ["m1", "m2"]},
++    {"provider": "p1", "model": "m1"},
++    {"model": "m1"},
++])
++def test_the_validator_still_accepts_what_the_engine_honours(cfg):
++    """The other side of each refusal above — none of them may widen into a neighbour."""
++    assert board_schema.validate({"slug": "b", "lanes": 1, **cfg}) == [], cfg
++
++
++def test_a_zero_duration_still_has_no_seconds():
++    """The refusal is the fix; this pins the collapse that made it necessary, so a reader
++    sees why '0s' cannot simply be read as zero."""
++    assert board_schema.duration_seconds("0s") is None
++    assert board_schema.duration_seconds("1h 30m") == 5400
++
++
++def test_a_bare_string_is_not_a_list_of_gates():
++    """String containment: 'Gi' in 'xxGi' is True, so the shape the schema refuses read as
++    "auto" (review Important 5)."""
++    assert board_schema.gate_is_auto("Gi", "Gi") is False
++    assert board_schema.gate_is_auto("xxGi", "Gi") is False
++    assert board_schema.gate_is_auto(["Gi"], "Gi") is True
++    assert board_schema.gate_is_auto(["Gi", "Gp"], "Gc") is False
+diff --git a/tests/test_lanes_graph.py b/tests/test_lanes_graph.py
+index be6f860..5df1be9 100644
+--- a/tests/test_lanes_graph.py
++++ b/tests/test_lanes_graph.py
+@@ -159,10 +159,18 @@ def test_sequential_makes_the_implementation_wait_for_the_unit_tests():
+ def test_sequential_changes_nothing_on_a_lane_with_no_unit_tests():
+     plain = lanes.lane_cards(1, unit_tests=False)
+     seq = lanes.lane_cards(1, unit_tests=False, sequential=True)
+     assert [c["parents"] for c in plain] == [c["parents"] for c in seq]
+     assert _parents(seq, "C") == ["Gp1"]
+ 
+ 
+ def test_sequential_does_not_change_which_cards_a_lane_files():
+     assert ([c["code"] for c in lanes.lane_cards(1)]
+             == [c["code"] for c in lanes.lane_cards(1, sequential=True)])
++
++
++def test_goal_args_ignores_a_bare_string():
++    """goal_args had gate_is_auto's defect: a bare string read as a list of card codes
++    (review Important 5)."""
++    assert lanes.goal_args("C", cards="C") == []
++    assert lanes.goal_args("C", cards="TC") == []
++    assert lanes.goal_args("C", cards=["C"]) == ["--goal", "--goal-max-turns", "40"]

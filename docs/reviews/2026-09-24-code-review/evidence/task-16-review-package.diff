@@ -1,0 +1,279 @@
+## git status --short
+M  driver/create-board.sh
+M  driver/doc-chain.py
+M  driver/file_lanes.py
+M  driver/render-flow.py
+M  driver/run-audit.py
+M  driver/run.py
+M  template/board.schema.json
+M  template/board_schema.py
+M  template/driver_lock.py
+M  template/lanes.py
+M  tests/test_acquire_lock.py
+M  tests/test_board_schema.py
+M  tests/test_chain_log.py
+M  tests/test_doc_chain.py
+A  tests/test_driver_main.py
+M  tests/test_file_lanes.py
+M  tests/test_lanes_graph.py
+A  tests/test_manifest_shape.py
+M  tests/test_open_lane.py
+M  tests/test_refinement_option.py
+M  tests/test_run_audit.py
+M  tests/test_run_directories.py
+A  tests/test_suite_hygiene.py
+M  tests/test_unstarted_mint.py
+
+## diff --stat HEAD
+ driver/file_lanes.py     | 46 +++++++++++++++++++++++++++++++-------
+ tests/test_file_lanes.py | 57 ++++++++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 95 insertions(+), 8 deletions(-)
+
+## diff -U10 HEAD
+diff --git a/driver/file_lanes.py b/driver/file_lanes.py
+index ecb7793..1be31d9 100644
+--- a/driver/file_lanes.py
++++ b/driver/file_lanes.py
+@@ -3,20 +3,21 @@
+ A board is a DIRECTORY — `boards/<slug>/` — holding `board.json` and one
+ `lane-<k>.md` per lane. There is no import step and no second copy: the file
+ the human edits is the file the board reads.
+ 
+ Filing is `hermes kanban create`, the idea cards and the run-id mint. What a card body
+ says, and where a lane's hand-offs live, is `card_render.py`.
+ """
+ import datetime
+ import json
+ import os
++import re
+ import subprocess
+ 
+ import board_schema
+ import lanes
+ import runs_util
+ import card_render
+ 
+ 
+ 
+ 
+@@ -24,29 +25,31 @@ def kb(board, *args):
+     try:
+         r = subprocess.run(["hermes", "kanban", "--board", board, *args],
+                            capture_output=True, text=True, env=runs_util.cli_env(), timeout=60)
+     except subprocess.TimeoutExpired:
+         raise RuntimeError(f"kb {args[:2]}: timed out after 60s")
+     if r.returncode:
+         raise RuntimeError(f"kb {args[:2]}: {runs_util.cli_error(r.stderr)}")
+     return r.stdout
+ 
+ 
+-DEFAULT_MAX_RUNTIME = "60m"
++# The option table's own defaults, read, not restated (2026-09-23 review, Important
++# 10; the house rule lanes.py states beside MAX_REWORKS).
++DEFAULT_MAX_RUNTIME = board_schema.OPTIONS["max-runtime"][1]
+ # ONE attempt per card, always. A failure — a timeout, a crash, a spawn that never
+ # started — is FINAL (user rule, 2026-09-12): the dispatcher's breaker blocks the
+ # card on that first failure and the driver halts the board. The only retry the
+ # board recognises is a REVIEW that failed, because it says so with a new card (a
+ # revision round); re-running a card against an unchanged body and hoping for a
+ # different outcome is not a mechanism this board has, and the 3-retry budget the
+ # cards feeding a reviewer used to get was exactly that hope.
+-DEFAULT_MAX_RETRIES = 1
++DEFAULT_MAX_RETRIES = board_schema.OPTIONS["max-retries"][1]
+ 
+ 
+ # Every key a board.json may carry, from the one declaration: board_schema knows
+ # each option's type and default too, and validates them. A second copy here is
+ # what let the manifest and the idea header spell the same option two ways.
+ BOARD_KEYS = board_schema.BOARD_KEYS
+ 
+ 
+ 
+ 
+@@ -85,33 +88,49 @@ def unstarted_mint(repo, board):
+     if not os.path.isdir(directory):
+         # A stale pointer, not a mint: the human pruned the directory, or the run is
+         # history. `run.use_run` resolves it and a restart recreates it; a filing has
+         # nothing to reuse and must not point at a directory that is not there.
+         return None
+     if any(os.path.exists(os.path.join(directory, name)) for name in DRIVER_EVIDENCE):
+         return None
+     return run_id
+ 
+ 
++# The shape a MINTED run id has, in one place. It was prose in next_run_key's docstring
++# and pinned only by a test on the producer (2026-09-23 review, Important 11). It is
++# checked where an id is minted, not where one is read: the repo's own older runs and
++# the suite's fixtures carry other names ("r1", "b-20260912-090000"), and a reader that
++# refused them would refuse to rejoin a pre-rename run (measured 2026-09-24: 17 tests).
++RUN_ID_RE = re.compile(r"^run-\d{8}-\d{6}$")
++
++
++def is_safe_run_name(name):
++    """Can `name` be joined onto RUNS_ROOT without leaving it? The READER's check: one
++    path segment, not `.`/`..`, nothing absolute — whatever its shape."""
++    return bool(name) and name not in (".", "..") and "/" not in name and "\0" not in name
++
++
+ def next_run_key(repo, board, now=None):
+     """The run id a filing should use: the unstarted mint's, or a fresh timestamp.
+ 
+     Reusing the id is what keeps `runs/` honest — one directory per armed idea rather
+     than one per filing attempt. `create-board.sh` is the only caller, and the shape of
+     a fresh key is the one every run id in `runs/` already has — `run-<YYYYmmdd-HHMMSS>`
+     — so a run's name says when it was filed and nothing else; the board it belongs to
+     is the directory it sits in.
+     """
+     reuse = unstarted_mint(repo, board)
+     if reuse:
+         return reuse
+-    return f"run-{(now or datetime.datetime.now()):%Y%m%d-%H%M%S}"
++    key = f"run-{(now or datetime.datetime.now()):%Y%m%d-%H%M%S}"
++    assert RUN_ID_RE.fullmatch(key), key          # the producer cannot drift from the shape
++    return key
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+@@ -163,22 +182,27 @@ def file_board(board, repo, workdir, lane_count, key_prefix, max_runtime=None,
+     # with it about which tree they mean
+     workdir = os.path.abspath(workdir)
+     runtime = max_runtime or DEFAULT_MAX_RUNTIME
+     max_retries = int(max_retries) if max_retries is not None else DEFAULT_MAX_RETRIES
+     # Filing is where a card's goal mode is decided, so the board's list has to
+     # be read HERE, not only in run.py's rework/revision path: a manifest that
+     # names no goal card and a card filed with --goal anyway is how
+     # 2026-09-11's run 10 wedged.
+     try:
+         board_cfg = _board_cfg(os.path.join(repo, "boards", board))
+-    except Exception:
+-        board_cfg = {}            # unreadable manifest: keep the documented defaults
++    except FileNotFoundError:
++        # ONLY a missing manifest keeps the documented defaults. A blanket `except
++        # Exception` also swallowed a malformed one and a permission error, and filing
++        # then went on with 60m ceilings, the goal judge off and NO model flag at all:
++        # on a board that pins a work model plus a model_override, every review would
++        # have run the author's model (2026-09-23 review, Important 13).
++        board_cfg = {}
+     if goal_cards is None:
+         goal_cards = board_cfg.get("goal-cards", board_schema.OPTIONS["goal-cards"][1])
+     made = {}
+     for lane in range(1, lane_count + 1):
+         cards = lanes.lane_cards(lane, integration_tests=True,
+                                  assignees=assignees,
+                                  sequential=bool(board_cfg.get("sequential")))
+         for card in cards:
+             body = card_render.render_body(card["body"], repo=repo, board=board, workdir=workdir,
+                                lane=lane, targets=targets or (), run_id=run_id)
+@@ -225,24 +249,30 @@ def _options_line(repo, board, lane, text, workdir=None):
+ 
+     The options themselves live in the idea as `<!-- integration-tests: false -->`,
+     which is an HTML COMMENT: correct for a file the driver parses, invisible in
+     every Markdown renderer — so the board showed no trace of the one setting that
+     decides whether a lane builds integration tests. State it in plain text, and
+     say where each value came from, so "why did this lane skip TI" is answerable
+     from the card instead of from two files.
+     """
+     try:
+         defaults = card_render.read_board(os.path.join(repo, "boards", board))
+-        headers, _ = lanes.parse_idea(text)
+-        opts = lanes.resolve_lane_options(defaults, headers, lane)
+-    except Exception as exc:      # never let a display line stop a board filing
++    except OSError as exc:        # a manifest this process cannot READ: say so on the card
+         return f"Lane options: unavailable ({exc})"
++    # NOT inside the try: parse_idea and resolve_lane_options raise ValueError for a
++    # per-lane array whose length does not match `lanes` and for a header that
++    # contradicts the option table, and the old blanket catch turned those real
++    # configuration faults into a sentence in a card body while the filing went on
++    # (2026-09-23 review, Important 14). A malformed manifest (JSONDecodeError, a
++    # ValueError) propagates for the same reason.
++    headers, _ = lanes.parse_idea(text)
++    opts = lanes.resolve_lane_options(defaults, headers, lane)
+     def _as_kind(key, raw):
+         """One option value normalized for COMPARISON: a bool option reads as a bool,
+         everything else as its lowercased text — so `unit-tests: True` and `unit-tests: true`
+         are the same value, and the conflict line below cannot invent one out of
+         casing."""
+         if board_schema.OPTIONS[key][0] == "bool":
+             return str(raw).strip().lower() == "true"
+         return str(raw).strip().lower()
+ 
+     def src(key):
+diff --git a/tests/test_file_lanes.py b/tests/test_file_lanes.py
+index 8c83867..495d9a4 100644
+--- a/tests/test_file_lanes.py
++++ b/tests/test_file_lanes.py
+@@ -264,10 +264,67 @@ def test_idea_cards_have_no_edges(monkeypatch, tmp_path):
+     assert fake.links() == []
+     assert all("--parent" not in a for a in fake.created())
+ 
+ 
+ def test_filed_bodies_carry_no_raw_placeholders(monkeypatch, tmp_path):
+     import re
+     fake, _ = file_two_lanes(monkeypatch, tmp_path)
+     for a in fake.created():
+         body = a[a.index("--body") + 1]
+         assert not run.unresolved_placeholders(body), a[1]
++
++
++def test_the_filing_defaults_are_the_option_tables():
++    """DEFAULT_MAX_RUNTIME / DEFAULT_MAX_RETRIES were literals byte-equal to the option
++    table's defaults, against the house rule of reading them (review Important 10)."""
++    import board_schema
++    assert file_lanes.DEFAULT_MAX_RUNTIME == board_schema.OPTIONS["max-runtime"][1]
++    assert file_lanes.DEFAULT_MAX_RETRIES == board_schema.OPTIONS["max-retries"][1]
++
++
++def _repo_with_manifest(tmp_path, text):
++    repo = tmp_path / "repo"
++    (repo / "boards" / "b").mkdir(parents=True)
++    (repo / "boards" / "b" / "board.json").write_text(text)
++    return repo
++
++
++def test_the_options_line_names_a_header_that_conflicts_with_the_board(tmp_path, monkeypatch):
++    """The success path and its CONFLICTS line had never run: every test passed "/repo",
++    so read_board raised and control fell into the except (review tests I5 / I31). The
++    header wins silently otherwise, and the board file lies on the card a human reads."""
++    repo = _repo_with_manifest(tmp_path, json.dumps({"slug": "b", "lanes": 1,
++                                                     "integration-tests": True}))
++    line = file_lanes._options_line(
++        str(repo), "b", 1,
++        "## Idea 1: a lane\n\n<!-- integration-tests: false -->\n\n### Done means\n\nx\n")
++    assert "CONFLICTS with the board file" in line, line
++    assert "integration-tests=false (idea header" in line, line
++
++
++def test_a_manifest_that_will_not_parse_stops_the_filing(tmp_path, monkeypatch):
++    """`except Exception: board_cfg = {}` filed every card on defaults — 60m ceilings,
++    the goal judge off, and NO model flag, so the reviews ran the author's model (review
++    Important 13). Only a MISSING manifest keeps the documented defaults. The engine is
++    a FakeKb: before the fix this call went on to file cards."""
++    fake = FakeKb()
++    monkeypatch.setattr(file_lanes, "kb", fake)
++    repo = _repo_with_manifest(tmp_path, '{"slug": "b", "lanes": 1,')
++    with pytest.raises(ValueError):            # json.JSONDecodeError is a ValueError
++        file_lanes.file_board("b", str(repo), str(tmp_path / "w"), 1, "k")
++    assert fake.created() == [], "cards were filed on invented defaults"
++
++
++def test_a_header_that_contradicts_the_board_stops_the_idea_filing(tmp_path, monkeypatch):
++    """A per-lane array whose length does not match `lanes` is a configuration fault;
++    the old catch turned it into "Lane options: unavailable (...)" in a card body and
++    filed anyway (review Important 14)."""
++    fake = FakeKb()
++    monkeypatch.setattr(file_lanes, "kb", fake)
++    repo = _repo_with_manifest(tmp_path, json.dumps({"slug": "b", "lanes": 1,
++                                                     "unit-tests": [True, False, True]}))
++    ideas = tmp_path / "ideas"
++    ideas.mkdir()
++    (ideas / "lane-1.md").write_text("## Idea 1\n\n### Done means\n\nx\n")
++    with pytest.raises(ValueError):
++        file_lanes.file_ideas("b", str(repo), str(ideas), 1, "k")
++    assert fake.created() == []

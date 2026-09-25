@@ -1,0 +1,268 @@
+## git status --short
+M  driver/arm.sh
+M  driver/create-board.sh
+M  driver/doc-chain.py
+M  driver/file_lanes.py
+M  driver/render-flow.py
+M  driver/run-audit.py
+M  driver/run.py
+M  driver/runs_util.py
+M  driver/start-board.sh
+M  driver/timing-report.py
+M  template/board.schema.json
+M  template/board_schema.py
+M  template/driver_lock.py
+M  template/lanes.py
+M  tests/test_acquire_lock.py
+A  tests/test_arm_script.py
+M  tests/test_board_schema.py
+M  tests/test_card_stops.py
+M  tests/test_chain_log.py
+M  tests/test_doc_chain.py
+A  tests/test_driver_main.py
+M  tests/test_file_lanes.py
+M  tests/test_lanes_graph.py
+A  tests/test_manifest_shape.py
+M  tests/test_open_lane.py
+M  tests/test_refinement_option.py
+M  tests/test_render_flow.py
+M  tests/test_rework_loop.py
+M  tests/test_run_audit.py
+M  tests/test_run_directories.py
+M  tests/test_runs_util.py
+A  tests/test_suite_hygiene.py
+A  tests/test_timing_report.py
+M  tests/test_unstarted_mint.py
+
+## diff --stat HEAD
+ driver/timing-report.py     | 26 +++++++++++++++----
+ tests/test_timing_report.py | 61 +++++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 82 insertions(+), 5 deletions(-)
+
+## diff -U10 HEAD
+diff --git a/driver/timing-report.py b/driver/timing-report.py
+index cd7b3b3..784818f 100644
+--- a/driver/timing-report.py
++++ b/driver/timing-report.py
+@@ -71,21 +71,23 @@ def _args(argv):
+     try:
+         with open(os.path.join(runs, "current")) as f:
+             run_id = f.read().strip()
+         if run_id and os.path.isdir(os.path.join(runs, run_id)):
+             runs = os.path.join(runs, run_id)
+     except OSError:
+         pass                      # a pre-per-run board: the flat layout still reads
+     return board, os.path.join(runs, "timing.jsonl")
+ 
+ 
+-BOARD, JSONL = _args(sys.argv[1:])
++# Set by main(). Parsing argv at IMPORT made importing this module parse the
++# importer's argv — and SystemExit on it (2026-09-23 review, Important 25).
++BOARD = JSONL = None
+ 
+ def load_snaps():
+     snaps = []
+     if not os.path.exists(JSONL):
+         raise SystemExit(f"no timing data at {JSONL} — has this board run yet?")
+     with open(JSONL) as f:
+         for line in f:
+             line = line.strip()
+             if line:
+                 snaps.append(json.loads(line))
+@@ -96,28 +98,33 @@ def transitions(snaps):
+     seen = {}
+     for s in snaps:
+         for title, c in s["cards"].items():
+             key = (title, c["status"])
+             if key not in seen:
+                 seen[key] = s["epoch"]
+                 seen[(title, c["status"], "id")] = c["id"]
+     return seen
+ 
+ def runs_elapsed(card_id):
+-    """Closed runs for a card, via the shared runs --json parser.
++    """Closed runs for a card, via the shared runs --json parser; None when the runs
++    CLI could not be read.
+ 
+     The text table this used to parse formats elapsed as 9s/45m/1.2h and the
+     old column math misread `45m` as 4.0 minutes (parts[-2] grabs the PROFILE
+     column once a summary line shifts the row); the JSON fields are exact.
+     """
++    runs = runs_util.board_runs(BOARD, card_id)
++    if runs is None:
++        return None          # the CLI refused: UNKNOWN, which main() says out loud —
++                             # never 0.0 min printed as fact (review Important 15)
+     out = []
+-    for r in runs_util.board_runs(BOARD, card_id):
++    for r in runs:
+         if r.get("outcome") in runs_util.CLOSED_OUTCOMES \
+                 and r.get("ended_at") and r.get("started_at"):
+             out.append({"outcome": r["outcome"],
+                         "elapsed_min": runs_util.elapsed_min(r),
+                         "started_at": r.get("started_at"), "ended_at": r.get("ended_at"),
+                         "note": (r.get("summary") or r.get("error") or "")[:80]})
+     return out
+ 
+ def parse_elapsed_minutes(el_raw):
+     """Legacy text-format parser, kept for rows already stored in old
+@@ -133,21 +140,23 @@ def parse_elapsed_minutes(el_raw):
+     if el_raw.endswith("s"):
+         try:
+             return float(el_raw[:-1]) / 60
+         except ValueError:
+             return None
+     try:
+         return float(el_raw)
+     except ValueError:
+         return None
+ 
+-def main():
++def main(argv=None):
++    global BOARD, JSONL
++    BOARD, JSONL = _args(sys.argv[1:] if argv is None else argv)
+     snaps = load_snaps()
+     if not snaps:
+         print(f"no timing data — is {JSONL} empty?")
+         return 1
+     # use only the LAST run segment (split on run_boundary markers)
+     last_b = max((i for i, s in enumerate(snaps) if s.get("run_boundary")), default=None)
+     if last_b is not None:
+         snaps = snaps[last_b:]
+         print("(report covers the latest run segment; earlier segments in the file)")
+     t0, t1 = snaps[0]["epoch"], snaps[-1]["epoch"]
+@@ -163,25 +172,29 @@ def main():
+           f"{datetime.datetime.fromtimestamp(t1):%H:%M} "
+           f"({(t1-t0)/60:.1f} min wall, {len(snaps)} driver ticks)")
+     print(f"end status: {dict(statuses)}")
+     print()
+     print(f"{'card':<50} {'first_running':>13} {'done_at':>13} {'status':>8}")
+     print("-" * 90)
+     order = sorted({k[0] for k in tr if len(k) == 2},
+                    key=lambda t: tr.get((t, "running"), t1) or t1)
+     work_total = 0.0
+     intervals = []
++    unknown = []           # cards whose runs the CLI would not return
+     per_card = {}
+     for title in order:
+         cid = tr.get((title, "done", "id")) or tr.get((title, "running", "id")) or "?"
+         # agent elapsed from board runs data
+         rows = runs_elapsed(cid)
++        if rows is None:
++            unknown.append(title.split(":")[0])
++            rows = []
+         agent = sum(r.get("elapsed_min") or 0
+                     for r in rows if r.get("outcome") in runs_util.CLOSED_OUTCOMES)
+         intervals += [(r.get("started_at"), r.get("ended_at")) for r in rows
+                       if r.get("outcome") in runs_util.CLOSED_OUTCOMES]
+         work_total += agent
+         fr = tr.get((title, "running"))
+         dn = tr.get((title, "done"))
+         last_status = None
+         for s in reversed(snaps):
+             if title in s["cards"]:
+@@ -218,34 +231,37 @@ def main():
+     for title, d in per_card.items():
+         by_role[ROLE.get(card_code(title), "?")] += d["agent"]
+     if any(by_role.values()):
+         print(f"{'role':<14} {'agent':>9}   share")
+         print("-" * 36)
+         tot = sum(by_role.values()) or 1.0
+         for role, mins in sorted(by_role.items(), key=lambda kv: -kv[1]):
+             if mins:
+                 print(f"{role:<14} {mins:>8.1f}m   {100*mins/tot:>3.0f}%")
+         print()
++    if unknown:
++        print(f"⚠ agent minutes UNKNOWN for {len(unknown)} card(s) ({', '.join(unknown)}) — "
++              f"`hermes kanban runs` refused; the totals below leave them out")
+     union = runs_util.union_min(intervals)
+     overlap = max(0.0, work_total - union)
+     print(f"total agent work time: {work_total:.1f} min"
+           + (f" ({union:.1f} min in flight, {overlap:.1f} min with two cards at once)"
+              if overlap > 0.05 else ""))
+     print(f"total wall time: {(t1-t0)/60:.1f} min")
+     print(f"overhead ratio: {(t1-t0)/60 - union:.1f} min non-agent time "
+           f"({100*((t1-t0)/60 - union)/max((t1-t0)/60,.1):.0f}%)")
+     # budget exhaustion flags
+     for title in order:
+         cid = tr.get((title, "done", "id")) or tr.get((title, "running", "id"))
+         if not cid:
+             continue
+-        rows = runs_elapsed(cid)
++        rows = runs_elapsed(cid) or []
+         for r in rows:
+             if r.get("outcome") == "gave_up":
+                 print(f"⚠ BUDGET: {title.split(':')[0]} gave_up — {r.get('note','')}")
+             if r.get("outcome") == "timed_out":
+                 # Already inside the card's agent minutes above (CLOSED_OUTCOMES);
+                 # named here so the number has its reason next to it.
+                 print(f"⚠ BUDGET: {title.split(':')[0]} timed out after "
+                       f"{r.get('elapsed_min') or 0:.1f} min — {r.get('note','')}")
+     return 0
+ 
+diff --git a/tests/test_timing_report.py b/tests/test_timing_report.py
+new file mode 100644
+index 0000000..6c62ea1
+--- /dev/null
++++ b/tests/test_timing_report.py
+@@ -0,0 +1,61 @@
++"""`timing-report` — the report a human reads at a gate to decide whether to commit.
++
++Its argv parse ran at IMPORT time, so importing the module parsed the importer's argv
++and could SystemExit (2026-09-23 review, Important 25); and a refused runs CLI printed
++0.0 min of agent work as fact (Important 15).
++"""
++import importlib.util
++import json
++import os
++import subprocess
++import sys
++
++import pytest
++
++REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
++PATH = os.path.join(REPO, "driver", "timing-report.py")
++
++
++def _load():
++    spec = importlib.util.spec_from_file_location("timing_report", PATH)
++    tr = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(tr)
++    return tr
++
++
++def test_importing_the_module_does_not_parse_the_importers_argv():
++    """In a FRESH interpreter whose argv has no --board and no BOARD: the old
++    module-level `_args(sys.argv[1:])` raised SystemExit before the import returned."""
++    code = ("import importlib.util, sys;"
++            "sys.argv = ['pytest', '--totally-unrelated'];"
++            f"spec = importlib.util.spec_from_file_location('tr', {PATH!r});"
++            "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m);"
++            "print('imported')")
++    env = {k: v for k, v in os.environ.items() if k != "BOARD"}
++    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env)
++    assert r.returncode == 0, r.stderr
++    assert "imported" in r.stdout
++
++
++def test_main_without_a_board_is_a_usage_error(monkeypatch):
++    monkeypatch.delenv("BOARD", raising=False)
++    tr = _load()
++    with pytest.raises(SystemExit) as excinfo:
++        tr.main([])
++    assert "--board" in str(excinfo.value)
++
++
++def test_unreadable_runs_are_reported_as_unknown_not_zero(tmp_path, monkeypatch, capsys):
++    """A refused `hermes kanban runs` read as "no runs", so the card's agent time
++    printed as 0.0 min — and the overhead ratio built on it — as fact."""
++    jsonl = tmp_path / "timing.jsonl"
++    title = "C1: implement - lane 1"
++    jsonl.write_text("\n".join(json.dumps(s) for s in (
++        {"epoch": 1000.0, "cards": {title: {"status": "running", "id": "t_c"}}},
++        {"epoch": 1600.0, "cards": {title: {"status": "done", "id": "t_c"}}})) + "\n")
++    tr = _load()
++    monkeypatch.setattr(tr.runs_util, "board_runs", lambda board, cid: None)
++    assert tr.runs_elapsed("t_c") is None
++    assert tr.main(["--board", "b", "--jsonl", str(jsonl)]) == 0
++    out = capsys.readouterr().out
++    assert "agent minutes UNKNOWN for 1 card(s) (C1)" in out, out

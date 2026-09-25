@@ -1,0 +1,168 @@
+## git status --short
+M  driver/create-board.sh
+M  driver/doc-chain.py
+M  driver/run-audit.py
+M  driver/run.py
+M  template/driver_lock.py
+M  tests/test_acquire_lock.py
+M  tests/test_chain_log.py
+M  tests/test_doc_chain.py
+A  tests/test_driver_main.py
+M  tests/test_open_lane.py
+M  tests/test_refinement_option.py
+M  tests/test_run_audit.py
+M  tests/test_run_directories.py
+A  tests/test_suite_hygiene.py
+M  tests/test_unstarted_mint.py
+
+## diff --stat HEAD
+ tests/test_run_audit.py | 131 ++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 131 insertions(+)
+
+## diff -U10 HEAD
+diff --git a/tests/test_run_audit.py b/tests/test_run_audit.py
+index 29e8dbb..faae6f9 100644
+--- a/tests/test_run_audit.py
++++ b/tests/test_run_audit.py
+@@ -674,10 +674,141 @@ def test_an_escalated_triage_card_is_an_e12_and_a_resting_one_is_not(monkeypatch
+     _stub_board_cli(monkeypatch, [{"id": "t1", "title": "C1: implement - lane 1",
+                                    "status": "running"},
+                                   {"id": "t2", "title": "Idea 1", "status": "triage",
+                                    "assignee": "coder"}])
+     assert codes(ra.board_findings("b", "unused"), "ERROR") == ["E12", "E12"]
+ 
+     _stub_board_cli(monkeypatch, [{"id": "t1", "title": "C1: implement - lane 1",
+                                    "status": "done"},
+                                   {"id": "t2", "title": "Idea 1", "status": "triage"}])
+     assert codes(ra.board_findings("b", "unused"), "ERROR") == []
++
++
++def test_an_unreadable_lock_says_unreadable_not_none(tmp_path, monkeypatch):
++    """`pid none` read as "there is no lock file" when the file was there and named
++    nothing readable — a different claim, and the one a human needs to act on (errors
++    S14). The run here is mid-flight (no finish banner), which is the only path that
++    names the lock at all."""
++    clean_probe(monkeypatch)
++    runs = fixture(tmp_path, log=GOOD_LOG[:-1])            # no ALL GATES COMPLETE
++    (tmp_path / "boards" / "b" / "runs" / "driver.lock").write_text("")
++    findings, _rows, _stats = ra.audit(runs)
++    assert any("unreadable" in t for _s, _c, t in findings), findings
++
++
++def test_a_driver_holding_the_kernel_lock_is_alive_whatever_pid_it_names(tmp_path):
++    """The auditor asks the kernel first: a live driver holds a flock on runs/driver.lock
++    for its whole life, so "is the driver alive" no longer depends on a pid the OS may
++    have reused."""
++    import fcntl
++    root = tmp_path / "runs"
++    root.mkdir()
++    lock = root / "driver.lock"
++    lock.write_text("999999")                               # names a dead pid
++    fd = os.open(lock, os.O_RDWR)
++    fcntl.flock(fd, fcntl.LOCK_EX)
++    try:
++        assert ra._driver_alive(str(root)) == (True, "999999")
++    finally:
++        os.close(fd)
++    assert ra._driver_alive(str(root)) == (False, "999999")
++    assert ra._driver_alive(str(tmp_path / "nowhere")) == (False, None)
++
++
++def test_a_missing_manifest_is_an_error_not_a_clean_run(tmp_path, monkeypatch):
++    """Measured 2026-09-23: a run with a 90-minute card under a declared 60m ceiling and
++    NO board.json audited "0 error(s), 0 warning(s)", exit 0 — cfg = {} left the ceiling
++    None (E6 is guarded on it), emptied auto-gates and made the slug the directory name.
++    The auditor's exit code is the board's definition of DONE (review Critical 3)."""
++    clean_probe(monkeypatch)
++    runs = fixture(tmp_path)
++    os.unlink(os.path.join(os.path.dirname(runs), "board.json"))
++    findings, _rows, _stats = ra.audit(runs)
++    assert any(s == "ERROR" and c == "E4" and "no board.json" in t
++               for s, c, t in findings), findings
++
++
++def test_a_present_manifest_still_audits_clean(tmp_path, monkeypatch):
++    """The other side: the new E4 must not fire when the manifest is there, or every
++    shipped run audits red."""
++    clean_probe(monkeypatch)
++    runs = fixture(tmp_path, chain_recs=worker_chain())
++    findings, _rows, _stats = ra.audit(runs)
++    assert not [t for _s, c, t in findings if "board.json" in t], findings
++
++
++def test_a_truncated_summary_is_one_e4_not_a_traceback(tmp_path, monkeypatch):
++    """write_summary was not atomic, so a driver killed mid-write left a truncated
++    run-summary.json and every later audit of that run died with JSONDecodeError
++    (review Critical 4). ONE finding — not also "the run wrote no summary"."""
++    clean_probe(monkeypatch)
++    runs = fixture(tmp_path)
++    with open(os.path.join(runs, "run-summary.json"), "w") as f:
++        f.write('{"wall_min": 13.1, "agent_w')
++    findings, _rows, _stats = ra.audit(runs)
++    summary_lines = [t for _s, c, t in findings if c == "E4" and "summary" in t]
++    assert len(summary_lines) == 1 and "not readable JSON" in summary_lines[0], findings
++
++
++def test_a_truncated_manifest_is_an_error_not_a_traceback(tmp_path, monkeypatch):
++    """The manifest half of the same finding — and the wording names the file's state,
++    not "no board.json" (review Critical 4)."""
++    clean_probe(monkeypatch)
++    runs = fixture(tmp_path)
++    (tmp_path / "boards" / "b" / "board.json").write_text('{"slug": "b", "auto-gates": [')
++    findings, _rows, _stats = ra.audit(runs)
++    assert any(s == "ERROR" and c == "E4" and "board.json is not readable JSON" in t
++               for s, c, t in findings), findings
++
++
++def test_a_manifest_that_is_not_an_object_is_an_error(tmp_path, monkeypatch):
++    """`[]` parses — and every reader calls .get() on it."""
++    clean_probe(monkeypatch)
++    runs = fixture(tmp_path)
++    (tmp_path / "boards" / "b" / "board.json").write_text("[]")
++    findings, _rows, _stats = ra.audit(runs)
++    assert any(c == "E4" and "not a JSON object" in t for _s, c, t in findings), findings
++
++
++def test_a_malformed_summary_exits_nonzero_through_the_cli(tmp_path, monkeypatch, capsys):
++    """Through main(), human report path: its own manifest read must not traceback."""
++    clean_probe(monkeypatch)
++    runs = fixture(tmp_path)
++    (tmp_path / "boards" / "b" / "board.json").write_text("{not json")
++    open(os.path.join(runs, "run-summary.json"), "w").write("{")
++    assert ra.main(["--runs", runs]) == 1
++
++
++def test_a_torn_chain_line_is_an_e3_finding_not_a_traceback(tmp_path, monkeypatch):
++    """The auditor's side of Critical 5: the skipped count is REPORTED."""
++    clean_probe(monkeypatch)
++    runs = fixture(tmp_path, chain_recs=worker_chain())
++    with open(os.path.join(runs, "chain.jsonl"), "a") as f:
++        f.write('{"ts": "2026-09-11T21:30:00", "event": "start", "code": "C1"')
++    findings, _rows, _stats = ra.audit(runs)
++    assert any(c == "E3" and "truncated" in t for _s, c, t in findings), findings
++
++
++def test_the_json_contract_is_what_the_caller_reads(tmp_path, monkeypatch, capsys):
++    """`--json` is the machine-readable path and had NO test: ra.main was called five
++    times in this file and never with the flag (2026-09-23 review, Critical 9). The
++    three keys are the contract; `findings` must be what audit() returned, and the exit
++    code must follow the findings."""
++    clean_probe(monkeypatch)
++    runs = fixture(tmp_path, chain_recs=worker_chain())
++    assert ra.main(["--runs", runs, "--json"]) == 0
++    out = json.loads(capsys.readouterr().out)
++    assert sorted(out) == ["findings", "rows", "stats"], sorted(out)
++    assert out["findings"] == [list(f) for f in ra.audit(runs)[0]]
++
++
++def test_the_json_exit_code_follows_the_findings(tmp_path, monkeypatch, capsys):
++    """A WARNING is enough to make the audit non-zero — the rule a key rename or a
++    one-sided edit to the exit computation would break while the human report stayed
++    green."""
++    clean_probe(monkeypatch)
++    runs = fixture(tmp_path, chain_recs=worker_chain(), restarts=True)
++    findings, _rows, _stats = ra.audit(runs)
++    assert [s for s, _c, _t in findings if s in ("ERROR", "WARNING")], findings
++    assert ra.main(["--runs", runs, "--json"]) == 1
++    out = json.loads(capsys.readouterr().out)
++    assert out["findings"] == [list(f) for f in findings]

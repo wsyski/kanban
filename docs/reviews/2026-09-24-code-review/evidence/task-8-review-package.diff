@@ -1,0 +1,401 @@
+## git status --short
+M  driver/create-board.sh
+M  driver/doc-chain.py
+M  driver/run-audit.py
+M  driver/run.py
+M  template/driver_lock.py
+M  tests/test_acquire_lock.py
+M  tests/test_chain_log.py
+M  tests/test_doc_chain.py
+A  tests/test_driver_main.py
+A  tests/test_manifest_shape.py
+M  tests/test_open_lane.py
+M  tests/test_refinement_option.py
+M  tests/test_run_audit.py
+M  tests/test_run_directories.py
+A  tests/test_suite_hygiene.py
+M  tests/test_unstarted_mint.py
+
+## diff --stat HEAD
+ driver/create-board.sh       |  2 +-
+ driver/run.py                | 96 ++++++++++++++++++++++++++++++++++++--------
+ tests/test_manifest_shape.py | 87 +++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 168 insertions(+), 17 deletions(-)
+
+## diff -U10 HEAD
+diff --git a/driver/create-board.sh b/driver/create-board.sh
+index a3208a4..6114b30 100755
+--- a/driver/create-board.sh
++++ b/driver/create-board.sh
+@@ -437,21 +437,21 @@ if hermes kanban boards list 2>/dev/null | awk '{print $1}' | grep -qx "$SLUG" \
+    || hermes kanban boards list 2>/dev/null | awk '{print $2}' | grep -qx "$SLUG"; then
+   echo "board '$SLUG' already exists — refusing (remove it first:" >&2
+   echo "  hermes kanban boards rm $SLUG)" >&2
+   exit 4
+ fi
+ hermes kanban boards create "$SLUG" --name "$TITLE" --default-workdir "$WORKDIR"   # flags verified: hermes kanban boards create --help
+ echo "board '$SLUG' created (workdir $WORKDIR)"
+ 
+ mkdir -p "$WORKDIR"
+ if [ ! -f "$BOARD_DIR/board.json" ]; then
+-  printf '{\n  "name": %s,\n  "lanes": %s,\n  "integration-tests": false,\n  "auto-gates": false\n}\n' \
++  printf '{\n  "name": %s,\n  "lanes": %s,\n  "auto-gates": []\n}\n' \
+     "\"$TITLE\"" "$LANES" > "$BOARD_DIR/board.json"
+   echo "wrote $BOARD_DIR/board.json"
+ fi
+ 
+ cd "$REPO"
+ python3 - "$SLUG" "$WORKDIR" "$LANES" "$BOARD_DIR" <<'PY'
+ import os, sys
+ sys.path.insert(0, os.path.join(os.getcwd(), "driver"))
+ sys.path.insert(0, os.path.join(os.getcwd(), "template"))
+ import card_render, file_lanes
+diff --git a/driver/run.py b/driver/run.py
+index 527604e..c904a15 100755
+--- a/driver/run.py
++++ b/driver/run.py
+@@ -1,20 +1,20 @@
+ #!/usr/bin/env python3
+ """Driver for generic kanban board missions.
+ 
+ The driver never commits. Gates wait for a human unless the lane's idea (or
+ the board default) sets auto-gates, in which case the gate auto-completes on
+ a PASS verdict with staged-file evidence — still no commit.
+ 
+ Usage: driver/run.py [--serve] [--once] [--timeout-min 120]
+ """
+-import contextlib, json, shutil, subprocess, sys, time, os, re, datetime
++import contextlib, json, math, shutil, subprocess, sys, time, os, re, datetime
+ 
+ # No default: this repo has no one board, and a stale default would drive the
+ # wrong one. Enforced in main(), not here — the test suite imports this module.
+ BOARD = os.environ.get("BOARD", "")
+ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ ONCE = "--once" in sys.argv
+ # The main scenario is a board that stays up: you type an idea into the
+ # dashboard, promote it out of Triage, and the run starts. Exiting when the
+ # gates close would make every new idea a terminal command again.
+ SERVE = "--serve" in sys.argv
+@@ -204,25 +204,30 @@ use_run(_read_current_run())
+ 
+ 
+ def manifest():
+     """Board manifest, through the SAME reader: `card_render`
+     owns the file's shape, and a second `json.load` here is one edit away from two
+     answers. REPO is template_root (control files); WORKDIR is the only tree git
+     ever runs in — they differ when a board points elsewhere."""
+     try:
+         return card_render.read_board(BOARD_DIR)
+     except FileNotFoundError:
+-        # Same defaults create-board.sh prints in --help, so a board that loses
+-        # its manifest degrades to the documented shape rather than silently
+-        # growing integration cards nobody asked for.
+-        return {"default-workdir": os.path.join(BOARD_DIR, "work"), "lanes": 1,
+-                "integration-tests": False, "auto-gates": []}
++        # Exactly what read_board returns for a board.json of `{}`: every consumer
++        # already falls back to board_schema.OPTIONS for a key the manifest omits, so
++        # "no manifest" and "a manifest that names nothing" now mean the same board —
++        # the option table's defaults, integration tests ON. The old four-key fallback
++        # said `integration-tests: False` against the table, create-board.sh's own
++        # --help and its profile pre-flight, while claiming to match the help
++        # (2026-09-23 review, Important 6 and the comment finding I40). main() refuses
++        # to start without a manifest (require_manifest), so this is the import-time
++        # and deleted-mid-run path only.
++        return {"slug": BOARD}
+ 
+ 
+ WORKDIR = manifest().get("default-workdir") or os.path.join(BOARD_DIR, "work")
+ 
+ 
+ 
+ def board_lane_count(state):
+     n = 0
+     for title in state:
+         m = re.match(r"^P(\d+):", title)
+@@ -293,20 +298,33 @@ def lane_graph(state):
+                                         for b in CODE_REWORK_BASES]
+                                        + [newest_round(f"RVa{lane}-r")]) if p]
+             if c["code"] in ("RVa", "Gc"):
+                 parents += code_rework
+             rows.append((c["title"], parents, c["code"].lower(), lane))
+             prev = c["id"]
+     return rows
+ 
+ 
+ def lane_options(lane):
++    """This lane's RESOLVED options, or None when the lane has no idea file yet.
++
++    Shape: `board_schema.PER_LANE | {"idea"}` — the six typed per-lane option keys,
++    plus the idea's own body text under "idea". Every key is always present
++    (resolve_lane_options fills each from the option table). The call sites that still
++    read `.get("refinement", True)` do so for the suite's stubs, which return partial
++    dicts (28 tests, measured 2026-09-24) — not because this function can omit it.
++
++    None means "there is no idea for this lane": callers decide out loud what that
++    means rather than reinterpreting it as "defaults apply" (2026-09-23 review,
++    Important 7). A lane file that exists and is blank is Task 10's: it must not share
++    this value.
++    """
+     parsed = lanes.read_idea(os.path.join(IDEAS_DIR, f"lane-{lane}.md"))
+     if parsed is None:
+         return None
+     headers, body = parsed
+     opts = lanes.resolve_lane_options(manifest(), headers, lane)
+     opts["idea"] = body
+     return opts
+ 
+ 
+ def lane_model_opts(lane):
+@@ -3208,31 +3226,42 @@ def preserve_artifacts():
+     and a patch is not one.
+ 
+     Called at each lane's code gate: the lane is finished, its cards are about
+     to be archived by the next refile, and this is the last moment the patches
+     are still collectable. They were written for exactly this and were never
+     called (found reading, not running — the one finding of that kind here).
+     """
+     import shutil, glob
+     out_dir = os.path.join(STATE.run_dir, "patches")
+     os.makedirs(out_dir, exist_ok=True)
++    # hermes_kanban_dir() honours HERMES_HOME and falls back to ~/.hermes, as
++    # worker_log_path already does. The literal ~/.hermes path copied NOTHING on a host
++    # whose HERMES_HOME is elsewhere, and the run still reported complete (2026-09-23
++    # review, Important 23).
++    attachments_root = os.path.join(hermes_kanban_dir(), "boards", BOARD, "attachments")
++    found = 0
+     st = board()
+     for title, card in st.items():
+         cid = (card or {}).get("id")
+         if not cid:
+             continue
+-        for src in glob.glob(os.path.expanduser(
+-                f"~/.hermes/kanban/boards/{BOARD}/attachments/{cid}/*.patch")):
++        for src in glob.glob(os.path.join(attachments_root, cid, "*.patch")):
++            found += 1
+             dst = os.path.join(out_dir, f"{cid}.patch")
+             if not os.path.exists(dst):
+                 shutil.copy2(src, dst)
+                 log(f"artifact kept: {os.path.relpath(dst, REPO)}")
++    if not found:
++        # A glob that matches nothing must not read like a run with nothing to keep:
++        # this function's whole job is provenance, and a silent empty return is how the
++        # hardcoded path went unnoticed.
++        log(f"artifacts: no provenance patches found under {attachments_root}")
+ 
+ def finish_run():
+     """Everything the driver does when the lane's last gate closes: the run's
+     summary, and then the banner that says the run is finished.
+ 
+     THE ORDER IS LOAD-BEARING. `run-audit.py` reads `ALL GATES COMPLETE` as "this
+     run finished" and only then demands `run-summary.json`; logged the other way
+     round (observed: 3 s in the is_even run of 2026-09-12) there is a window in
+     which an audit of a FINISHED run reports E4 "the run wrote no summary" — a
+     false finding that reads exactly like a missing artefact. A summary that fails
+@@ -3346,23 +3375,29 @@ def write_summary(state):
+         "lanes_with_ideas": [l for l in range(1, board_lane_count(state) + 1)
+                              if lane_options(l) is not None],
+         # Where this run's work is staged, and therefore where a gate commit lands.
+         # A run whose work directory is another repository has to say so, or its
+         # record does not describe where the deliverable went.
+         "workdir": os.path.abspath(WORKDIR),
+         "commit_target": commit_target(),
+         "workdir_facts": expected_workdir_facts(),
+         "workdir_drift": sorted(STATE.drift) if not STATE.run_finished[0] else [],
+     }
+-    with open(os.path.join(STATE.run_dir, "run-summary.json"), "w") as f:
++    # temp + os.replace, the pattern mint_run already uses for its pointer file: a kill
++    # between the open and the last byte left a TRUNCATED summary, and run-audit.py
++    # json.loads it — so one torn write made every later audit of that run die
++    # (2026-09-23 review, Critical 4).
++    tmp = path + ".tmp"
++    with open(tmp, "w") as f:
+         json.dump(summary, f, indent=2)
+-    log(f"summary written: {os.path.join(STATE.run_dir, 'run-summary.json')} ({total:.0f} min agent work)")
++    os.replace(tmp, path)
++    log(f"summary written: {path} ({total:.0f} min agent work)")
+ 
+ 
+ # Gates already announced this run — see gate_action.
+ # gate code -> what opened it. E4 reads the summary's gate text for "verdict PASS"
+ # (Gp/Gc) and "refined idea present" (Gi), and a human gate-holder's result is their
+ # decision, not that evidence — see gate_summary_text.
+ 
+ # The triage card body file_ideas writes always opens with this line, so a card
+ # the human typed from scratch in the dashboard is distinguishable from one the
+ # driver seeded — and the lane it belongs to is stated rather than guessed.
+@@ -3672,20 +3707,54 @@ def reset_attempt_budgets():
+                     "last_failure_error = NULL WHERE status != 'archived' "
+                     "AND (consecutive_failures != 0 OR last_failure_error IS NOT NULL)")
+             conn.close()
+             if cur.rowcount:
+                 log(f"attempt budgets reset for {cur.rowcount} card(s)")
+             return
+         except sqlite3.OperationalError as e:
+             log(f"WARNING: attempt-budget reset failed on {path}: {e}")
+ 
+ 
++def timeout_seconds(argv=None, serve=False):
++    """This driver's wall-clock cap in seconds, or None for no cap.
++
++    An explicit `--timeout-min N` (or `--timeout-min=N`) wins in BOTH modes, and a
++    repeated flag reads the LAST value, as argparse does everywhere else. start-board.sh
++    relies on the first rule: it launches `--serve --timeout-min <board's timeout-min>`.
++    With no flag, a serving driver has no cap — it is a standing process, and a 2h cap
++    would drop the board and leave the next idea unattended until cron noticed — and a
++    one-shot driver gets 120 minutes.
++
++    The old scan took sys.argv.index(a) + 1, so the `=` form raised IndexError at
++    startup and a repeated flag always read the FIRST value (2026-09-23 review,
++    Important 24; prior T-27). A value that is not a finite, positive number of
++    minutes is a usage error, never a traceback — `float()` also accepts 'nan' and
++    'inf', and a nan cap would never fire.
++    """
++    argv = list(sys.argv[1:] if argv is None else argv)
++    seen, value = False, None
++    for i, a in enumerate(argv):
++        if a == "--timeout-min":
++            seen, value = True, (argv[i + 1] if i + 1 < len(argv) else None)
++        elif a.startswith("--timeout-min="):
++            seen, value = True, a.split("=", 1)[1]
++    if not seen:
++        return None if serve else 120 * 60.0
++    try:
++        minutes = float(value)
++    except (TypeError, ValueError):
++        minutes = float("nan")
++    if not math.isfinite(minutes) or minutes <= 0:
++        raise SystemExit(f"--timeout-min wants a positive number of minutes, got {value!r}")
++    return minutes * 60
++
++
+ def main():
+     if not BOARD:
+         raise SystemExit("BOARD=<slug> is required — driver/start-board.sh sets it; "
+                          "there is no default board")
+     require_manifest()
+     acquire_lock()
+     # Say which run this process is on. A restart REJOINS the run runs/current
+     # names — it must not mint one, because the cards already filed carry their
+     # run's paths in their bodies and a new directory would leave every hand-off
+     # pointing at a tree nothing writes to.
+@@ -3697,26 +3766,21 @@ def main():
+     log(f"--- driver start: board={BOARD} pid={os.getpid()} "
+         f"run={joined or 'none yet'} ---")
+     if joined:
+         log(f"rejoined run {joined}: {os.path.relpath(STATE.run_dir, REPO)}")
+         rejoin_chain()
+     else:
+         log("no run yet — the first armed idea mints one")
+     reset_attempt_budgets()
+     t0 = time.time()
+     write_summary._t0 = t0          # wall_min in the summary is measured from here
+-    # A serving driver is a standing process; a 2h cap would drop the board every
+-    # two hours and leave the next idea unattended until cron noticed.
+-    timeout = None if SERVE else 120 * 60
+-    for a in sys.argv:
+-        if a.startswith("--timeout-min"):
+-            timeout = float(sys.argv[sys.argv.index(a) + 1]) * 60
++    timeout = timeout_seconds(serve=SERVE)
+     idle = False
+     before = STATE.mutations[0]
+     while True:
+         if STATE.halted["reason"]:
+             # Recorded mid-tick (escalate): stop before an armed idea is adopted, or a
+             # fresh run is minted and then abandoned by this same exit.
+             log("BOARD HALTED — driver exiting; board state left for human inspection")
+             return 1
+         try:
+             # A new idea outranks the current tick: adopt it, refile, and let the
+diff --git a/tests/test_manifest_shape.py b/tests/test_manifest_shape.py
+new file mode 100644
+index 0000000..9f8bc57
+--- /dev/null
++++ b/tests/test_manifest_shape.py
+@@ -0,0 +1,87 @@
++"""The manifest dict has ONE meaning, whether or not the board still has its board.json.
++
++The old fallback was a four-key dict that said `integration-tests: False` against the
++option table, create-board.sh's own --help and its profile pre-flight (2026-09-23
++review, Important 6 and the comment finding I40). "No manifest" now means exactly what
++"a manifest that names nothing" means: the option table's defaults.
++"""
++import json
++import os
++import sys
++
++import pytest
++
++sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "template"))
++sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "driver"))
++import board_schema
++import lanes
++import run
++
++REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
++
++
++def _board(tmp_path, monkeypatch, manifest=None):
++    board_dir = tmp_path / "boards" / "b"
++    board_dir.mkdir(parents=True, exist_ok=True)
++    cfg = board_dir / "board.json"
++    if manifest is None:
++        if cfg.exists():
++            cfg.unlink()
++    else:
++        cfg.write_text(json.dumps(manifest))
++    monkeypatch.setattr(run, "BOARD", "b")
++    monkeypatch.setattr(run, "BOARD_DIR", str(board_dir))
++    monkeypatch.setattr(run, "IDEAS_DIR", str(board_dir))
++    return board_dir
++
++
++def test_no_manifest_means_the_same_board_as_an_empty_one(tmp_path, monkeypatch):
++    """The property that matters: a consumer cannot tell which one it got."""
++    _board(tmp_path, monkeypatch)
++    absent = run.manifest()
++    _board(tmp_path, monkeypatch, {})
++    assert absent == run.manifest() == {"slug": "b"}
++
++
++def test_a_board_without_its_manifest_keeps_its_integration_cards(tmp_path, monkeypatch):
++    """The fallback's `integration-tests: False` silently dropped every lane's
++    integration cards on a board whose manifest was gone — against the option table
++    (True) and the --help that promises "unit and integration tests on"."""
++    _board(tmp_path, monkeypatch)
++    resolved = lanes.resolve_lane_options(run.manifest(), {}, 1)
++    assert resolved["integration-tests"] is True
++    assert resolved["integration-tests"] == board_schema.OPTIONS["integration-tests"][1]
++
++
++def test_the_manifest_create_board_writes_does_not_contradict_its_help():
++    """The heredoc wrote `"integration-tests": false` while the same script's --help
++    says a --slug board gets "refinement, unit and integration tests on" and its profile
++    pre-flight already demanded the integration profiles. Omitting the key IS the
++    option table's default."""
++    src = open(os.path.join(REPO, "driver", "create-board.sh")).read()
++    heredoc = [l for l in src.splitlines() if l.lstrip().startswith("printf '{")]
++    assert heredoc, "the manifest printf moved — read create-board.sh"
++    assert all("integration-tests" not in l for l in heredoc), heredoc
++
++
++def test_the_resolved_lane_options_are_the_per_lane_keys_plus_the_idea(tmp_path, monkeypatch):
++    """`lane_options`' shape, pinned: every PER_LANE key plus the idea's own body under
++    "idea" — and `refinement` is ALWAYS present, which is what makes a
++    `.get("refinement", True)` on it dead code."""
++    board_dir = _board(tmp_path, monkeypatch, {"slug": "b", "lanes": 1})
++    (board_dir / "lane-1.md").write_text(
++        "## Idea 1: a lane\n\n<!-- integration-tests: false -->\n\n"
++        "### Done means\n\nit works\n")
++    opts = run.lane_options(1)
++    assert set(opts) == set(board_schema.PER_LANE) | {"idea"}, sorted(opts)
++    assert opts["refinement"] is True
++    assert opts["integration-tests"] is False        # the header won
++    assert "it works" in opts["idea"]
++
++
++def test_a_lane_without_an_idea_file_is_none(tmp_path, monkeypatch):
++    """The None state, pinned: no file at all. (A file that EXISTS and is blank is the
++    next task's — the two states must stop sharing one value.)"""
++    _board(tmp_path, monkeypatch, {"slug": "b", "lanes": 1})
++    assert run.lane_options(1) is None
++    assert run.lane_refinement(1) is True

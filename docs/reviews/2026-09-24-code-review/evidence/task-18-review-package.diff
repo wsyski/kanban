@@ -1,0 +1,316 @@
+## git status --short
+M  driver/create-board.sh
+M  driver/doc-chain.py
+M  driver/file_lanes.py
+M  driver/render-flow.py
+M  driver/run-audit.py
+M  driver/run.py
+M  driver/runs_util.py
+M  driver/start-board.sh
+M  driver/timing-report.py
+M  template/board.schema.json
+M  template/board_schema.py
+M  template/driver_lock.py
+M  template/lanes.py
+M  tests/test_acquire_lock.py
+M  tests/test_board_schema.py
+M  tests/test_chain_log.py
+M  tests/test_doc_chain.py
+A  tests/test_driver_main.py
+M  tests/test_file_lanes.py
+M  tests/test_lanes_graph.py
+A  tests/test_manifest_shape.py
+M  tests/test_open_lane.py
+M  tests/test_refinement_option.py
+M  tests/test_rework_loop.py
+M  tests/test_run_audit.py
+M  tests/test_run_directories.py
+M  tests/test_runs_util.py
+A  tests/test_suite_hygiene.py
+M  tests/test_unstarted_mint.py
+
+## diff --stat HEAD
+ driver/start-board.sh      |  12 ++-
+ tests/test_acquire_lock.py | 204 ++++++++++++++++++++++++++++++++++++++++++++-
+ 2 files changed, 210 insertions(+), 6 deletions(-)
+
+## diff -U10 HEAD
+diff --git a/driver/start-board.sh b/driver/start-board.sh
+index 87e9887..415aaeb 100755
+--- a/driver/start-board.sh
++++ b/driver/start-board.sh
+@@ -75,23 +75,29 @@ except Exception:
+ print(v if v else '')
+ " 2>/dev/null)
+ fi
+ 
+ cd "$REPO"
+ RUNLOG=${RUNLOG:-$REPO/boards/$SLUG/runs/driver.log}
+ LOCK="$REPO/boards/$SLUG/runs/driver.lock"
+ mkdir -p "$(dirname "$RUNLOG")"
+ 
+ # Already up? Say so and stop. The lock FILE existing proves nothing — a driver
+-# killed with SIGKILL leaves one behind — so ask whether a live process holds it.
+-if [ -f "$LOCK" ] && kill -0 "$(cat "$LOCK" 2>/dev/null)" 2>/dev/null; then
+-  echo "driver for '$SLUG' already running (pid $(cat "$LOCK"))"
++# killed with SIGKILL leaves one behind — so ask whether THIS REPO'S DRIVER holds it,
++# the way create-board.sh and reset.sh already ask. The old `kill -0` on the raw lock
++# content answered "already running" for ever once the OS reused that pid for any
++# other process — and this is the cron entry (2026-09-23 review, Important 16). A pid
++# that is not a driver is no reason to refuse: run.py's own lock is a kernel flock, so
++# a stale file is taken over there too.
++. "$REPO/driver/driver-pid.sh"
++if DRIVER_PID=$(live_driver_pid "$REPO/boards/$SLUG"); then
++  echo "driver for '$SLUG' already running (pid $DRIVER_PID)"
+   exit 0
+ fi
+ 
+ if [ "$ONCE" = 1 ]; then
+   [ -s "$REPO/boards/$SLUG/lane-1.md" ] || {
+     echo "refusing: boards/$SLUG/lane-1.md is empty — enter an idea first" >&2
+     exit 1; }
+   # Nothing is released from here: the driver's own first tick opens the lane
+   # (writes the <IDEA> snapshot, prunes TI/RVc on an integration_tests:false
+   # board, clears the lane's stale outputs) and only then unblocks the root —
+diff --git a/tests/test_acquire_lock.py b/tests/test_acquire_lock.py
+index 3db1d34..086931d 100644
+--- a/tests/test_acquire_lock.py
++++ b/tests/test_acquire_lock.py
+@@ -24,25 +24,40 @@ def _lock(tmp_path, text):
+ 
+ def test_a_dead_holders_lock_is_taken_over(monkeypatch, tmp_path):
+     monkeypatch.setattr(run, "RUNS_ROOT", str(tmp_path))
+     monkeypatch.setattr(run, "log", lambda msg: None)
+     lock = _lock(tmp_path, "999999")          # in range, owned by nothing
+     run.acquire_lock()
+     assert lock.read_text() == str(os.getpid())
+ 
+ 
+ def test_a_live_holders_lock_is_refused(monkeypatch, tmp_path):
++    """REWRITTEN 2026-09-24 — this test used to write os.getpid() into the file and
++    expect a refusal, i.e. it pinned "a live PID means a held lock". The pid no longer
++    decides: the holder is whoever holds the kernel flock (2026-09-23 review, Critical
++    2 — a pid-based takeover truncated a live driver's lock, and two starters that saw
++    one dead pid both took the board). A holder is simulated by flocking the file on a
++    descriptor of our own: flock is per open file description, so take()'s own open is
++    refused exactly as a second process's would be."""
++    import fcntl
+     monkeypatch.setattr(run, "RUNS_ROOT", str(tmp_path))
+     monkeypatch.setattr(run, "log", lambda msg: None)
+-    _lock(tmp_path, str(os.getpid()))
+-    with pytest.raises(SystemExit):
+-        run.acquire_lock()
++    lock = _lock(tmp_path, str(os.getpid()))
++    fd = os.open(lock, os.O_RDWR)
++    fcntl.flock(fd, fcntl.LOCK_EX)
++    try:
++        with pytest.raises(SystemExit) as excinfo:
++            run.acquire_lock()
++        assert str(os.getpid()) in str(excinfo.value)
++        assert lock.read_text() == str(os.getpid())       # refused, NOT rewritten
++    finally:
++        os.close(fd)
+ 
+ 
+ @pytest.mark.parametrize("garbage", ["", "not-a-pid", "-1", "0"])
+ def test_an_unreadable_lock_reads_as_dead(monkeypatch, tmp_path, garbage):
+     monkeypatch.setattr(run, "RUNS_ROOT", str(tmp_path))
+     monkeypatch.setattr(run, "log", lambda msg: None)
+     lock = _lock(tmp_path, garbage)
+     run.acquire_lock()
+     assert lock.read_text() == str(os.getpid())
+ 
+@@ -142,10 +157,193 @@ def test_create_board_refuses_while_this_boards_driver_serves(tmp_path):
+         assert r.returncode == 0 and r.stdout.strip() == str(driver.pid)
+         assert live(bystander.pid).returncode != 0
+         assert live("not-a-pid").returncode != 0
+     finally:
+         for p in (driver, bystander):
+             p.kill()
+             p.wait()
+     script = open(os.path.join(repo, "driver", "create-board.sh")).read()
+     assert script.index('live_driver_pid "$BOARD_DIR"') < script.index("hermes kanban boards create")
+     assert script.index('live_driver_pid "$BOARD_DIR"') < script.index("already exists — refusing")
++
++
++def test_a_live_pid_without_the_flock_is_taken_over(monkeypatch, tmp_path):
++    """The reused-pid case: the file names a process that is alive, holds no lock and is
++    not a driver. `kill -0` read it as a live driver for ever; the kernel lock does not
++    care whose pid the file names."""
++    import subprocess
++    bystander = subprocess.Popen(["sleep", "60"])
++    try:
++        monkeypatch.setattr(run, "RUNS_ROOT", str(tmp_path))
++        monkeypatch.setattr(run, "log", lambda msg: None)
++        lock = _lock(tmp_path, str(bystander.pid))
++        run.acquire_lock()
++        assert lock.read_text() == str(os.getpid())
++    finally:
++        bystander.kill()
++        bystander.wait()
++
++
++def test_an_older_driver_without_the_flock_is_still_refused(monkeypatch, tmp_path):
++    """Transition guard: a driver started before the lock became a flock holds no kernel
++    lock, so only its argv can say it is one. A live process whose argv names a run.py
++    is refused until it exits."""
++    import subprocess
++    fake = tmp_path / "run.py"
++    fake.write_text("import time\ntime.sleep(60)\n")
++    older = subprocess.Popen([sys.executable, str(fake), "--serve"])
++    try:
++        monkeypatch.setattr(run, "RUNS_ROOT", str(tmp_path))
++        monkeypatch.setattr(run, "log", lambda msg: None)
++        _lock(tmp_path, str(older.pid))
++        with pytest.raises(SystemExit):
++            run.acquire_lock()
++    finally:
++        older.kill()
++        older.wait()
++
++
++def test_a_second_starter_inside_the_takeover_window_is_refused(tmp_path, monkeypatch):
++    """Two starters that both read the same dead pid both took the board: the old take()
++    decided a takeover from the pid it had just read, then replaced the file (measured
++    2026-09-24: four concurrent starters left more than one holder in 27 of 30 trials).
++    Deterministic here: a second take() runs INSIDE the first one's liveness check,
++    which is exactly that window. With the kernel lock the second is refused, because
++    the first already holds the flock when it looks at the pid."""
++    import driver_lock
++    (tmp_path / "driver.lock").write_text("999999")        # a dead holder's file
++    real = driver_lock.pid_alive
++    second = []
++
++    def racing(held):
++        if not second:
++            second.append("started")
++            try:
++                driver_lock.take(str(tmp_path), "why")
++                second.append("took")
++            except SystemExit:
++                second.append("refused")
++        return real(held)
++
++    monkeypatch.setattr(driver_lock, "pid_alive", racing)
++    driver_lock.take(str(tmp_path), "why")
++    assert second == ["started", "refused"], second
++
++
++def test_a_killed_holders_lock_is_free_for_the_next_driver(monkeypatch, tmp_path):
++    """SIGKILL skips every atexit; the kernel still drops the flock, so the next start
++    takes the board without a manual rm (the 2026-09-12 failure)."""
++    import signal
++    import subprocess
++    template = os.path.join(os.path.dirname(__file__), "..", "template")
++    holder = subprocess.Popen([sys.executable, "-c",
++                               "import sys, time; sys.path.insert(0, sys.argv[1]);"
++                               "import driver_lock; driver_lock.take(sys.argv[2], 'why');"
++                               "print('held', flush=True); time.sleep(60)",
++                               template, str(tmp_path)], stdout=subprocess.PIPE, text=True)
++    assert holder.stdout.readline().strip() == "held"
++    holder.send_signal(signal.SIGKILL)
++    holder.wait()
++    monkeypatch.setattr(run, "RUNS_ROOT", str(tmp_path))
++    lines = []
++    monkeypatch.setattr(run, "log", lines.append)
++    run.acquire_lock()
++    assert (tmp_path / "driver.lock").read_text() == str(os.getpid())
++    assert any("taking over a stale driver lock" in m for m in lines), lines
++
++
++def test_a_lock_this_process_may_not_open_is_refused(monkeypatch, tmp_path):
++    """The file exists and cannot be opened: that is somebody else's lock, never "gone".
++    The old code let the PermissionError escape as a traceback out of acquire_lock."""
++    if os.geteuid() == 0:
++        pytest.skip("root opens every file, so there is no unreadable lock to make")
++    monkeypatch.setattr(run, "RUNS_ROOT", str(tmp_path))
++    monkeypatch.setattr(run, "log", lambda msg: None)
++    lock = _lock(tmp_path, "999999")
++    os.chmod(lock, 0o000)
++    try:
++        with pytest.raises(SystemExit):
++            run.acquire_lock()
++    finally:
++        os.chmod(lock, 0o644)
++
++
++def test_release_is_quiet_when_it_cannot_read_its_lock(tmp_path):
++    """driver_lock._release is an atexit: it must never raise, or every driver shutdown
++    prints a traceback."""
++    import driver_lock
++    driver_lock._release(str(tmp_path / "gone"), "1")        # no such file
++    (tmp_path / "dir").mkdir()
++    driver_lock._release(str(tmp_path / "dir"), "1")         # a directory, not a lock
++
++
++def test_a_restart_reopens_every_card_attempt_budget(monkeypatch, tmp_path):
++    """The dispatcher's breaker persists consecutive_failures, so a card that exhausted
++    max_retries stays over it for ever after a human restart — the restart IS the "try
++    again" decision. The UPDATE had never run: its only caller is main() (2026-09-23
++    review, tests I7/I33). HOME is pointed at tmp as well: with HERMES_HOME set the
++    function ALSO tries ~/.hermes, and a test must not touch the real one."""
++    import sqlite3
++    home = tmp_path / "home"
++    db_dir = home / "kanban" / "boards" / "b"
++    db_dir.mkdir(parents=True)
++    conn = sqlite3.connect(db_dir / "kanban.db")
++    conn.execute("CREATE TABLE tasks (id TEXT, status TEXT, consecutive_failures INT, "
++                 "last_failure_error TEXT)")
++    conn.execute("INSERT INTO tasks VALUES ('t1', 'ready', 3, 'boom')")
++    conn.execute("INSERT INTO tasks VALUES ('t2', 'archived', 3, 'boom')")
++    conn.execute("INSERT INTO tasks VALUES ('t3', 'ready', 0, NULL)")
++    conn.commit()
++    conn.close()
++    monkeypatch.setenv("HERMES_HOME", str(home))
++    monkeypatch.setenv("HOME", str(tmp_path / "not-home"))
++    monkeypatch.setattr(run, "BOARD", "b")
++    lines = []
++    monkeypatch.setattr(run, "log", lines.append)
++    run.reset_attempt_budgets()
++    assert lines == ["attempt budgets reset for 1 card(s)"], lines
++    conn = sqlite3.connect(db_dir / "kanban.db")
++    assert conn.execute("SELECT consecutive_failures, last_failure_error FROM tasks "
++                        "WHERE id = 't1'").fetchone() == (0, None)
++    assert conn.execute("SELECT consecutive_failures FROM tasks WHERE id = 't2'"
++                        ).fetchone() == (3,)        # an archived card is left alone
++    conn.close()
++
++
++def test_resetting_budgets_with_no_database_is_silent(monkeypatch, tmp_path):
++    """No kanban.db is the normal case for a board nobody served; it must not raise or
++    log."""
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "empty"))
++    monkeypatch.setenv("HOME", str(tmp_path / "not-home"))
++    monkeypatch.setattr(run, "BOARD", "b")
++    lines = []
++    monkeypatch.setattr(run, "log", lines.append)
++    run.reset_attempt_budgets()
++    assert lines == [], lines
++
++
++def test_the_cron_door_asks_the_same_question_as_the_other_two(tmp_path):
++    """start-board.sh used `kill -0` on the raw lock content, so a pid the OS reused for
++    any other process made it answer "already running" and exit 0 for ever on an idle
++    board — and it is the documented cron entry. create-board.sh and reset.sh ask
++    driver-pid.sh, which requires the process to be THIS repo's driver (review
++    Important 16). The predicate is pinned by behaviour; that the cron door USES it is
++    a source assertion, the only reachable form for a shell guard that would otherwise
++    start a real driver."""
++    import subprocess
++    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
++    helper = os.path.join(repo, "driver", "driver-pid.sh")
++    board = tmp_path / "board"
++    (board / "runs").mkdir(parents=True)
++    bystander = subprocess.Popen(["sleep", "60"])
++    try:
++        (board / "runs" / "driver.lock").write_text(str(bystander.pid))
++        r = subprocess.run(["bash", "-c", f'REPO="{repo}"; . "{helper}"; '
++                            f'live_driver_pid "{board}" || echo FREE'],
++                           capture_output=True, text=True, timeout=30)
++        assert r.stdout.strip() == "FREE", r.stdout
++    finally:
++        bystander.kill()
++        bystander.wait()
++    src = open(os.path.join(repo, "driver", "start-board.sh")).read()
++    assert 'live_driver_pid "$REPO/boards/$SLUG"' in src
++    assert 'kill -0 "$(cat "$LOCK"' not in src

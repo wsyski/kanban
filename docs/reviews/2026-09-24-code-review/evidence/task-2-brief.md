@@ -1,0 +1,437 @@
+### Task 2: One driver lock — a kernel `flock`, taken atomically (09-23 C2, I32; errors S14)
+
+**Files:**
+- Modify: `driver/run-audit.py`
+- Modify: `template/driver_lock.py`
+- Test: `tests/test_acquire_lock.py`
+- Test: `tests/test_run_audit.py`
+
+**Measured red state:** red: `test_a_live_pid_without_the_flock_is_taken_over`, `test_a_second_starter_inside_the_takeover_window_is_refused`, and both run-audit tests. `test_a_lock_this_process_may_not_open_is_refused` SKIPS as root (runs on zeus as a normal user). The rewritten `test_a_live_holders_lock_is_refused` passes on old code too — it is a contract rewrite, not a red step: say so in the report.
+
+- [ ] **Step 1: Write the tests** — apply this patch (`git apply` from the repo root, or by hand; every hunk was applied and run in a copy of HEAD `c2d2aee`):
+
+```diff
+diff --git a/tests/test_acquire_lock.py b/tests/test_acquire_lock.py
+index 3db1d34..8545fbc 100644
+--- a/tests/test_acquire_lock.py
++++ b/tests/test_acquire_lock.py
+@@ -31,11 +31,26 @@ def test_a_dead_holders_lock_is_taken_over(monkeypatch, tmp_path):
+ 
+ 
+ def test_a_live_holders_lock_is_refused(monkeypatch, tmp_path):
++    """REWRITTEN 2026-09-24 — this test used to write os.getpid() into the file and
++    expect a refusal, i.e. it pinned "a live PID means a held lock". The pid no longer
++    decides: the holder is whoever holds the kernel flock (2026-09-23 review, Critical
++    2 — a pid-based takeover truncated a live driver's lock, and two starters that saw
++    one dead pid both took the board). A holder is simulated by flocking the file on a
++    descriptor of our own: flock is per open file description, so take()'s own open is
++    refused exactly as a second process's would be."""
++    import fcntl
+     monkeypatch.setattr(run, "RUNS_ROOT", str(tmp_path))
+     monkeypatch.setattr(run, "log", lambda msg: None)
+-    _lock(tmp_path, str(os.getpid()))
+-    with pytest.raises(SystemExit):
+-        run.acquire_lock()
++    lock = _lock(tmp_path, str(os.getpid()))
++    fd = os.open(lock, os.O_RDWR)
++    fcntl.flock(fd, fcntl.LOCK_EX)
++    try:
++        with pytest.raises(SystemExit) as excinfo:
++            run.acquire_lock()
++        assert str(os.getpid()) in str(excinfo.value)
++        assert lock.read_text() == str(os.getpid())       # refused, NOT rewritten
++    finally:
++        os.close(fd)
+ 
+ 
+ @pytest.mark.parametrize("garbage", ["", "not-a-pid", "-1", "0"])
+@@ -149,3 +164,113 @@ def test_create_board_refuses_while_this_boards_driver_serves(tmp_path):
+     script = open(os.path.join(repo, "driver", "create-board.sh")).read()
+     assert script.index('live_driver_pid "$BOARD_DIR"') < script.index("hermes kanban boards create")
+     assert script.index('live_driver_pid "$BOARD_DIR"') < script.index("already exists — refusing")
++
++
++def test_a_live_pid_without_the_flock_is_taken_over(monkeypatch, tmp_path):
++    """The reused-pid case: the file names a process that is alive, holds no lock and is
++    not a driver. `kill -0` read it as a live driver for ever; the kernel lock does not
++    care whose pid the file names."""
++    import subprocess
++    bystander = subprocess.Popen(["sleep", "60"])
++    try:
++        monkeypatch.setattr(run, "RUNS_ROOT", str(tmp_path))
++        monkeypatch.setattr(run, "log", lambda msg: None)
++        lock = _lock(tmp_path, str(bystander.pid))
++        run.acquire_lock()
++        assert lock.read_text() == str(os.getpid())
++    finally:
++        bystander.kill()
++        bystander.wait()
++
++
++def test_an_older_driver_without_the_flock_is_still_refused(monkeypatch, tmp_path):
++    """Transition guard: a driver started before the lock became a flock holds no kernel
++    lock, so only its argv can say it is one. A live process whose argv names a run.py
++    is refused until it exits."""
++    import subprocess
++    fake = tmp_path / "run.py"
++    fake.write_text("import time\ntime.sleep(60)\n")
++    older = subprocess.Popen([sys.executable, str(fake), "--serve"])
++    try:
++        monkeypatch.setattr(run, "RUNS_ROOT", str(tmp_path))
++        monkeypatch.setattr(run, "log", lambda msg: None)
++        _lock(tmp_path, str(older.pid))
++        with pytest.raises(SystemExit):
++            run.acquire_lock()
++    finally:
++        older.kill()
++        older.wait()
++
++
++def test_a_second_starter_inside_the_takeover_window_is_refused(tmp_path, monkeypatch):
++    """Two starters that both read the same dead pid both took the board: the old take()
++    decided a takeover from the pid it had just read, then replaced the file (measured
++    2026-09-24: four concurrent starters left more than one holder in 27 of 30 trials).
++    Deterministic here: a second take() runs INSIDE the first one's liveness check,
++    which is exactly that window. With the kernel lock the second is refused, because
++    the first already holds the flock when it looks at the pid."""
++    import driver_lock
++    (tmp_path / "driver.lock").write_text("999999")        # a dead holder's file
++    real = driver_lock.pid_alive
++    second = []
++
++    def racing(held):
++        if not second:
++            second.append("started")
++            try:
++                driver_lock.take(str(tmp_path), "why")
++                second.append("took")
++            except SystemExit:
++                second.append("refused")
++        return real(held)
++
++    monkeypatch.setattr(driver_lock, "pid_alive", racing)
++    driver_lock.take(str(tmp_path), "why")
++    assert second == ["started", "refused"], second
++
++
++def test_a_killed_holders_lock_is_free_for_the_next_driver(monkeypatch, tmp_path):
++    """SIGKILL skips every atexit; the kernel still drops the flock, so the next start
++    takes the board without a manual rm (the 2026-09-12 failure)."""
++    import signal
++    import subprocess
++    template = os.path.join(os.path.dirname(__file__), "..", "template")
++    holder = subprocess.Popen([sys.executable, "-c",
++                               "import sys, time; sys.path.insert(0, sys.argv[1]);"
++                               "import driver_lock; driver_lock.take(sys.argv[2], 'why');"
++                               "print('held', flush=True); time.sleep(60)",
++                               template, str(tmp_path)], stdout=subprocess.PIPE, text=True)
++    assert holder.stdout.readline().strip() == "held"
++    holder.send_signal(signal.SIGKILL)
++    holder.wait()
++    monkeypatch.setattr(run, "RUNS_ROOT", str(tmp_path))
++    lines = []
++    monkeypatch.setattr(run, "log", lines.append)
++    run.acquire_lock()
++    assert (tmp_path / "driver.lock").read_text() == str(os.getpid())
++    assert any("taking over a stale driver lock" in m for m in lines), lines
++
++
++def test_a_lock_this_process_may_not_open_is_refused(monkeypatch, tmp_path):
++    """The file exists and cannot be opened: that is somebody else's lock, never "gone".
++    The old code let the PermissionError escape as a traceback out of acquire_lock."""
++    if os.geteuid() == 0:
++        pytest.skip("root opens every file, so there is no unreadable lock to make")
++    monkeypatch.setattr(run, "RUNS_ROOT", str(tmp_path))
++    monkeypatch.setattr(run, "log", lambda msg: None)
++    lock = _lock(tmp_path, "999999")
++    os.chmod(lock, 0o000)
++    try:
++        with pytest.raises(SystemExit):
++            run.acquire_lock()
++    finally:
++        os.chmod(lock, 0o644)
++
++
++def test_release_is_quiet_when_it_cannot_read_its_lock(tmp_path):
++    """driver_lock._release is an atexit: it must never raise, or every driver shutdown
++    prints a traceback."""
++    import driver_lock
++    driver_lock._release(str(tmp_path / "gone"), "1")        # no such file
++    (tmp_path / "dir").mkdir()
++    driver_lock._release(str(tmp_path / "dir"), "1")         # a directory, not a lock
+diff --git a/tests/test_run_audit.py b/tests/test_run_audit.py
+index 29e8dbb..387ce96 100644
+--- a/tests/test_run_audit.py
++++ b/tests/test_run_audit.py
+@@ -681,3 +681,34 @@ def test_an_escalated_triage_card_is_an_e12_and_a_resting_one_is_not(monkeypatch
+                                    "status": "done"},
+                                   {"id": "t2", "title": "Idea 1", "status": "triage"}])
+     assert codes(ra.board_findings("b", "unused"), "ERROR") == []
++
++
++def test_an_unreadable_lock_says_unreadable_not_none(tmp_path, monkeypatch):
++    """`pid none` read as "there is no lock file" when the file was there and named
++    nothing readable — a different claim, and the one a human needs to act on (errors
++    S14). The run here is mid-flight (no finish banner), which is the only path that
++    names the lock at all."""
++    clean_probe(monkeypatch)
++    runs = fixture(tmp_path, log=GOOD_LOG[:-1])            # no ALL GATES COMPLETE
++    (tmp_path / "boards" / "b" / "runs" / "driver.lock").write_text("")
++    findings, _rows, _stats = ra.audit(runs)
++    assert any("unreadable" in t for _s, _c, t in findings), findings
++
++
++def test_a_driver_holding_the_kernel_lock_is_alive_whatever_pid_it_names(tmp_path):
++    """The auditor asks the kernel first: a live driver holds a flock on runs/driver.lock
++    for its whole life, so "is the driver alive" no longer depends on a pid the OS may
++    have reused."""
++    import fcntl
++    root = tmp_path / "runs"
++    root.mkdir()
++    lock = root / "driver.lock"
++    lock.write_text("999999")                               # names a dead pid
++    fd = os.open(lock, os.O_RDWR)
++    fcntl.flock(fd, fcntl.LOCK_EX)
++    try:
++        assert ra._driver_alive(str(root)) == (True, "999999")
++    finally:
++        os.close(fd)
++    assert ra._driver_alive(str(root)) == (False, "999999")
++    assert ra._driver_alive(str(tmp_path / "nowhere")) == (False, None)
+```
+
+- [ ] **Step 2: Run them and watch the red ones fail**
+
+Run: `/usr/bin/python3 -m pytest -q tests/test_acquire_lock.py tests/test_run_audit.py`
+
+Expected: the red state above. A test that fails for a DIFFERENT reason is a finding about this task — report it, do not bend the test.
+
+- [ ] **Step 3: Implement** — apply:
+
+```diff
+diff --git a/driver/run-audit.py b/driver/run-audit.py
+index 38c5cc4..2b55901 100755
+--- a/driver/run-audit.py
++++ b/driver/run-audit.py
+@@ -15,6 +15,7 @@ Usage:
+   driver/run-audit.py --runs boards/<slug>/runs [--board boards/<slug>] [--json]
+ """
+ import argparse
++import fcntl
+ import importlib.util
+ import json
+ import os
+@@ -105,11 +106,30 @@ def _driver_alive(root):
+     """(alive, pid) for the driver runs/driver.lock names — the board's own lock, the
+     one start-board.sh and acquire_lock check. It tells "audited too early" from a
+     driver that died without a halt; a pgrep for the command line matched any board's
+-    driver, and missed a serve driver started without --timeout-min."""
+-    pid = None
++    driver, and missed a serve driver started without --timeout-min.
++
++    The KERNEL lock answers first: a driver holds a flock on the file for its whole
++    life (driver_lock.take), so a lock we cannot share is a live driver whatever pid
++    the file names. The pid read below is the fallback for a driver that predates the
++    flock. `pid` is "" when the file exists and names nothing readable, and None when
++    there is no file — the wording in audit() tells the two apart (errors S14).
++    """
++    path = os.path.join(root, "driver.lock")
++    try:
++        fd = os.open(path, os.O_RDONLY)
++    except OSError:
++        return False, None
++    try:
++        pid = os.read(fd, 64).decode(errors="replace").strip()
++        try:
++            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
++        except BlockingIOError:
++            return True, pid
++        except OSError:
++            pass
++    finally:
++        os.close(fd)
+     try:
+-        with open(os.path.join(root, "driver.lock")) as f:
+-            pid = f.read().strip()
+         if int(pid) <= 0:
+             return False, pid
+         os.kill(int(pid), 0)
+@@ -430,7 +450,8 @@ def audit(runs_dir, board_dir=None):
+                    f"Wait for the banner, then audit; the driver may keep serving."
+                    if alive
+                    else f"the driver died without a halt or the finish banner — no live "
+-                        f"process holds runs/driver.lock (pid {pid or 'none'}); restart "
++                        f"process holds runs/driver.lock "
++                        f"(pid {'none' if pid is None else (pid or 'unreadable')}); restart "
+                         f"it with start-board.sh")
+         findings = [(s, c, wording if c == "E1" else t) for s, c, t in findings]
+         return findings, [], {}
+diff --git a/template/driver_lock.py b/template/driver_lock.py
+index bbcea24..f89c4ec 100755
+--- a/template/driver_lock.py
++++ b/template/driver_lock.py
+@@ -9,15 +9,16 @@ legitimately took over) would drop a lock that by then belonged to somebody else
+ rule below unlinks only its OWN.
+ """
+ import atexit
++import fcntl
+ import os
+ 
+ 
+ def pid_alive(held):
+     """Is the pid a lockfile names still on this machine?
+ 
+-    A lock nobody holds is not a lock, so anything unreadable (empty file, a
+-    half-written pid, garbage) reads as dead: the file is only ever written with
+-    one pid, by os.write, immediately after creation.
++    Used only for the transition guard in `take` and by callers that want the
++    question asked of a pid; who HOLDS the board is decided by the kernel lock, not
++    by this. Anything unreadable (empty file, garbage) reads as dead.
+     """
+     try:
+         pid = int(held)
+@@ -37,44 +38,103 @@ def pid_alive(held):
+ def take(runs_dir, why):
+     """Take `runs_dir/driver.lock`; return `(path, note)`.
+ 
+-    A DEAD holder's lockfile is taken over, not refused. The file survives any driver
+-    that did not exit through the interpreter (SIGTERM/SIGKILL skip the atexit unlink),
+-    and refusing on the file's existence alone turns one kill into a manual `rm` before
+-    the board can restart, while every other guard says the board is free (observed
+-    2026-09-12: start-board.sh's liveness check passed and run.py refused, so the restart
+-    silently did nothing).
++    The lock is a KERNEL lock (`flock`) on the file, held for the life of this process;
++    the pid written into the file is for the shell doors and the auditor to READ, never
++    what decides who holds the board. Two older designs lost a live driver's board:
++    creating the file empty and writing the pid two syscalls later let a reader inside
++    that window read "" as a dead holder and truncate a LIVE lock (2026-09-23 review,
++    Critical 2), and deciding a takeover from the pid let two starters that both saw the
++    same dead pid both take the board (measured 2026-09-24: 27 of 30 trials). The kernel
++    releases a flock when its holder dies, SIGKILL included, so a dead holder's file is
++    taken over without anyone reading a pid, and a live one is refused whatever the file
++    says.
+ 
+-    `note` is non-empty when a stale lock was taken over — the caller prints it in its
+-    own voice. A LIVE holder raises SystemExit with `why` after the pid: this is a
+-    refusal, never a wait.
++    `note` is non-empty when a file left by an earlier holder was taken over — the
++    caller prints it in its own voice. A live holder raises SystemExit with `why` after
++    the pid: this is a refusal, never a wait.
+     """
++    global _held_fd
+     os.makedirs(runs_dir, exist_ok=True)
+     path = os.path.join(runs_dir, "driver.lock")
+-    note = ""
+-    try:
+-        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+-    except FileExistsError:
+-        held = open(path).read().strip()
+-        if pid_alive(held):
+-            raise SystemExit(f"another driver holds {path} (pid {held}) — {why}")
+-        note = f"taking over a stale driver lock ({path}: pid {held!r} is gone)"
+-        fd = os.open(path, os.O_CREAT | os.O_TRUNC | os.O_WRONLY, 0o644)
++    while True:
++        try:
++            fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
++        except PermissionError as e:
++            # Present and not ours to open: somebody else's lock, never "gone".
++            raise SystemExit(f"{path} cannot be opened ({e.strerror}) — refusing to take "
++                             f"a lock this process cannot account for — {why}")
++        try:
++            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            held = _read_fd(fd)
++            os.close(fd)
++            raise SystemExit(f"another driver holds {path} (pid {held or 'unknown'}) — {why}")
++        # The file we locked must still be the one at `path`: a holder that released
++        # between our open and our flock unlinked it, and a lock on an orphaned inode
++        # would let a second starter lock the new file beside us.
++        try:
++            same = os.fstat(fd).st_ino == os.stat(path).st_ino
++        except FileNotFoundError:
++            same = False
++        if same:
++            break
++        os.close(fd)
++    held = _read_fd(fd)
++    if _older_driver_alive(held):
++        # Transition guard: a driver started before this lock was a flock holds no
++        # kernel lock, so only its pid can say it is alive. Remove after one release.
++        os.close(fd)
++        raise SystemExit(f"another driver holds {path} (pid {held}, started before the "
++                         f"flock lock) — {why}")
++    note = f"taking over a stale driver lock ({path}: pid {held!r} is gone)" if held else ""
+     mine = str(os.getpid())
+-    os.write(fd, mine.encode())
+-    os.close(fd)
++    os.ftruncate(fd, 0)
++    os.pwrite(fd, mine.encode(), 0)
++    _held_fd = fd                     # open for the process lifetime: closing drops the lock
+     atexit.register(_release, path, mine)
+     return path, note
+ 
+ 
++_held_fd = None
++
++
++def _read_fd(fd):
++    try:
++        return os.pread(fd, 64, 0).decode(errors="replace").strip()
++    except OSError:
++        return ""
++
++
++def _older_driver_alive(held):
++    """Is `held` a live process whose argv names a `run.py`? Only a driver that
++    predates the flock lock can be alive without holding it."""
++    if not pid_alive(held):
++        return False
++    try:
++        with open(f"/proc/{int(held)}/cmdline", "rb") as f:
++            argv = f.read().split(b"\0")
++    except (OSError, ValueError):
++        return False
++    return any(os.path.basename(a) == b"run.py" for a in argv)
++
++
+ def _release(path, mine):
+-    """Unlink the lock, but only while it is still OURS.
++    """Unlink the lock, but only while it is still OURS, then drop the flock.
+ 
+     A driver whose lock was taken over must not unlink its successor's: the takeover
+     happens precisely because this process looked dead, and an unlink on existence
+     alone would hand the board back to two runs at once.
+     """
++    global _held_fd
+     try:
+-        if open(path).read().strip() == mine:
+-            os.unlink(path)
++        with open(path) as f:
++            if f.read().strip() == mine:
++                os.unlink(path)
+     except OSError:
+         pass
++    if _held_fd is not None:
++        try:
++            os.close(_held_fd)
++        except OSError:
++            pass
++        _held_fd = None
+```
+
+- [ ] **Step 4: Run the task's tests, then the whole suite**
+
+Run: `/usr/bin/python3 -m pytest -q tests/test_acquire_lock.py tests/test_run_audit.py` → PASS
+Then: `PYTHON=/usr/bin/python3 ./test.sh` → **677 passed** (as root, `676 passed, 1 skipped` from Task 2 on).
+
+- [ ] **Step 5: Stage and ask**
+
+```bash
+git add driver/run-audit.py template/driver_lock.py tests/test_acquire_lock.py tests/test_run_audit.py
+git status --short
+```
+
+Then STOP. Report the staged list and the measured count. Do not commit.
+
+---
+

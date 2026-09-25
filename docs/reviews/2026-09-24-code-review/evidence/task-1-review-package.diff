@@ -1,0 +1,96 @@
+## git status --short
+M  driver/create-board.sh
+M  tests/test_chain_log.py
+M  tests/test_open_lane.py
+M  tests/test_refinement_option.py
+A  tests/test_suite_hygiene.py
+M  tests/test_unstarted_mint.py
+
+## diff --stat HEAD
+ driver/create-board.sh       |  2 +-
+ tests/test_unstarted_mint.py | 40 ++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 41 insertions(+), 1 deletion(-)
+
+## diff -U10 HEAD
+diff --git a/driver/create-board.sh b/driver/create-board.sh
+index a3208a4..c66c943 100755
+--- a/driver/create-board.sh
++++ b/driver/create-board.sh
+@@ -437,21 +437,21 @@ if hermes kanban boards list 2>/dev/null | awk '{print $1}' | grep -qx "$SLUG" \
+    || hermes kanban boards list 2>/dev/null | awk '{print $2}' | grep -qx "$SLUG"; then
+   echo "board '$SLUG' already exists — refusing (remove it first:" >&2
+   echo "  hermes kanban boards rm $SLUG)" >&2
+   exit 4
+ fi
+ hermes kanban boards create "$SLUG" --name "$TITLE" --default-workdir "$WORKDIR"   # flags verified: hermes kanban boards create --help
+ echo "board '$SLUG' created (workdir $WORKDIR)"
+ 
+ mkdir -p "$WORKDIR"
+ if [ ! -f "$BOARD_DIR/board.json" ]; then
+-  printf '{\n  "name": %s,\n  "lanes": %s,\n  "integration-tests": false,\n  "auto-gates": false\n}\n' \
++  printf '{\n  "name": %s,\n  "lanes": %s,\n  "integration-tests": false,\n  "auto-gates": []\n}\n' \
+     "\"$TITLE\"" "$LANES" > "$BOARD_DIR/board.json"
+   echo "wrote $BOARD_DIR/board.json"
+ fi
+ 
+ cd "$REPO"
+ python3 - "$SLUG" "$WORKDIR" "$LANES" "$BOARD_DIR" <<'PY'
+ import os, sys
+ sys.path.insert(0, os.path.join(os.getcwd(), "driver"))
+ sys.path.insert(0, os.path.join(os.getcwd(), "template"))
+ import card_render, file_lanes
+diff --git a/tests/test_unstarted_mint.py b/tests/test_unstarted_mint.py
+index a049521..1540804 100644
+--- a/tests/test_unstarted_mint.py
++++ b/tests/test_unstarted_mint.py
+@@ -251,10 +251,50 @@ def test_two_filings_leave_one_run_directory(tmp_path):
+         time.sleep(1.05)
+         second = subprocess.run([str(script), "--board", f"boards/{SLUG}"],
+                                 capture_output=True, text=True, env=env, cwd=str(repo))
+         assert second.returncode == 0, second.stderr[-2000:]
+         assert "reusing" in second.stdout, second.stdout
+     finally:
+         holder.kill()
+     dirs = sorted(d.name for d in runs.iterdir() if d.is_dir())
+     assert len(dirs) == 1, dirs
+     assert (runs / "current").read_text().strip() == dirs[0]
++
++
++def test_the_manifest_create_board_writes_validates(tmp_path):
++    """The script files a board into the manifest it just wrote, and nothing checked
++    that manifest: line 447 emitted `"auto-gates": false` where board_schema's option
++    table declares a LIST of gate codes, so start-board.sh's validator exit 2s on every
++    board this script creates — the "1. serve it: driver/start-board.sh --slug …" line
++    the script prints one step later could never work (2026-09-23 review, Critical 1).
++
++    Through the real script, on the path --help documents for a new board (`--slug`),
++    in the same throwaway-repo harness the filing tests use.
++    """
++    if not os.path.exists("/usr/bin/lsof"):
++        pytest.skip("create-board.sh's dispatcher pre-flight needs lsof")
++    repo, script, home, holder = _probe_repo(tmp_path)
++    env = dict(os.environ, PATH=f"{_stub_hermes(tmp_path)}:{os.environ['PATH']}",
++               HERMES_HOME=str(home))
++    env.pop("HERMES_DELEGATED_CHILD_CONTEXT", None)
++    try:
++        filed = subprocess.run([str(script), "--slug", "probe", "--title", "Probe board"],
++                               capture_output=True, text=True, env=env, cwd=str(repo))
++        assert filed.returncode == 0, filed.stderr[-2000:]
++    finally:
++        holder.kill()
++    manifest = repo / "boards" / "probe" / "board.json"
++    assert manifest.exists(), sorted(os.listdir(repo / "boards"))
++    checked = subprocess.run(
++        [sys.executable, os.path.join(repo, "template", "board_schema.py"), str(manifest)],
++        capture_output=True, text=True)
++    assert checked.returncode == 0, checked.stdout + checked.stderr
++
++
++def test_the_default_manifest_writes_a_gate_list_not_a_boolean():
++    """The cheap pin beside the end-to-end one: a heredoc's logic is only reachable as
++    text (the reason test_create_board_mints_through_the_decision reads the script), and
++    this is the exact token the Critical is about. A future edit that re-introduces a
++    scalar here fails without needing the stub harness."""
++    src = open(CREATE).read()
++    assert '"auto-gates": []' in src
++    assert '"auto-gates": false' not in src

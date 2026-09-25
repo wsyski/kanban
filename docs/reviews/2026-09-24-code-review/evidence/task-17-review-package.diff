@@ -1,0 +1,1899 @@
+## git status --short
+M  driver/create-board.sh
+M  driver/doc-chain.py
+M  driver/file_lanes.py
+M  driver/render-flow.py
+M  driver/run-audit.py
+M  driver/run.py
+M  driver/runs_util.py
+M  driver/timing-report.py
+M  template/board.schema.json
+M  template/board_schema.py
+M  template/driver_lock.py
+M  template/lanes.py
+M  tests/test_acquire_lock.py
+M  tests/test_board_schema.py
+M  tests/test_chain_log.py
+M  tests/test_doc_chain.py
+A  tests/test_driver_main.py
+M  tests/test_file_lanes.py
+M  tests/test_lanes_graph.py
+A  tests/test_manifest_shape.py
+M  tests/test_open_lane.py
+M  tests/test_refinement_option.py
+M  tests/test_rework_loop.py
+M  tests/test_run_audit.py
+M  tests/test_run_directories.py
+M  tests/test_runs_util.py
+A  tests/test_suite_hygiene.py
+M  tests/test_unstarted_mint.py
+
+## diff --stat HEAD
+ driver/run-audit.py           | 115 ++++++++++++++---
+ driver/run.py                 | 294 +++++++++++++++++++++++++++++++++++-------
+ driver/runs_util.py           |  12 +-
+ driver/timing-report.py       |   2 +-
+ tests/test_open_lane.py       |  30 ++++-
+ tests/test_rework_loop.py     |  37 ++++++
+ tests/test_run_audit.py       | 143 ++++++++++++++++++++
+ tests/test_run_directories.py |  91 +++++++++++--
+ tests/test_runs_util.py       |  20 ++-
+ 9 files changed, 661 insertions(+), 83 deletions(-)
+
+## diff -U10 HEAD
+diff --git a/driver/run-audit.py b/driver/run-audit.py
+index 38c5cc4..63fbb75 100644
+--- a/driver/run-audit.py
++++ b/driver/run-audit.py
+@@ -8,20 +8,21 @@ rather than a matter of reading the log.
+   ERROR    the run did not do what the board's contract says it does
+   WARNING  it did it in a way that wastes budget or hides evidence
+   INFO     a note about the tree — metrics, and what a lane left behind. The board
+            deletes nothing (`work/` and `runs/` included), so litter is REPORTED and
+            left exactly where it is; a note never fails a run
+ 
+ Usage:
+   driver/run-audit.py --runs boards/<slug>/runs [--board boards/<slug>] [--json]
+ """
+ import argparse
++import fcntl
+ import importlib.util
+ import json
+ import os
+ import re
+ import subprocess
+ import sys
+ 
+ HERE = os.path.dirname(os.path.abspath(__file__))
+ REPO = os.path.dirname(HERE)
+ sys.path.insert(0, HERE)
+@@ -98,25 +99,44 @@ WARN_LINE = re.compile(r"(?i)(^\s*warnings?\s*:|:\s*warnings?\s*:)|"
+                        r"(DeprecationWarning|RuntimeWarning|UserWarning|FutureWarning)")
+ # A possessive is prose in a verdict too ("item 4's warning does not apply"), so the
+ # same guard applies to the result field: only the word standing on its own counts.
+ WARN_TEXT = re.compile(r"(?i)(?<!no )(?<!'s )(?<!\b0 )(?<!\bzero )warnings?\b")
+ 
+ 
+ def _driver_alive(root):
+     """(alive, pid) for the driver runs/driver.lock names — the board's own lock, the
+     one start-board.sh and acquire_lock check. It tells "audited too early" from a
+     driver that died without a halt; a pgrep for the command line matched any board's
+-    driver, and missed a serve driver started without --timeout-min."""
+-    pid = None
++    driver, and missed a serve driver started without --timeout-min.
++
++    The KERNEL lock answers first: a driver holds a flock on the file for its whole
++    life (driver_lock.take), so a lock we cannot share is a live driver whatever pid
++    the file names. The pid read below is the fallback for a driver that predates the
++    flock. `pid` is "" when the file exists and names nothing readable, and None when
++    there is no file — the wording in audit() tells the two apart (errors S14).
++    """
++    path = os.path.join(root, "driver.lock")
++    try:
++        fd = os.open(path, os.O_RDONLY)
++    except OSError:
++        return False, None
++    try:
++        pid = os.read(fd, 64).decode(errors="replace").strip()
++        try:
++            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
++        except BlockingIOError:
++            return True, pid
++        except OSError:
++            pass
++    finally:
++        os.close(fd)
+     try:
+-        with open(os.path.join(root, "driver.lock")) as f:
+-            pid = f.read().strip()
+         if int(pid) <= 0:
+             return False, pid
+         os.kill(int(pid), 0)
+     except PermissionError:
+         return True, pid
+     except (OSError, ValueError, OverflowError):
+         return False, pid
+     return True, pid
+ 
+ 
+@@ -188,20 +208,27 @@ def summary_findings(summary, ceiling):
+         if "waiting" in text:
+             out.append(("ERROR", "E4", f"{name} recorded as waiting: {text[:60]}"))
+     if summary.get("restarts_observed"):
+         out.append(("WARNING", "E5", "a restart was observed during the run"))
+     cards = summary.get("cards") or {}
+     over = {n: c.get("agent_min") for n, c in cards.items()
+             if ceiling is not None and (c.get("agent_min") or 0) > ceiling}
+     for name, minutes in over.items():
+         out.append(("WARNING", "E6",
+                     f"{name} took {minutes} of a {ceiling}-minute ceiling"))
++    for name, c in cards.items():
++        if c.get("runs_unreadable"):
++            # write_summary could not read this card's runs, so its minutes are
++            # unknown and the ceiling above could not be checked for it (review I15)
++            out.append(("WARNING", "E6", f"{name}: agent minutes unknown — the runs CLI "
++                                         f"refused when the summary was written, so its "
++                                         f"ceiling was not checked"))
+     # The union when the summary has one (a forked lane double-counts on the sum):
+     # overhead is wall minus the minutes anyone was working, and `overlap_min` is
+     # reported beside it so two cards holding the clock at once is visible rather
+     # than inferred from a negative overhead.
+     agent = summary.get("agent_union_min")
+     if agent is None:
+         agent = summary.get("agent_work_min")
+     if cards and not agent:
+         out.append(("WARNING", "E10", f"agent_work_min={agent!r} with {len(cards)} cards"))
+     return out, {"cards": cards, "agent": agent, "wall": summary.get("wall_min"),
+@@ -395,59 +422,107 @@ def board_findings(slug, runs_dir):
+         for line in procs.stdout.splitlines():
+             if line.strip():
+                 text = worker_outlived_run(line, cards)
+                 if text:
+                     out.append(("WARNING", "E8", text))
+     except Exception:
+         pass
+     return out
+ 
+ 
++def _load_json(path, code, what):
++    """(value, finding) for a manifest or a summary the audit depends on.
++
++    A malformed file is a FINDING, never a traceback: this tool's exit code is the
++    board's definition of done, and a file that will not parse is exactly when a human
++    needs the report (2026-09-23 review, Critical 4). A missing file is (None, None) —
++    what absence means differs per file, so the caller says it. A file that parses to
++    something other than an object is malformed too: every reader below calls .get().
++    """
++    try:
++        with open(path, encoding="utf-8") as f:
++            value = json.load(f)
++    except FileNotFoundError:
++        return None, None
++    except (OSError, ValueError) as e:
++        return None, ("ERROR", code, f"{what} is not readable JSON ({e})")
++    if not isinstance(value, dict):
++        return None, ("ERROR", code, f"{what} is not a JSON object "
++                                     f"(got {type(value).__name__})")
++    return value, None
++
++
+ def audit(runs_dir, board_dir=None):
+     board_dir = board_dir or board_dir_for(runs_dir)
+-    cfg = {}
+     cfg_path = os.path.join(board_dir, "board.json")
+-    if os.path.exists(cfg_path):
+-        cfg = json.load(open(cfg_path))
++    cfg, cfg_finding = _load_json(cfg_path, "E4", "board.json")
++    if cfg is None and cfg_finding is None:
++        # NOT a silent `cfg = {}`: an empty cfg disarms the per-card ceiling
++        # (ceiling_minutes -> None, and E6 is guarded on it), empties auto-gates (a held
++        # auto-gate grades INFO instead of WARNING) and makes the slug the directory
++        # name. Measured 2026-09-23: 90 agent minutes under a 60m ceiling, no
++        # board.json -> exit 0, "0 error(s), 0 warning(s)" (review Critical 3).
++        cfg_finding = ("ERROR", "E4",
++                       f"no board.json at {cfg_path} — the per-card ceiling, auto-gates "
++                       f"and the board's end state could not be checked")
++    cfg = cfg or {}
+     slug = cfg.get("slug") or os.path.basename(board_dir)
+     ceiling = ceiling_minutes(cfg.get("max-runtime"))
+ 
+     findings, stats = driver_findings(read(os.path.join(runs_dir, "driver.log")),
+                                      cfg.get("auto-gates") or ())
++    # BEFORE the mid-flight block: that block rewrites only E1 lines, so this finding
++    # survives it, and "the manifest is gone" is worth saying even mid-flight.
++    if cfg_finding:
++        findings.append(cfg_finding)
+     if any(c == "E1" and "did not finish" in t for _s, c, t in findings):
+         # Mid-flight: one line beats a cascade of E4/E7/E12 that all mean the
+         # same thing (the auditor was run too early), and the cause is a person
+         # reading a board that is still working.
+         #
+         # The refusal is about THIS RUN, never about the driver: a serve-mode driver
+         # stays up after `ALL GATES COMPLETE` by design, and a finished run audits
+         # perfectly well underneath it. A live driver is the good case here — it says the
+         # run will finish — so the line names the run's state and gives the driver as the
+         # reason to WAIT. Naming the process first reads as "kill it to audit", which is
+         # never the answer and throws away a driver that was about to write the banner.
+         alive, pid = _driver_alive(runs_root(runs_dir))
+         wording = (f"this run has not finished yet — no ALL GATES COMPLETE in its "
+                    f"driver.log, and the board's driver (pid {pid}) is still working. "
+                    f"Wait for the banner, then audit; the driver may keep serving."
+                    if alive
+                    else f"the driver died without a halt or the finish banner — no live "
+-                        f"process holds runs/driver.lock (pid {pid or 'none'}); restart "
++                        f"process holds runs/driver.lock "
++                        f"(pid {'none' if pid is None else (pid or 'unreadable')}); restart "
+                         f"it with start-board.sh")
+         findings = [(s, c, wording if c == "E1" else t) for s, c, t in findings]
+         return findings, [], {}
+-    s_findings, s_stats = summary_findings(
+-        json.load(open(os.path.join(runs_dir, "run-summary.json")))
+-        if os.path.exists(os.path.join(runs_dir, "run-summary.json")) else None, ceiling)
+-    findings += s_findings
+-    stats.update(s_stats)
+-
+-    recs = CHAIN.load(runs_dir)
++    summary, s_finding = _load_json(os.path.join(runs_dir, "run-summary.json"),
++                                    "E4", "run-summary.json")
++    if s_finding:
++        # ONE finding, not a cascade: "the run wrote no summary" would be a lie about a
++        # file that is there and truncated, and the malformed file is the cause a human
++        # needs. summary_findings is skipped so it cannot report the absence underneath.
++        findings.append(s_finding)
++    else:
++        s_findings, s_stats = summary_findings(summary, ceiling)
++        findings += s_findings
++        stats.update(s_stats)
++
++    recs, torn = CHAIN.load_report(runs_dir)
++    if torn:
++        # The count is the difference between "tolerated a torn write" and "silently
++        # audited a run whose chain is incomplete" (2026-09-23 review, Critical 5).
++        findings.append(("ERROR", "E3",
++                         f"chain.jsonl: {torn} truncated record(s) skipped — the file is "
++                         f"appended by a process that can be killed mid-write, so what "
++                         f"they said is not in this audit"))
+     rows, chain_findings = CHAIN.analyze(recs, runs_dir) if recs else ([], [])
+     for f in chain_findings:
+         findings.append(("ERROR", "E3", f))
+     findings += result_findings(rows)
+     findings += result_text_findings(rows)
+     started = None
+     for rec in reversed(recs or []):
+         ts = rec.get("ts")
+         if ts:
+             try:
+@@ -563,20 +638,20 @@ def main(argv=None):
+         # `ALL GATES COMPLETE`), which is a phantom E1.
+         sys.stderr.write(
+             f"{runs} is not a kanban run — run-audit.py reads run-summary.json, "
+             f"chain.jsonl and verdicts.jsonl, and this directory has no "
+             f"run-summary.json. Nothing in this tree audits it.\n")
+         return 2
+     findings, rows, stats = audit(runs, a.board)
+     if a.json:
+         print(json.dumps({"findings": findings, "rows": rows, "stats": stats}, indent=2))
+         return 1 if any(f[0] in ("ERROR", "WARNING") for f in findings) else 0
+-    cfg_path = os.path.join(a.board or board_dir_for(a.runs), "board.json")
+-    ceiling = None
+-    if os.path.exists(cfg_path):
+-        rt = json.load(open(cfg_path)).get("max-runtime")
+-        ceiling = ceiling_minutes(rt)
++    # audit() already reported a missing or malformed manifest; the human report only
++    # needs the ceiling, and must not traceback on the file audit() just reported.
++    cfg, _finding = _load_json(os.path.join(a.board or board_dir_for(a.runs), "board.json"),
++                               "E4", "board.json")
++    ceiling = ceiling_minutes((cfg or {}).get("max-runtime"))
+     return report(findings, rows, stats, ceiling)
+ 
+ 
+ if __name__ == "__main__":
+     sys.exit(main())
+diff --git a/driver/run.py b/driver/run.py
+index 527604e..c026297 100755
+--- a/driver/run.py
++++ b/driver/run.py
+@@ -1,20 +1,20 @@
+ #!/usr/bin/env python3
+ """Driver for generic kanban board missions.
+ 
+ The driver never commits. Gates wait for a human unless the lane's idea (or
+ the board default) sets auto-gates, in which case the gate auto-completes on
+ a PASS verdict with staged-file evidence — still no commit.
+ 
+ Usage: driver/run.py [--serve] [--once] [--timeout-min 120]
+ """
+-import contextlib, json, shutil, subprocess, sys, time, os, re, datetime
++import contextlib, json, math, shutil, subprocess, sys, time, os, re, datetime
+ 
+ # No default: this repo has no one board, and a stale default would drive the
+ # wrong one. Enforced in main(), not here — the test suite imports this module.
+ BOARD = os.environ.get("BOARD", "")
+ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ ONCE = "--once" in sys.argv
+ # The main scenario is a board that stays up: you type an idea into the
+ # dashboard, promote it out of Triage, and the run starts. Exiting when the
+ # gates close would make every new idea a terminal command again.
+ SERVE = "--serve" in sys.argv
+@@ -51,23 +51,32 @@ CURRENT_RUN = os.path.join(RUNS_ROOT, "current")   # a file naming the live run
+ 
+ def _read_current_run():
+     """The run id runs/current names, or None. A pointer FILE, not a symlink: the
+     per-card paths are rendered into card bodies at filing time and swept from the
+     git index by pathspec, and both break on an alias — a worker orphaned by run N
+     would resolve `current` at write time and land in run N+1's directory, which is
+     the overwrite this layout exists to prevent (F2), while `git diff --cached --
+     runs/...` does not match through a symlink at all (E14)."""
+     try:
+         with open(CURRENT_RUN) as f:
+-            return f.read().strip() or None
++            named = f.read().strip() or None
+     except OSError:
+         return None
++    if named is not None and not file_lanes.is_safe_run_name(named):
++        # A pointer naming a path, not a run: joined onto RUNS_ROOT it escapes the
++        # board's own tree, and the same string is rendered into every card body
++        # (2026-09-23 review, Important 11). Say so, and read it as "no live run".
++        # print, not log(): this runs at import, before log() exists.
++        print(f"NOTICE: {CURRENT_RUN} names {named!r}, which is not a run directory "
++              f"name — ignoring it", flush=True)
++        return None
++    return named
+ 
+ 
+ # The run directory this process has actually seen on disk. A `current` pointer to a
+ # folder the human already trashed is a stale pointer, not a disappearance; only a
+ # directory that was there and went away stops the board.
+ 
+ 
+ class RunState:
+     """Everything this process remembers between ticks — one home, one reset.
+ 
+@@ -137,20 +146,23 @@ STATE = RunState()
+ 
+ 
+ def _remember_run_dir(path):
+     STATE.run_dir_seen["path"] = os.path.abspath(path) if path and os.path.isdir(path) else None
+ 
+ 
+ def use_run(run_id):
+     """Point every per-run path at runs/<run-id>. Reassigns the module globals so
+     the paths stay plain strings: a hundred call sites join them, tests patch
+     RUN_DIR, and a lazy accessor would buy nothing."""
++    if run_id and not file_lanes.is_safe_run_name(run_id):
++        raise SystemExit(f"{run_id!r} is not a run directory name — a run id is one "
++                         f"path segment under {RUNS_ROOT} (review Important 11)")
+     STATE.run_dir = os.path.join(RUNS_ROOT, run_id) if run_id else RUNS_ROOT
+     STATE.snap_dir = os.path.join(STATE.run_dir, "snapshots")
+     STATE.timing_path = os.path.join(STATE.run_dir, "timing.jsonl")
+     STATE.cards_dir = os.path.join(STATE.run_dir, "cards")
+     STATE.verdicts_path = os.path.join(STATE.run_dir, "verdicts.jsonl")
+     _remember_run_dir(STATE.run_dir)
+     return STATE.run_dir
+ 
+ 
+ def mint_run(run_id, armed):
+@@ -204,25 +216,30 @@ use_run(_read_current_run())
+ 
+ 
+ def manifest():
+     """Board manifest, through the SAME reader: `card_render`
+     owns the file's shape, and a second `json.load` here is one edit away from two
+     answers. REPO is template_root (control files); WORKDIR is the only tree git
+     ever runs in — they differ when a board points elsewhere."""
+     try:
+         return card_render.read_board(BOARD_DIR)
+     except FileNotFoundError:
+-        # Same defaults create-board.sh prints in --help, so a board that loses
+-        # its manifest degrades to the documented shape rather than silently
+-        # growing integration cards nobody asked for.
+-        return {"default-workdir": os.path.join(BOARD_DIR, "work"), "lanes": 1,
+-                "integration-tests": False, "auto-gates": []}
++        # Exactly what read_board returns for a board.json of `{}`: every consumer
++        # already falls back to board_schema.OPTIONS for a key the manifest omits, so
++        # "no manifest" and "a manifest that names nothing" now mean the same board —
++        # the option table's defaults, integration tests ON. The old four-key fallback
++        # said `integration-tests: False` against the table, create-board.sh's own
++        # --help and its profile pre-flight, while claiming to match the help
++        # (2026-09-23 review, Important 6 and the comment finding I40). main() refuses
++        # to start without a manifest (require_manifest), so this is the import-time
++        # and deleted-mid-run path only.
++        return {"slug": BOARD}
+ 
+ 
+ WORKDIR = manifest().get("default-workdir") or os.path.join(BOARD_DIR, "work")
+ 
+ 
+ 
+ def board_lane_count(state):
+     n = 0
+     for title in state:
+         m = re.match(r"^P(\d+):", title)
+@@ -292,47 +309,114 @@ def lane_graph(state):
+             code_rework = [p for p in ([newest_round(f"{b}{lane}-rev")
+                                         for b in CODE_REWORK_BASES]
+                                        + [newest_round(f"RVa{lane}-r")]) if p]
+             if c["code"] in ("RVa", "Gc"):
+                 parents += code_rework
+             rows.append((c["title"], parents, c["code"].lower(), lane))
+             prev = c["id"]
+     return rows
+ 
+ 
++class IdeaFileBlank(RuntimeError):
++    """`lane-<k>.md` exists and is empty.
++
++    Its own type because lanes.read_idea returns None for this AND for "no file at
++    all", and the driver read the one value two ways: the completion scan took it as
++    "no idea yet" and returned False for ever — a board that could never finish, with
++    nothing in the log saying why — while lane_refinement took it as "defaults apply"
++    (2026-09-23 review, types I6/T-6). An emptied idea file is neither.
++    """
++
++    def __init__(self, path):
++        super().__init__(f"{path} is empty — the driver cannot tell a resting lane from "
++                         f"an emptied idea; restore the idea or reset the board")
++        self.path = path
++
++
++def last_lane_with_idea(state):
++    """The highest lane, counting up from 1, that has an idea — 0 when lane 1 has none.
++
++    The chain stops at the first lane with no idea file. A lane whose file exists and
++    is BLANK halts the board here, loudly, instead of reading as that stop.
++    """
++    last = 0
++    for lane in range(1, board_lane_count(state) + 1):
++        try:
++            if lane_options(lane) is None:
++                break
++        except IdeaFileBlank as e:
++            record_halt(f"lane {lane}: {e}")
++            return 0
++        last = lane
++    return last
++
++
+ def lane_options(lane):
+-    parsed = lanes.read_idea(os.path.join(IDEAS_DIR, f"lane-{lane}.md"))
++    """This lane's RESOLVED options, or None when the lane has no idea file yet.
++
++    Shape: `board_schema.PER_LANE | {"idea"}` — the six typed per-lane option keys,
++    plus the idea's own body text under "idea". Every key is always present
++    (resolve_lane_options fills each from the option table). The call sites that still
++    read `.get("refinement", True)` do so for the suite's stubs, which return partial
++    dicts (28 tests, measured 2026-09-24) — not because this function can omit it.
++
++    None means "there is no idea for this lane": callers decide out loud what that
++    means rather than reinterpreting it as "defaults apply" (2026-09-23 review,
++    Important 7). A lane file that EXISTS and is blank raises IdeaFileBlank: it is not
++    "no idea", and it must not share that value.
++    """
++    path = os.path.join(IDEAS_DIR, f"lane-{lane}.md")
++    parsed = lanes.read_idea(path)
+     if parsed is None:
++        if os.path.exists(path):
++            raise IdeaFileBlank(path)
+         return None
+     headers, body = parsed
+     opts = lanes.resolve_lane_options(manifest(), headers, lane)
+     opts["idea"] = body
+     return opts
+ 
+ 
+ def lane_model_opts(lane):
+     """The model scope a lane's idea file NAMES — its header pair, or {}.
+ 
+     Deliberately NOT the resolved options: `resolve_lane_options` fills a missing
+     provider from the board, so a lane naming a local model on a board whose
+     provider is a cloud one would ask that cloud backend for a model it does not
+     serve. What `lanes.model_args` needs is the header's own words, with the board
+     as the fallback it already knows about — and the rework path needs them too: a
+     revision card that fell back to the worker's default model would silently change
+-    what the round tests on.
++    what the round tests on. Nothing else may be passed to `lanes.model_args` for a
++    lane's card from this file: `card_model_args` is the one call, so the two shapes
++    cannot come back.
+     """
+     parsed = lanes.read_idea(os.path.join(IDEAS_DIR, f"lane-{lane}.md"))
+     if parsed is None:
+         return {}
+     headers = board_schema.headers_to_cfg(parsed[0])
+     return {k: headers[k] for k in ("model", "provider") if k in headers}
+ 
++def card_model_args(code, lane):
++    """The `--model`/`--provider` flags for one of this lane's cards.
++
++    ALWAYS the lane's header pair (or the board's), never the resolved options:
++    resolve_lane_options fills a missing provider from the board, so a lane naming a
++    local model on a board whose provider is a cloud one would ask that cloud backend
++    for a model it does not serve — lane_model_opts' docstring says so, and open_lane
++    did it anyway (2026-09-23 review, Important 8; measured 2026-09-24: the resolved
++    shape produced ['--model', 'qwen38-27b', '--provider', 'cloud-provider'] where the
++    header shape produced ['--model', 'qwen38-27b']). Two call shapes is how the two
++    answers came about, so every lane-scoped call goes through here.
++    """
++    return lanes.model_args(code, manifest(), lane_model_opts(lane))
++
++
+ # Every CLI call is bounded: a hung `hermes` or `git` would stall the driver silently
+ # while its lock stays live, and start-board.sh would keep seeing a healthy driver.
+ CLI_TIMEOUT_S = 60
+ 
+ 
+ READ_VERBS = ("show", "list", "attachments", "runs", "events")
+ 
+ 
+ def kb(*args, capture=True):
+     if args[:1] and args[0] not in READ_VERBS:
+@@ -512,21 +596,22 @@ def _goal_args(assignee, code):
+ 
+ 
+ # How many rework rounds `latest_verdict_card` scans for a finished verdict. `max-reworks`
+ # caps the rounds a board can file (the shipped ones set 2-4), so the scan has to reach
+ # past that; the bound also stops a hand-renamed card from walking the board forever.
+ MAX_VERDICT_ROUND_SCAN = 10
+ 
+ 
+ def latest_verdict_card(state, lane, reviewer_prefix, final_code=None):
+     """(card, verdict text) of the newest review round that has FINISHED —
+-    (None, "") when none has.
++    (None, "") when none has, and (card, None) when the card is done with an empty
++    result and its runs could not be read (the verdict is UNKNOWN this tick).
+ 
+     Only the card's result field counts — the verdict contract lives there.
+     Falling back to run summaries (as this first did) read RVp1's parking
+     block summary ('parked: awaiting lane activation') as a verdict and held
+     Gp forever. `final_code` extends the scan (RVc is RVa's re-review).
+     """
+     cands = [reviewer_prefix, final_code] if final_code else [reviewer_prefix]
+     best_card, best_done = None, -1.0
+     for base in [b for b in cands if b]:
+         # The colon pins the base card: a bare "Gi1" also prefixes "Gi1-r2", and
+@@ -545,20 +630,25 @@ def latest_verdict_card(state, lane, reviewer_prefix, final_code=None):
+     if not best_card:
+         return None, ""
+     if (best_card.get("result") or "").strip():
+         return best_card, best_card.get("result")
+     # The card is done but its result field is empty — the reviewer completed
+     # with --summary only (E2E-2 did exactly that; e2e-1 used --result). The
+     # verdict prose then lives in the CLOSING RUN's summary. Accept ONLY a
+     # completed run: the parking block is also a run here, and that is how
+     # 'parked: awaiting lane activation' once masqueraded as a verdict.
+     runs = runs_util.board_runs(BOARD, best_card.get("id"))
++    if runs is None:
++        # UNKNOWN, not "no verdict": the runs CLI refused. Callers read None as "cannot
++        # judge this tick" — a gate says so instead of reading it as a rejection, and a
++        # card behind the review stays held (2026-09-23 review, Important 15).
++        return best_card, None
+     closed_ok = [r for r in runs if r.get("outcome") == "completed"]
+     if closed_ok:
+         last = max(closed_ok, key=lambda r: r.get("ended_at") or 0)
+         return best_card, (last.get("summary") or "").strip()
+     return best_card, ""
+ 
+ 
+ def latest_verdict(state, lane, reviewer_prefix, final_code=None):
+     """The gate-relevant verdict text — see latest_verdict_card."""
+     return latest_verdict_card(state, lane, reviewer_prefix, final_code)[1]
+@@ -711,41 +801,41 @@ def file_revision(state, lane, round_no, findings, base="P", reviewer_prefix="RV
+ 
+     rbody = render(rev_body_file)
+     rbody += (f"\nREVISION ROUND {round_no} of {max_rounds} (max {max_rounds}, then human "
+               f"escalation).\n\n{sender} sent this back. Address EXACTLY:\n{findings}\n"
+               f"Fix only these, re-stage, re-write the hand-off file in your scratch "
+               f"directory, complete with a change summary.\n")
+     rbody += _full_verdict_pointer(verdict_card_id)
+     args = _create_args(rev_title, rbody, rev_assignee,
+                         f"{BOARD}-rev-{base}{lane}-{round_no}", runtime,
+                         _skill_args(base) + _goal_args(rev_assignee, base)
+-                        + lanes.model_args(base, manifest(), lane_model_opts(lane)))
++                        + card_model_args(base, lane))
+     rev_id = json.loads(kb(*args))["id"]
+ 
+     rrbody = render(rr_body_file)
+     if kind == "plan":
+         # A re-review is a verdict card like the review it repeats: told to act
+         # "as a gate-holder", it could complete without PASS/REJECT and hold Gp
+         # forever with no further round filed.
+         rrbody += (f"\nRE-REVIEW ROUND {round_no + 1} of {max_rounds + 1}. The plan was revised "
+                    f"after a REJECT; the findings are on the parent revision card. Re-check "
+                    f"EVERY checklist item against the revised plan, not only the fixed ones, "
+                    f"and put the verdict first in the result field: PASS: or REJECT:.\n")
+     else:
+         rrbody += (f"\nRE-GATE ROUND {round_no + 1} of {max_rounds + 1}. A previous gate-holder "
+                    f"sent the work back with the findings on the parent revision card. Verify "
+                    f"they are addressed, then complete this card exactly as a gate-holder would.\n")
+     # A re-review IS a review, so the review pin travels with it: without this a rework
+     # round would silently drop back to the worker's default model.
+     rr_args = _create_args(rr_title, rrbody, rr_assignee,
+                            f"{BOARD}-rr-{base}{lane}-r{round_no + 1}", runtime,
+-                           lanes.model_args(rr_code, manifest(), lane_model_opts(lane)),
++                           card_model_args(rr_code, lane),
+                            parent=rev_id)
+     rr_id = json.loads(kb(*rr_args))["id"]
+     kb("link", rr_id, gate_id)
+     # This gate now also guards the DOWNSTREAM card against starting while
+     # rework is in flight; the positional-parents check in tick() enforces it.
+     # STATE.opened stays untouched: the lane's option state is settled.
+     log(f"filed {kind} rework round {round_no}: {rev_title} + {rr_title}")
+     record_rework(lane, gate_code, round_no, [rev_title, rr_title], findings, state)
+ 
+ WORKDIR_FACTS = "workdir.json"          # written per run, beside its other state
+@@ -990,21 +1080,23 @@ def rework_owner(verdict_text):
+ 
+ def is_rework(text):
+     """The idea gate's send-back: the result's first word is REWORK, in any case."""
+     return bool(re.match(r"\s*REWORK\b", text or "", re.IGNORECASE))
+ 
+ 
+ def rework_answers(text, limit=4000):
+     return re.sub(r"^\s*REWORK\b[\s:—–-]*", "", text or "", flags=re.IGNORECASE).strip()[:limit]
+ 
+ 
+-VERDICT_GATES = frozenset({"Gi", "Gp", "Gc"})
++# From the ONE declaration of the gate vocabulary (board_schema.GATE_CODES): this was a
++# second literal set, with nothing pinning the two equal (2026-09-23 review, I12).
++VERDICT_GATES = frozenset(board_schema.GATE_CODES)
+ 
+ 
+ def verdict_parents(state, kind, lane):
+     """The parents of this candidate, from the *pruned* graph (the cards that hand it a verdict
+     rather than merely finishing). Read `lane_graph`, not LANE_CARDS: a board with
+     `integration-tests: false` relinks `Gc` to `RVa` when `RVc`/`TI` are archived."""
+     for _title, parents, k, ln in lane_graph(state):
+         if k == kind and ln == lane:
+             return parents or ()
+     return ()
+@@ -1025,43 +1117,62 @@ def held_by_verdict(state, kind, lane):
+     work back, and its rework round is filed later in the same tick, so a child released on
+     completion alone starts against work the review just rejected. Measured 2026-09-19 (`is-even`,
+     `nex-n25-mini`): `Gc1` unblocked 00:35:24 and the code rework was filed 00:35:26 — the gate was
+     briefly ready against the code its own review had rejected. Cards behind non-verdict parents
+     (`RVa` behind `C`, `RVp` behind `P`) are unaffected: those parents finish, they do not judge.
+     """
+     for parent in verdict_parents(state, kind, lane):
+         base = lanes.base_code(parent.split(":")[0])
+         if not (base.startswith("RV") or base in VERDICT_GATES):
+             continue
+-        if verdict_sends_it_back(latest_verdict(state, lane, base)):
+-            return True
++        verdict = latest_verdict(state, lane, base)
++        if verdict is None or verdict_sends_it_back(verdict):
++            return True          # None: unreadable this tick — hold, never release on it
+     return False
+ 
+ 
+ def md_section(text, name):
+     """Body of the `## name` section of a markdown file, up to the next heading."""
+     m = re.search(rf"^#+[ \t]*{re.escape(name)}\b[^\n]*\n(.*?)(?=^#+[ \t]|\Z)",
+                   text, re.IGNORECASE | re.MULTILINE | re.DOTALL)
+     return m.group(1) if m else ""
+ 
+ 
+ # A person answers a held gate with a COMMENT, because a comment is the one write
+ # every surface offers (CLI, browser dashboard, desktop app); the driver turns it into
+ # the gate's `--result`, so every verdict reader downstream is unchanged. The driver's
+ # own comments carry this author and are never read as a verdict.
+ DRIVER_AUTHOR = "kanban-driver"
+ GATE_READY_MARK = "GATE READY"
+ # The word alone, or the word and a delimiter: "Pass it to Anna" is a note, not a PASS.
+ _VERDICT_RE = re.compile(r"\s*(PASS|ACCEPT|REWORK)\s*(?:[:—–-]\s*(.*?))?\s*$",
+                          re.IGNORECASE | re.DOTALL)
++# A gate KIND is its code lowercased ("gc" -> "Gc"). The map is derived from
++# board_schema.GATE_CODES so it cannot drift from the schema's vocabulary; the human
++# names are prose and stay written out — tests/test_lanes_graph.py pins their keys to
++# the same set (2026-09-23 review, Important 12).
++GATE_CODE_OF = {code.lower(): code for code in board_schema.GATE_CODES}
+ GATE_NAMES = {"gi": "idea gate", "gp": "plan gate", "gc": "code gate"}
+-GATE_CODE_OF = {"gi": "Gi", "gp": "Gp", "gc": "Gc"}
++
++
++class UnknownGateKind(RuntimeError):
++    """A gate kind no declaration knows. Named so a tick's log says what is wrong
++    instead of a KeyError from inside a dict lookup (review Important 12)."""
++
++
++def gate_code_of(kind):
++    """The gate code for a lowercase kind ('gc' -> 'Gc'), or a named error."""
++    try:
++        return GATE_CODE_OF[kind]
++    except KeyError:
++        raise UnknownGateKind(f"{kind!r} is not a gate kind — the board's gates are "
++                              f"{', '.join(board_schema.GATE_CODES)}") from None
+ 
+ 
+ def verdict_code(state, v_card):
+     """The code of the review card a verdict came from ('RVp1-r2'), or ''."""
+     for t, c in state.items():
+         if v_card is not None and c.get("id") == v_card.get("id"):
+             return t.split(":")[0]
+     return ""
+ 
+ 
+@@ -1231,28 +1342,28 @@ def auto_gates():
+ 
+     Board-level, so it is read here and never from a lane's resolved options — which is
+     where it lived until 2026-09-16, and reading it there after the move raised
+     `KeyError: 'auto-gates'` every tick until the board halted."""
+     return manifest().get("auto-gates", board_schema.OPTIONS["auto-gates"][1])
+ 
+ 
+ def gate_action(state, title, kind, lane):
+     msg = _gate_action(state, title, kind, lane)
+     if msg.startswith("waiting:") and not board_schema.gate_is_auto(
+-            auto_gates(), GATE_CODE_OF[kind]):
++            auto_gates(), gate_code_of(kind)):
+         answer_early_verdicts(state, title, msg)
+     return msg
+ 
+ 
+ def _gate_action(state, title, kind, lane):
+     opts = lane_options(lane) or {}
+-    auto = board_schema.gate_is_auto(auto_gates(), GATE_CODE_OF[kind])
++    auto = board_schema.gate_is_auto(auto_gates(), gate_code_of(kind))
+     if kind == "gi":
+         # No reviewer card precedes this gate — the refinement's check IS a
+         # person reading it, which is the whole point of putting a gate here.
+         # So the only evidence the driver can record is that the artifact
+         # exists; the judgement is the human's and is never inferred.
+         refined = os.path.join(STATE.run_dir, "artifacts", f"lane-{lane}", "refined.md")
+         if not os.path.exists(refined) or not open(refined).read().strip():
+             return f"waiting: no refined idea at {refined}"
+         # Structural evidence: the researcher is the lane's sole factual
+         # authority, so the gate checks the hand-off's REQUIRED sections exist,
+@@ -1265,29 +1376,33 @@ def _gate_action(state, title, kind, lane):
+             return f"waiting: refined idea missing section(s): {', '.join(missing)}"
+         # Count Findings bullets only: the old scan ran to the end of the file and
+         # counted Success-criteria bullets as environment facts.
+         n_findings = len(re.findall(r"^[-*]\s+\S", md_section(text, "Findings"), re.MULTILINE))
+         if n_findings == 0:
+             return "waiting: refined idea Findings section is empty — no environment facts to plan against"
+         evidence = (f"refined idea present, all sections, "
+                     f"{n_findings} finding(s) with evidence ({os.path.getsize(refined)} bytes)")
+     elif kind == "gp":
+         v_card, verdict_txt = latest_verdict_card(state, lane, "RVp")
++        if verdict_txt is None:
++            return "waiting: plan review verdict unreadable — the runs CLI refused"
+         if verdict_token(verdict_txt) != "PASS":
+             return f"waiting: plan review verdict = {verdict_txt[:40]!r}"
+         STATE.gate_tag[title.split(":")[0]] = verdict_code(state, v_card)
+         # The plan review reads the plan by PATH, so the index count here is
+         # context, not the subject: "plan staged (0 files)" read as a
+         # contradiction in the run summary of 2026-09-11.
+         evidence = f"plan verdict PASS ({len(staged_files())} file(s) staged)"
+     else:  # gc
+         v_card, verdict_txt = latest_verdict_card(state, lane, "RVa", final_code="RVc")
++        if verdict_txt is None:
++            return "waiting: final review verdict unreadable — the runs CLI refused"
+         if verdict_token(verdict_txt) != "PASS":
+             return f"waiting: final review verdict = {verdict_txt[:40]!r}"
+         STATE.gate_tag[title.split(":")[0]] = verdict_code(state, v_card)
+         staged = staged_files()
+         # Say which outcome the lane reached, not just a count: "0 files staged"
+         # reads the same for a lane that verified what was already there (a valid
+         # ending) and one that did nothing. The gate's own reading of the tree is
+         # the file written just above by write_workdir_state.
+         what = (f"{len(staged)} file(s) staged" if staged else
+                 "no staged change — the lane ends with the tree as it found it")
+@@ -1339,20 +1454,23 @@ def record_timing(state):
+     snap = {t: {"status": c["status"], "id": c["id"]} for t, c in state.items()}
+     # enrich cards whose status CHANGED since last tick with their runs
+     # data (spawns/elapsed/budget) — self-contained evidence, no CLI at
+     # report time; only fires on transitions, so cost is a handful of calls
+     cache = STATE.timing_prev
+     for t, c in list(snap.items()):
+         prev = cache.get(t)
+         if prev is not None and prev.get("status") == c["status"]:
+             continue
+         runs = runs_util.board_runs(BOARD, c["id"])
++        if runs is None:
++            continue         # unreadable this tick: leave the cache, so the next
++                             # transition reads it again instead of recording nothing
+         closed = [r for r in runs
+                   if r.get("outcome") in runs_util.CLOSED_OUTCOMES
+                   and r.get("ended_at") and r.get("started_at")]
+         if closed:
+             last = closed[-1]
+             c["last_run"] = {"outcome": last.get("outcome"),
+                              "elapsed_min": round(runs_util.elapsed_min(last), 2),
+                              "started": last.get("started_at")}
+         if any(r.get("outcome") == "gave_up" for r in runs):
+             c["gave_up"] = True
+@@ -1371,24 +1489,27 @@ def record_timing(state):
+ def _card_log_entry(card):
+     """Self-contained record for the project card log: the card's INPUT
+     (body as filed, assignee, skill) and its RESULT (result/summary, run
+     history, comments). Written on every status change, appended in full —
+     JSONL, one complete line per event."""
+     r = {"id": card["id"], "title": card.get("title"), "status": card.get("status"),
+          "assignee": card.get("assignee"), "result": card.get("result"),
+          "body": card.get("body"), "at": datetime.datetime.now().isoformat(timespec="seconds"),
+          "epoch": time.time()}
+     runs = runs_util.board_runs(BOARD, card["id"])
+-    r["runs"] = [{"outcome": x.get("outcome"),
+-                  "elapsed_min": round(runs_util.elapsed_min(x), 2),
+-                  "summary": (x.get("summary") or "")[:400],
+-                  "started": x.get("started_at")} for x in runs]
++    # null, not [], when the runs CLI refused: the snapshot is evidence, and "no runs"
++    # is a claim this record cannot make (review Important 15)
++    r["runs"] = None if runs is None else [
++        {"outcome": x.get("outcome"),
++         "elapsed_min": round(runs_util.elapsed_min(x), 2),
++         "summary": (x.get("summary") or "")[:400],
++         "started": x.get("started_at")} for x in runs]
+     try:
+         att = kb("attachments", card["id"]).strip()
+         r["attachments"] = att.splitlines() if att else []
+     except Exception:
+         r["attachments"] = None
+     return r
+ 
+ 
+ def card_log(card):
+     """Append the card's full record (input + result) to
+@@ -1498,21 +1619,21 @@ def open_lane(state, lane):
+     # root is unblocked, because a card claimed with the wrong model spends its
+     # single attempt on it. `set-model` is the one call that re-points a parked card.
+     board_cfg = manifest()
+     for c in lanes.lane_cards(lane):
+         if c["assignee"] == "human-gate":
+             continue            # a gate is completed by a person or the driver,
+                                 # never spawned: a model flag on it buys nothing
+         card = live_card(state, c["code"], lane)
+         if not card or card["status"] in ("done", "archived"):
+             continue
+-        want = lanes.model_args(c["code"], board_cfg, opts)
++        want = card_model_args(c["code"], lane)
+         if want == lanes.model_args(c["code"], board_cfg):
+             continue
+         model = want[want.index("--model") + 1] if "--model" in want else "none"
+         extra = (["--provider", want[want.index("--provider") + 1]]
+                  if "--provider" in want else [])
+         kb("set-model", card["id"], model, *extra)
+         log(f"LANE {lane}: {c['code']}{lane} -> model {model}"
+             + (f" via {extra[1]}" if extra else ""))
+     if opts.get("model") and not board_cfg.get("model_override"):
+         log(f"LANE {lane}: model {opts['model']!r} applies to the whole lane and no "
+@@ -1738,21 +1859,26 @@ def ledger(record):
+     except OSError as e:
+         log(f"ledger: cannot append to {STATE.verdicts_path} ({e})")
+ 
+ 
+ def lane_refinement(lane):
+     """Does this lane run the idea's refinement? Resolved like every lane option
+     (the manifest's default, the idea's header winning either way) — and it decides
+     which card is the lane ROOT: I when the lane refines, P when it does not
+     (`lanes.lane_root_code` is positional, so it is asked, never assumed).
+     """
+-    return bool((lane_options(lane) or {}).get("refinement", True))
++    try:
++        opts = lane_options(lane)
++    except IdeaFileBlank as e:
++        record_halt(f"lane {lane}: {e}")
++        return True          # keep the root this lane was filed with; the halt stops the board
++    return bool((opts or {}).get("refinement", True))
+ 
+ 
+ def lane_paths_agree(state, lane):
+     """Does the lane's root card name the run the driver is writing to?
+ 
+     The root's body carries its <IDEA> path from filing time. If it does not name
+     the current run, the two disagree about where this lane's documents live, and
+     nothing downstream can recover: the worker writes where its body says and the
+     gate reads where the driver says.
+     """
+@@ -1966,30 +2092,33 @@ def record_chain_done(state):
+         result = (card.get("result") or "").strip()
+         attached = [a for a in attached if a]
+         # What a review DECIDED belongs in the chain next to what it was given:
+         # a verdict is the one hand-off that can send work backwards. A reviewer that
+         # completes through the tool's `summary` (its schema prefers it over the legacy
+         # `result`) leaves `result` empty, and the prose then lives in the CLOSING RUN's
+         # summary — the same fallback the gate reads, so the ledger and the gate never
+         # disagree about what was decided. Only a completed run counts: the parking block
+         # is a run here too.
+         if code.lower().startswith(VERDICT_CODES) and not result:
+-            try:
+-                closed = [r for r in runs_util.board_runs(BOARD, card["id"])
+-                          if r.get("outcome") == "completed"]
+-            except Exception:
+-                closed = []
++            runs = runs_util.board_runs(BOARD, card["id"])
++            closed = [r for r in (runs or []) if r.get("outcome") == "completed"]
+             if closed:
+                 last = max(closed, key=lambda r: r.get("ended_at") or 0)
+                 result = (last.get("summary") or "").strip()
++            unreadable = runs is None
++        else:
++            unreadable = False
+         verdict = ""
+-        if code.lower().startswith(VERDICT_CODES):
++        if unreadable:
++            verdict = None       # the ledger says "unknown", never an empty verdict
++                                 # that reads as "the review decided nothing" (I15)
++        elif code.lower().startswith(VERDICT_CODES):
+             verdict = "REWORK" if is_rework(result) else verdict_token(result)
+         staged = []
+         if lanes.base_code(code) in lanes.WORKER_CODES:
+             try:
+                 staged = sorted(staged_files())
+             except RuntimeError as e:
+                 log(f"chain: staged set for {card['title'][:20]} unavailable ({e})")
+         chain_record("done", card, lane, inputs=chain_inputs(card.get("body"), lane),
+                      attached=attached, result=result[:200], verdict=verdict, staged=staged)
+         if verdict:
+@@ -2327,21 +2456,21 @@ def _tick():
+     #    promotion runs on the next card.
+     rework_rounds(st)
+     st = board()
+     # 2b. No block holds the card downstream of a live rework round: `block --kind
+     # dependency` lands in `todo` and recompute_ready promotes it straight back once its
+     # parents are done (kanban_db._route_block), so it never held anything. The graph
+     # does: Gp waits for the plan round (lane_graph), TW waits for Gp, and P waits for
+     # the idea gate's verdict (held_by_verdict).
+     # 3. gates
+     for title, parents, kind, lane in lane_graph(st):
+-        if kind not in ("gi", "gp", "gc"):
++        if kind not in GATE_CODE_OF:
+             continue
+         card = st.get(title)
+         if not card or card["status"] == "done":
+             continue
+         if not parents_done(st, parents):
+             STATE.waiting.pop(card["id"], None)
+             continue
+         if kind == "gc":
+             # Read the tree the gate is about to judge: the card bodies point at the
+             # OPEN reading, taken when the lane started. Nothing is swept first —
+@@ -2358,25 +2487,21 @@ def _tick():
+                 STATE.waiting[card["id"]] = (msg, time.time())
+                 log(f"{title.split(':')[0]}: {msg}")
+             elif time.time() - since >= GATE_WAIT_S:
+                 code = title.split(":")[0]
+                 escalate(card["id"], code, gate_wait_reason(title, msg, kind),
+                          key=f"{code}-wait")
+                 return True
+         else:
+             STATE.waiting.pop(card["id"], None)
+     # done when every lane that HAS an idea reached its final gate
+-    last = 0
+-    for lane in range(1, board_lane_count(st) + 1):
+-        if lane_options(lane) is None:
+-            break
+-        last = lane
++    last = last_lane_with_idea(st)
+     if last == 0:
+         return False
+     # 4. last thing in the tick, so a card that just finished staging its
+     #    hand-off does not leave it in the index for the operator to find.
+     unstage_run_paths()
+     _, gc = title_of_prefix(st, f"Gc{last}:")
+     return bool(gc and gc["status"] == "done")
+ 
+ 
+ 
+@@ -2412,40 +2537,40 @@ def file_code_revision(state, lane, round_no, findings, owner="C", max_rounds=2,
+     rbody = render(body_file)
+     rbody += (f"\nREVISION ROUND {round_no} of {max_rounds} (max {max_rounds}, then human "
+               f"escalation).\n\n{sender} returned the work. Address EXACTLY:\n{findings}\n"
+               f"Fix only these, re-stage your files, re-write your patch file, and complete "
+               f"with a result that "
+               f"says what changed and names every test still failing.\n")
+     rbody += _full_verdict_pointer(verdict_card_id)
+     args = _create_args(rev_title, rbody, role,
+                         f"{BOARD}-rev-{owner}{lane}-{round_no}", runtime,
+                         _skill_args(owner) + _goal_args(role, owner)
+-                        + lanes.model_args(owner, manifest(), lane_model_opts(lane)))
++                        + card_model_args(owner, lane))
+     rev_id = json.loads(kb(*args))["id"]
+     rrbody = render("rva-body.txt")
+     rrbody += (f"\nRE-REVIEW ROUND {round_no + 1} of {max_rounds + 1}. The previous review's "
+                f"REJECT left findings on the parent revision card. Re-derive every check in this "
+                f"body against the CURRENT staged index, run the suite yourself, and put the "
+                f"verdict first in the result field: PASS: or REJECT:.\n")
+     if state.get(lanes.card_title("RVc", lane)):
+         # An RVc REJECT is re-reviewed by this card alone; without this the
+         # lane's final review (full suite, staged set) would never be repeated.
+         rrbody += ("This lane has integration tests, so this re-review is also its final "
+                    "review: run the FULL suite — unit and integration — from a clean run, and "
+                    "check the staged set and the success criteria as the final review does. "
+                    "That includes the final review's check (c): the integration tests exercise "
+                    "real behaviour, not mocks of the thing under test — a mocked collaborator "
+                    "is the defect this round is most likely to have repeated.\n")
+     # The re-review judges the revision: same pins as the review it repeats.
+     rr_args = _create_args(rr_title, rrbody, "coder",
+                            f"{BOARD}-rr-C{lane}-r{round_no + 1}", runtime,
+-                           lanes.model_args("RVa", manifest(), lane_model_opts(lane)),
++                           card_model_args("RVa", lane),
+                            parent=rev_id)
+     rr_id = json.loads(kb(*rr_args))["id"]
+     kb("link", rr_id, gate_id)
+     log(f"filed code rework round {round_no}: {rev_title} + {rr_title}")
+     record_rework(lane, "Gc", round_no, [rev_title, rr_title], findings, state)
+ 
+ 
+ def escalate(card_id, code, reason, key=None):
+     """Escalate a rework loop that exhausted its rounds — once per run.
+ 
+@@ -2728,21 +2853,21 @@ def halt_if_exhausted(st):
+         log(f"WARNING: halt comment failed ({e})")
+     record_halt(reason)
+     return STATE.halted["reason"]
+ 
+ 
+ 
+ 
+ def card_model(code, lane):
+     """The model a card of this code runs on ('ornith-35b'), or '' when the board names
+     none and the card runs its profile's own."""
+-    args = lanes.model_args(code, manifest(), lane_model_opts(lane))
++    args = card_model_args(code, lane)
+     return args[args.index("--model") + 1] if "--model" in args else ""
+ 
+ 
+ def concurrency_note(state, card):
+     """Which other cards were in flight beside this one, on the same model.
+ 
+     A model slot that serves one request at a time turns the lane's `TW ∥ C` fork into
+     two wall clocks: measured on is-even, 2026-09-16, both fork cards timed out at 1202s
+     of a 20m ceiling on a `--parallel 1` llama.cpp slot while the work itself was
+     minutes. The halt used to name only the card that tripped, which reads as a slow
+@@ -3208,31 +3333,42 @@ def preserve_artifacts():
+     and a patch is not one.
+ 
+     Called at each lane's code gate: the lane is finished, its cards are about
+     to be archived by the next refile, and this is the last moment the patches
+     are still collectable. They were written for exactly this and were never
+     called (found reading, not running — the one finding of that kind here).
+     """
+     import shutil, glob
+     out_dir = os.path.join(STATE.run_dir, "patches")
+     os.makedirs(out_dir, exist_ok=True)
++    # hermes_kanban_dir() honours HERMES_HOME and falls back to ~/.hermes, as
++    # worker_log_path already does. The literal ~/.hermes path copied NOTHING on a host
++    # whose HERMES_HOME is elsewhere, and the run still reported complete (2026-09-23
++    # review, Important 23).
++    attachments_root = os.path.join(hermes_kanban_dir(), "boards", BOARD, "attachments")
++    found = 0
+     st = board()
+     for title, card in st.items():
+         cid = (card or {}).get("id")
+         if not cid:
+             continue
+-        for src in glob.glob(os.path.expanduser(
+-                f"~/.hermes/kanban/boards/{BOARD}/attachments/{cid}/*.patch")):
++        for src in glob.glob(os.path.join(attachments_root, cid, "*.patch")):
++            found += 1
+             dst = os.path.join(out_dir, f"{cid}.patch")
+             if not os.path.exists(dst):
+                 shutil.copy2(src, dst)
+                 log(f"artifact kept: {os.path.relpath(dst, REPO)}")
++    if not found:
++        # A glob that matches nothing must not read like a run with nothing to keep:
++        # this function's whole job is provenance, and a silent empty return is how the
++        # hardcoded path went unnoticed.
++        log(f"artifacts: no provenance patches found under {attachments_root}")
+ 
+ def finish_run():
+     """Everything the driver does when the lane's last gate closes: the run's
+     summary, and then the banner that says the run is finished.
+ 
+     THE ORDER IS LOAD-BEARING. `run-audit.py` reads `ALL GATES COMPLETE` as "this
+     run finished" and only then demands `run-summary.json`; logged the other way
+     round (observed: 3 s in the is_even run of 2026-09-12) there is a window in
+     which an audit of a FINISHED run reports E4 "the run wrote no summary" — a
+     false finding that reads exactly like a missing artefact. A summary that fails
+@@ -3295,20 +3431,25 @@ def write_summary(state):
+         return
+     rows = {}
+     total = 0.0
+     intervals = []
+     for title, c in state.items():
+         if c["status"] != "done":
+             continue
+         runs = runs_util.board_runs(BOARD, c["id"])
+         mins = 0.0
+         gave_up = None
++        if runs is None:
++            # the summary is written once: say which minutes are unknown rather than
++            # recording 0.0 as fact (review Important 15)
++            rows[title] = {"card_id": c["id"], "agent_min": None, "runs_unreadable": True}
++            continue
+         for r in runs:
+             outcome = r.get("outcome")
+             if outcome in runs_util.CLOSED_OUTCOMES:
+                 mins += runs_util.elapsed_min(r)
+                 intervals.append((r.get("started_at"), r.get("ended_at")))
+                 if outcome == "gave_up":
+                     gave_up = True
+         rows[title] = {"card_id": c["id"], "agent_min": round(mins, 2)}
+         if gave_up:
+             rows[title]["gave_up"] = True
+@@ -3346,23 +3487,29 @@ def write_summary(state):
+         "lanes_with_ideas": [l for l in range(1, board_lane_count(state) + 1)
+                              if lane_options(l) is not None],
+         # Where this run's work is staged, and therefore where a gate commit lands.
+         # A run whose work directory is another repository has to say so, or its
+         # record does not describe where the deliverable went.
+         "workdir": os.path.abspath(WORKDIR),
+         "commit_target": commit_target(),
+         "workdir_facts": expected_workdir_facts(),
+         "workdir_drift": sorted(STATE.drift) if not STATE.run_finished[0] else [],
+     }
+-    with open(os.path.join(STATE.run_dir, "run-summary.json"), "w") as f:
++    # temp + os.replace, the pattern mint_run already uses for its pointer file: a kill
++    # between the open and the last byte left a TRUNCATED summary, and run-audit.py
++    # json.loads it — so one torn write made every later audit of that run die
++    # (2026-09-23 review, Critical 4).
++    tmp = path + ".tmp"
++    with open(tmp, "w") as f:
+         json.dump(summary, f, indent=2)
+-    log(f"summary written: {os.path.join(STATE.run_dir, 'run-summary.json')} ({total:.0f} min agent work)")
++    os.replace(tmp, path)
++    log(f"summary written: {path} ({total:.0f} min agent work)")
+ 
+ 
+ # Gates already announced this run — see gate_action.
+ # gate code -> what opened it. E4 reads the summary's gate text for "verdict PASS"
+ # (Gp/Gc) and "refined idea present" (Gi), and a human gate-holder's result is their
+ # decision, not that evidence — see gate_summary_text.
+ 
+ # The triage card body file_ideas writes always opens with this line, so a card
+ # the human typed from scratch in the dashboard is distinguishable from one the
+ # driver seeded — and the lane it belongs to is stated rather than guessed.
+@@ -3624,20 +3771,39 @@ def acquire_lock():
+ 
+     The rule itself — a DEAD holder's lockfile taken over rather than refused, a LIVE
+     one refused, release only while the lock is still ours — lives in `driver_lock`,
+     which every door takes: they all build in the same `work/`, so two of them must not
+     be able to disagree about who holds the board."""
+     _, note = driver_lock.take(RUNS_ROOT, "kill it or remove the lockfile")
+     if note:
+         log(note)
+ 
+ 
++def require_manifest_valid():
++    """Refuse a board whose manifest the engine cannot honour.
++
++    Every read of the manifest but validate_armed's was raw (2026-09-23 review,
++    Important 9), and board_schema's own docstring says a `max-runtime: "banana"`
++    reaches the engine — read by the auditor's parser as no ceiling at all. So a board
++    the option table refuses is not driven: the driver says what is wrong and stops
++    before it takes the lock or files anything.
++
++    A manifest edited WHILE the driver serves is still read leniently: this runs once,
++    at startup. That limit is deliberate — a live run is not killed by a mid-edit; the
++    next restart refuses it.
++    """
++    problems = board_schema.validate(manifest())
++    if problems:
++        raise SystemExit("board.json is not valid — the driver refuses to drive it:\n  "
++                         + "\n  ".join(problems))
++
++
+ def require_manifest():
+     """A driver with no manifest would silently run git in the template repo for
+     its whole life — the exact failure the template_root/workdir split exists to
+     prevent. Fail at startup instead. Import stays cheap so the tests can import
+     this module without a board."""
+     if not os.path.exists(BOARD_CFG):
+         raise SystemExit(
+             f"no manifest at {BOARD_CFG} — create the board first:\n"
+             f"  driver/create-board.sh --board boards/{BOARD}")
+ 
+@@ -3672,51 +3838,81 @@ def reset_attempt_budgets():
+                     "last_failure_error = NULL WHERE status != 'archived' "
+                     "AND (consecutive_failures != 0 OR last_failure_error IS NOT NULL)")
+             conn.close()
+             if cur.rowcount:
+                 log(f"attempt budgets reset for {cur.rowcount} card(s)")
+             return
+         except sqlite3.OperationalError as e:
+             log(f"WARNING: attempt-budget reset failed on {path}: {e}")
+ 
+ 
++def timeout_seconds(argv=None, serve=False):
++    """This driver's wall-clock cap in seconds, or None for no cap.
++
++    An explicit `--timeout-min N` (or `--timeout-min=N`) wins in BOTH modes, and a
++    repeated flag reads the LAST value, as argparse does everywhere else. start-board.sh
++    relies on the first rule: it launches `--serve --timeout-min <board's timeout-min>`.
++    With no flag, a serving driver has no cap — it is a standing process, and a 2h cap
++    would drop the board and leave the next idea unattended until cron noticed — and a
++    one-shot driver gets 120 minutes.
++
++    The old scan took sys.argv.index(a) + 1, so the `=` form raised IndexError at
++    startup and a repeated flag always read the FIRST value (2026-09-23 review,
++    Important 24; prior T-27). A value that is not a finite, positive number of
++    minutes is a usage error, never a traceback — `float()` also accepts 'nan' and
++    'inf', and a nan cap would never fire.
++    """
++    argv = list(sys.argv[1:] if argv is None else argv)
++    seen, value = False, None
++    for i, a in enumerate(argv):
++        if a == "--timeout-min":
++            seen, value = True, (argv[i + 1] if i + 1 < len(argv) else None)
++        elif a.startswith("--timeout-min="):
++            seen, value = True, a.split("=", 1)[1]
++    if not seen:
++        return None if serve else 120 * 60.0
++    try:
++        minutes = float(value)
++    except (TypeError, ValueError):
++        minutes = float("nan")
++    if not math.isfinite(minutes) or minutes <= 0:
++        raise SystemExit(f"--timeout-min wants a positive number of minutes, got {value!r}")
++    return minutes * 60
++
++
+ def main():
+     if not BOARD:
+         raise SystemExit("BOARD=<slug> is required — driver/start-board.sh sets it; "
+                          "there is no default board")
+     require_manifest()
++    require_manifest_valid()
+     acquire_lock()
+     # Say which run this process is on. A restart REJOINS the run runs/current
+     # names — it must not mint one, because the cards already filed carry their
+     # run's paths in their bodies and a new directory would leave every hand-off
+     # pointing at a tree nothing writes to.
+     joined = _read_current_run()
+     # A board-level log is append-only across runs, so mark where this driver's
+     # block begins: `tail` on a board driven several times in a day otherwise
+     # shows the previous run's last line as if it were this one's (measured
+     # 2026-09-13: a fresh run's lines sat under the previous night's).
+     log(f"--- driver start: board={BOARD} pid={os.getpid()} "
+         f"run={joined or 'none yet'} ---")
+     if joined:
+         log(f"rejoined run {joined}: {os.path.relpath(STATE.run_dir, REPO)}")
+         rejoin_chain()
+     else:
+         log("no run yet — the first armed idea mints one")
+     reset_attempt_budgets()
+     t0 = time.time()
+     write_summary._t0 = t0          # wall_min in the summary is measured from here
+-    # A serving driver is a standing process; a 2h cap would drop the board every
+-    # two hours and leave the next idea unattended until cron noticed.
+-    timeout = None if SERVE else 120 * 60
+-    for a in sys.argv:
+-        if a.startswith("--timeout-min"):
+-            timeout = float(sys.argv[sys.argv.index(a) + 1]) * 60
++    timeout = timeout_seconds(serve=SERVE)
+     idle = False
+     before = STATE.mutations[0]
+     while True:
+         if STATE.halted["reason"]:
+             # Recorded mid-tick (escalate): stop before an armed idea is adopted, or a
+             # fresh run is minted and then abandoned by this same exit.
+             log("BOARD HALTED — driver exiting; board state left for human inspection")
+             return 1
+         try:
+             # A new idea outranks the current tick: adopt it, refile, and let the
+diff --git a/driver/runs_util.py b/driver/runs_util.py
+index 68c6627..b0ccc95 100644
+--- a/driver/runs_util.py
++++ b/driver/runs_util.py
+@@ -27,37 +27,43 @@ def _warn_once(msg):
+     """A silent [] reads as "this card has no runs". A refused CLI call therefore
+     made the timing report print 0.0 min of agent work for a 9.1-minute run
+     (2026-09-11); say it out loud instead, once per distinct message."""
+     if msg in _WARNED:
+         return
+     _WARNED.add(msg)
+     print(f"WARNING: {msg}", file=sys.stderr)
+ 
+ 
+ def board_runs(board, card_id, timeout=30):
+-    """A card's runs as dicts (kanban _RUNS_RUN_FIELDS), [] on any failure.
++    """A card's runs as dicts (kanban _RUNS_RUN_FIELDS); None when the CLI refused.
++
++    `[]` is DATA — this card has no runs — and a refused or failed call is not that.
++    The two were one value and callers read the second: a gate parked for ten minutes
++    and then halted naming a review that had said nothing, the chain wrote an empty
++    verdict into the ledger, and the timing report printed 0.0 min as fact (2026-09-23
++    review, Important 15). Every caller must handle None.
+ 
+     The CLI call carries `cli_env()`: this module is used by the timing report
+     and by the driver's verdict fallback, so a leaked child-context marker here
+     silently reported empty evidence for every card.
+     """
+     try:
+         r = subprocess.run(
+             ["hermes", "kanban", "--board", board, "runs", card_id, "--json"],
+             capture_output=True, text=True, timeout=timeout, env=cli_env())
+         if r.returncode != 0:
+             _warn_once(f"board_runs {board} {card_id}: {cli_error(r.stderr)}")
+-            return []
++            return None
+         return json.loads(r.stdout)
+     except Exception as e:
+         _warn_once(f"board_runs {board} {card_id}: {e}")
+-        return []
++        return None
+ 
+ 
+ def elapsed_min(run):
+     """Agent minutes for one CLOSED run; 0.0 for anything without both ends."""
+     try:
+         if not run.get("ended_at") or not run.get("started_at"):
+             return 0.0
+         return max(0, int(run["ended_at"]) - int(run["started_at"])) / 60
+     except (KeyError, TypeError, ValueError):
+         return 0.0
+diff --git a/driver/timing-report.py b/driver/timing-report.py
+index cd7b3b3..b25db9d 100644
+--- a/driver/timing-report.py
++++ b/driver/timing-report.py
+@@ -103,21 +103,21 @@ def transitions(snaps):
+     return seen
+ 
+ def runs_elapsed(card_id):
+     """Closed runs for a card, via the shared runs --json parser.
+ 
+     The text table this used to parse formats elapsed as 9s/45m/1.2h and the
+     old column math misread `45m` as 4.0 minutes (parts[-2] grabs the PROFILE
+     column once a summary line shifts the row); the JSON fields are exact.
+     """
+     out = []
+-    for r in runs_util.board_runs(BOARD, card_id):
++    for r in runs_util.board_runs(BOARD, card_id) or []:   # None handled in main (T25)
+         if r.get("outcome") in runs_util.CLOSED_OUTCOMES \
+                 and r.get("ended_at") and r.get("started_at"):
+             out.append({"outcome": r["outcome"],
+                         "elapsed_min": runs_util.elapsed_min(r),
+                         "started_at": r.get("started_at"), "ended_at": r.get("ended_at"),
+                         "note": (r.get("summary") or r.get("error") or "")[:80]})
+     return out
+ 
+ def parse_elapsed_minutes(el_raw):
+     """Legacy text-format parser, kept for rows already stored in old
+diff --git a/tests/test_open_lane.py b/tests/test_open_lane.py
+index b21629e..25c43e1 100644
+--- a/tests/test_open_lane.py
++++ b/tests/test_open_lane.py
+@@ -1,17 +1,17 @@
+-import card_render
+ import json
+ import os
+ import sys
+ 
+ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "template"))
+ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "driver"))
++import card_render
+ import lanes
+ import run
+ 
+ 
+ def _state(root_status="ready"):
+     """One lane, its root already unblocked — the state --once leaves behind."""
+     st = {lanes.card_title(c, 1): {"id": f"id-{c}", "status": "blocked",
+                                    "title": lanes.card_title(c, 1)}
+           for c in ("Gi", "P", "RVp", "Gp", "TW", "C", "RVa", "TI", "RVc", "Gc")}
+     st[lanes.card_title("I", 1)] = {"id": "id-I", "status": root_status,
+@@ -55,20 +55,25 @@ def _board_env(monkeypatch, tmp_path, calls, it=False, ut=True):
+     # chain.jsonl/halt.txt into the repo's boards/runs (BOARD is "" at import)
+     monkeypatch.setattr(run.STATE, "run_dir", str(tmp_path / "runs"))
+     # A run directory exists on disk for the whole life of a run — the driver now
+     # stops when its own directory disappears (nothing in the template removes it, so
+     # a missing one means someone else did), and a fixture without it is not a run.
+     (tmp_path / "runs").mkdir(exist_ok=True)
+     monkeypatch.setattr(run, "board", lambda: _state())
+     monkeypatch.setattr(run, "record_timing", lambda st: None)
+     monkeypatch.setattr(run, "halt_if_exhausted", lambda st: False)
+     monkeypatch.setattr(run, "rework_rounds", lambda st: None)
++    # Hermetic: a review card here is `done` with no result, so the verdict fallback
++    # asks the runs CLI. Unstubbed, that call reached the REAL `hermes` (or found none),
++    # and since a refused call is now UNKNOWN — which holds the cards behind the review
++    # (review Important 15) — the outcome depended on the host.
++    monkeypatch.setattr(run.runs_util, "board_runs", lambda *a, **k: [])
+     monkeypatch.setattr(run, "lane_options",
+                         lambda lane: {"integration-tests": it, "unit-tests": ut, "auto-gates": [],
+                                       "idea": "## Idea 1: is_even\n"})
+     monkeypatch.setattr(run, "IDEAS_DIR", str(tmp_path))
+     monkeypatch.setattr(run.STATE, "snap_dir", str(tmp_path / "snapshots"))
+     monkeypatch.setattr(run, "SERVE", False)
+     run.STATE.opened.clear()
+     # tick() also remembers which gate messages it has already logged
+     run.STATE.waiting.clear()
+     run.STATE.tick_error.update(sig=None, n=0)
+@@ -125,20 +130,23 @@ def test_opening_a_lane_re_points_its_cards_at_the_lanes_model(monkeypatch, tmp_
+     on it. The review keeps the board's pin, and a gate is left alone: nothing
+     spawns it, so a model flag on it buys nothing."""
+     calls = []
+     _board_env(monkeypatch, tmp_path, calls, it=False)
+     monkeypatch.setattr(run, "manifest", lambda: {
+         "model": "qwen38-27b", "provider": "llama-swap",
+         "model_override": "glm-5.3-flash", "provider_override": "opencode-go"})
+     monkeypatch.setattr(run, "lane_options", lambda lane: {
+         "integration-tests": False, "unit-tests": True, "auto-gates": [],
+         "model": "muse-glimmer-30b", "provider": "llama-swap", "idea": "## Idea 1: is_even\n"})
++    # the lane's HEADER pair — what open_lane re-points with (review Important 8)
++    monkeypatch.setattr(run, "lane_model_opts",
++                        lambda lane: {"model": "muse-glimmer-30b", "provider": "llama-swap"})
+     run.tick()
+     sets = {c[1]: c[2:] for c in calls if c[0] == "set-model"}
+     for cid in ("id-I", "id-P", "id-TW", "id-C"):
+         assert sets[cid] == ("muse-glimmer-30b", "--provider", "llama-swap"), cid
+     # the review was filed with the pin already, so it is not re-pointed at all...
+     assert "id-RVa" not in sets, sets
+     # ...and a gate is never re-pointed: nothing spawns it
+     for gate in ("id-Gi", "id-Gp", "id-Gc"):
+         assert gate not in sets, (gate, sets)
+     run.STATE.opened.clear()
+@@ -148,20 +156,22 @@ def test_a_lane_without_a_pin_re_points_its_review_too(monkeypatch, tmp_path):
+     """With no `model_override` the review is just another card: the lane's model
+     reaches it, and the driver says so out loud (the door prints the board-level
+     form of the same note)."""
+     calls = []
+     _board_env(monkeypatch, tmp_path, calls, it=False)
+     monkeypatch.setattr(run, "manifest", lambda: {"model": "qwen38-27b",
+                                                   "provider": "llama-swap"})
+     monkeypatch.setattr(run, "lane_options", lambda lane: {
+         "integration-tests": False, "unit-tests": True, "auto-gates": [],
+         "model": "muse-glimmer-30b", "provider": "llama-swap", "idea": "## Idea 1: is_even\n"})
++    monkeypatch.setattr(run, "lane_model_opts",
++                        lambda lane: {"model": "muse-glimmer-30b", "provider": "llama-swap"})
+     run.tick()
+     sets = {c[1]: c[2:] for c in calls if c[0] == "set-model"}
+     assert sets["id-RVa"] == ("muse-glimmer-30b", "--provider", "llama-swap"), sets
+     run.STATE.opened.clear()
+ 
+ 
+ def test_a_lane_that_names_no_model_re_points_nothing(monkeypatch, tmp_path):
+     calls = []
+     _board_env(monkeypatch, tmp_path, calls, it=False)
+     run.tick()
+@@ -887,10 +897,28 @@ def test_auto_gates_is_read_from_the_manifest_not_the_lane_options(monkeypatch):
+     `lane_options` raised `KeyError: 'auto-gates'` until the board halted."""
+     import inspect
+     import run as r
+     for fn in (r.open_lane, r._gate_action, r.gate_action, r.write_summary):
+         src = inspect.getsource(fn)
+         assert "opts['auto-gates']" not in src and 'opts.get("auto-gates")' not in src, fn.__name__
+     monkeypatch.setattr(r, "manifest", lambda: {"auto-gates": ["Gi"]})
+     assert r.auto_gates() == ["Gi"]
+     monkeypatch.setattr(r, "manifest", lambda: {})
+     assert r.auto_gates() == []
++
++
++def test_opening_a_lane_never_pairs_its_model_with_the_boards_provider(monkeypatch, tmp_path):
++    """open_lane re-pointed with the RESOLVED options, which fill a missing provider
++    from the board: a lane naming only a local model on a board whose provider is a
++    cloud one was re-pointed at that cloud backend (review Important 8)."""
++    calls = []
++    _board_env(monkeypatch, tmp_path, calls, it=False)
++    monkeypatch.setattr(run, "manifest", lambda: {"model": "board-model",
++                                                  "provider": "cloud-provider"})
++    monkeypatch.setattr(run, "lane_options", lambda lane: {
++        "integration-tests": False, "unit-tests": True, "auto-gates": [],
++        "model": "qwen38-27b", "provider": "cloud-provider", "idea": "## Idea 1: is_even\n"})
++    monkeypatch.setattr(run, "lane_model_opts", lambda lane: {"model": "qwen38-27b"})
++    run.tick()
++    sets = {c[1]: c[2:] for c in calls if c[0] == "set-model"}
++    assert sets["id-C"] == ("qwen38-27b",), sets
++    run.STATE.opened.clear()
+diff --git a/tests/test_rework_loop.py b/tests/test_rework_loop.py
+index 01ba826..81c8b81 100644
+--- a/tests/test_rework_loop.py
++++ b/tests/test_rework_loop.py
+@@ -682,10 +682,47 @@ def test_the_plan_loop_holds_while_its_re_review_is_still_queued():
+           "RVp1-r2: plan review round 2 - lane 1": card("RVp1-r2", status="ready")}
+     assert run.rework_hold(st, 1, "P", "RVp") is True
+     st["RVp1-r2: plan review round 2 - lane 1"]["status"] = "done"
+     assert run.rework_hold(st, 1, "P", "RVp") is False
+ 
+ 
+ def test_the_idea_loop_still_holds_on_its_re_gate():
+     st = {"I1-rev-1: idea refinement round 1 - lane 1": card("I1-rev-1", status="done"),
+           "Gi1-r2: idea re-gate round 2 - lane 1": card("Gi1-r2", status="blocked")}
+     assert run.rework_hold(st, 1, "I", "Gi") is True
++
++
++# --- an unreadable runs history is UNKNOWN, not "no verdict" (review Important 15) ---
++
++def _done_review_with_empty_result(monkeypatch, runs):
++    st = full_lane_state()
++    st[lanes.card_title("RVp", 1)].update(status="done", result=None, completed_at=100)
++    monkeypatch.setattr(run.runs_util, "board_runs", lambda b, cid: runs)
++    return st
++
++
++def test_an_unreadable_runs_history_is_unknown_not_empty(monkeypatch):
++    """`latest_verdict_card` fell back to the closing run's summary through
++    board_runs, and a refused CLI returned [] — so "the review said nothing" and "I
++    could not read the review" were one answer, and the gate parked then halted naming
++    the review. Unknown is None now."""
++    st = _done_review_with_empty_result(monkeypatch, None)
++    assert run.latest_verdict(st, 1, "RVp") is None
++
++
++def test_a_card_behind_an_unreadable_verdict_stays_held(monkeypatch):
++    """Unknown must never RELEASE: the card behind the review waits this tick."""
++    st = _done_review_with_empty_result(monkeypatch, None)
++    assert run.held_by_verdict(st, "gp", 1)
++    st = _done_review_with_empty_result(
++        monkeypatch, [{"outcome": "completed", "summary": "PASS: fine", "ended_at": 100}])
++    assert not run.held_by_verdict(st, "gp", 1)
++
++
++def test_a_gate_says_the_verdict_is_unreadable_not_what_it_was(monkeypatch):
++    """The waiting line names the cause — the old line quoted an empty verdict, and ten
++    minutes of it halted the board naming the review."""
++    st = _done_review_with_empty_result(monkeypatch, None)
++    monkeypatch.setattr(run, "manifest", lambda: {"slug": "b"})
++    monkeypatch.setattr(run, "lane_options", lambda lane: {})
++    msg = run._gate_action(st, lanes.card_title("Gp", 1), "gp", 1)
++    assert msg.startswith("waiting:") and "unreadable" in msg, msg
+diff --git a/tests/test_run_audit.py b/tests/test_run_audit.py
+index 29e8dbb..1511817 100644
+--- a/tests/test_run_audit.py
++++ b/tests/test_run_audit.py
+@@ -674,10 +674,153 @@ def test_an_escalated_triage_card_is_an_e12_and_a_resting_one_is_not(monkeypatch
+     _stub_board_cli(monkeypatch, [{"id": "t1", "title": "C1: implement - lane 1",
+                                    "status": "running"},
+                                   {"id": "t2", "title": "Idea 1", "status": "triage",
+                                    "assignee": "coder"}])
+     assert codes(ra.board_findings("b", "unused"), "ERROR") == ["E12", "E12"]
+ 
+     _stub_board_cli(monkeypatch, [{"id": "t1", "title": "C1: implement - lane 1",
+                                    "status": "done"},
+                                   {"id": "t2", "title": "Idea 1", "status": "triage"}])
+     assert codes(ra.board_findings("b", "unused"), "ERROR") == []
++
++
++def test_an_unreadable_lock_says_unreadable_not_none(tmp_path, monkeypatch):
++    """`pid none` read as "there is no lock file" when the file was there and named
++    nothing readable — a different claim, and the one a human needs to act on (errors
++    S14). The run here is mid-flight (no finish banner), which is the only path that
++    names the lock at all."""
++    clean_probe(monkeypatch)
++    runs = fixture(tmp_path, log=GOOD_LOG[:-1])            # no ALL GATES COMPLETE
++    (tmp_path / "boards" / "b" / "runs" / "driver.lock").write_text("")
++    findings, _rows, _stats = ra.audit(runs)
++    assert any("unreadable" in t for _s, _c, t in findings), findings
++
++
++def test_a_driver_holding_the_kernel_lock_is_alive_whatever_pid_it_names(tmp_path):
++    """The auditor asks the kernel first: a live driver holds a flock on runs/driver.lock
++    for its whole life, so "is the driver alive" no longer depends on a pid the OS may
++    have reused."""
++    import fcntl
++    root = tmp_path / "runs"
++    root.mkdir()
++    lock = root / "driver.lock"
++    lock.write_text("999999")                               # names a dead pid
++    fd = os.open(lock, os.O_RDWR)
++    fcntl.flock(fd, fcntl.LOCK_EX)
++    try:
++        assert ra._driver_alive(str(root)) == (True, "999999")
++    finally:
++        os.close(fd)
++    assert ra._driver_alive(str(root)) == (False, "999999")
++    assert ra._driver_alive(str(tmp_path / "nowhere")) == (False, None)
++
++
++def test_a_missing_manifest_is_an_error_not_a_clean_run(tmp_path, monkeypatch):
++    """Measured 2026-09-23: a run with a 90-minute card under a declared 60m ceiling and
++    NO board.json audited "0 error(s), 0 warning(s)", exit 0 — cfg = {} left the ceiling
++    None (E6 is guarded on it), emptied auto-gates and made the slug the directory name.
++    The auditor's exit code is the board's definition of DONE (review Critical 3)."""
++    clean_probe(monkeypatch)
++    runs = fixture(tmp_path)
++    os.unlink(os.path.join(os.path.dirname(runs), "board.json"))
++    findings, _rows, _stats = ra.audit(runs)
++    assert any(s == "ERROR" and c == "E4" and "no board.json" in t
++               for s, c, t in findings), findings
++
++
++def test_a_present_manifest_still_audits_clean(tmp_path, monkeypatch):
++    """The other side: the new E4 must not fire when the manifest is there, or every
++    shipped run audits red."""
++    clean_probe(monkeypatch)
++    runs = fixture(tmp_path, chain_recs=worker_chain())
++    findings, _rows, _stats = ra.audit(runs)
++    assert not [t for _s, c, t in findings if "board.json" in t], findings
++
++
++def test_a_truncated_summary_is_one_e4_not_a_traceback(tmp_path, monkeypatch):
++    """write_summary was not atomic, so a driver killed mid-write left a truncated
++    run-summary.json and every later audit of that run died with JSONDecodeError
++    (review Critical 4). ONE finding — not also "the run wrote no summary"."""
++    clean_probe(monkeypatch)
++    runs = fixture(tmp_path)
++    with open(os.path.join(runs, "run-summary.json"), "w") as f:
++        f.write('{"wall_min": 13.1, "agent_w')
++    findings, _rows, _stats = ra.audit(runs)
++    summary_lines = [t for _s, c, t in findings if c == "E4" and "summary" in t]
++    assert len(summary_lines) == 1 and "not readable JSON" in summary_lines[0], findings
++
++
++def test_a_truncated_manifest_is_an_error_not_a_traceback(tmp_path, monkeypatch):
++    """The manifest half of the same finding — and the wording names the file's state,
++    not "no board.json" (review Critical 4)."""
++    clean_probe(monkeypatch)
++    runs = fixture(tmp_path)
++    (tmp_path / "boards" / "b" / "board.json").write_text('{"slug": "b", "auto-gates": [')
++    findings, _rows, _stats = ra.audit(runs)
++    assert any(s == "ERROR" and c == "E4" and "board.json is not readable JSON" in t
++               for s, c, t in findings), findings
++
++
++def test_a_manifest_that_is_not_an_object_is_an_error(tmp_path, monkeypatch):
++    """`[]` parses — and every reader calls .get() on it."""
++    clean_probe(monkeypatch)
++    runs = fixture(tmp_path)
++    (tmp_path / "boards" / "b" / "board.json").write_text("[]")
++    findings, _rows, _stats = ra.audit(runs)
++    assert any(c == "E4" and "not a JSON object" in t for _s, c, t in findings), findings
++
++
++def test_a_malformed_summary_exits_nonzero_through_the_cli(tmp_path, monkeypatch, capsys):
++    """Through main(), human report path: its own manifest read must not traceback."""
++    clean_probe(monkeypatch)
++    runs = fixture(tmp_path)
++    (tmp_path / "boards" / "b" / "board.json").write_text("{not json")
++    open(os.path.join(runs, "run-summary.json"), "w").write("{")
++    assert ra.main(["--runs", runs]) == 1
++
++
++def test_a_torn_chain_line_is_an_e3_finding_not_a_traceback(tmp_path, monkeypatch):
++    """The auditor's side of Critical 5: the skipped count is REPORTED."""
++    clean_probe(monkeypatch)
++    runs = fixture(tmp_path, chain_recs=worker_chain())
++    with open(os.path.join(runs, "chain.jsonl"), "a") as f:
++        f.write('{"ts": "2026-09-11T21:30:00", "event": "start", "code": "C1"')
++    findings, _rows, _stats = ra.audit(runs)
++    assert any(c == "E3" and "truncated" in t for _s, c, t in findings), findings
++
++
++def test_the_json_contract_is_what_the_caller_reads(tmp_path, monkeypatch, capsys):
++    """`--json` is the machine-readable path and had NO test: ra.main was called five
++    times in this file and never with the flag (2026-09-23 review, Critical 9). The
++    three keys are the contract; `findings` must be what audit() returned, and the exit
++    code must follow the findings."""
++    clean_probe(monkeypatch)
++    runs = fixture(tmp_path, chain_recs=worker_chain())
++    assert ra.main(["--runs", runs, "--json"]) == 0
++    out = json.loads(capsys.readouterr().out)
++    assert sorted(out) == ["findings", "rows", "stats"], sorted(out)
++    assert out["findings"] == [list(f) for f in ra.audit(runs)[0]]
++
++
++def test_the_json_exit_code_follows_the_findings(tmp_path, monkeypatch, capsys):
++    """A WARNING is enough to make the audit non-zero — the rule a key rename or a
++    one-sided edit to the exit computation would break while the human report stayed
++    green."""
++    clean_probe(monkeypatch)
++    runs = fixture(tmp_path, chain_recs=worker_chain(), restarts=True)
++    findings, _rows, _stats = ra.audit(runs)
++    assert [s for s, _c, _t in findings if s in ("ERROR", "WARNING")], findings
++    assert ra.main(["--runs", runs, "--json"]) == 1
++    out = json.loads(capsys.readouterr().out)
++    assert out["findings"] == [list(f) for f in findings]
++
++
++def test_a_card_whose_minutes_are_unknown_is_not_under_its_ceiling(tmp_path, monkeypatch):
++    """write_summary records `runs_unreadable` when the runs CLI refused: the card's
++    minutes are unknown, so its ceiling was not checked — and the audit says so rather
++    than reading the missing number as zero (review Important 15)."""
++    clean_probe(monkeypatch)
++    runs = fixture(tmp_path, chain_recs=worker_chain(),
++                   cards={"C1: implement - lane 1": {"agent_min": None,
++                                                     "runs_unreadable": True}})
++    findings, _rows, _stats = ra.audit(runs)
++    assert any(c == "E6" and "unknown" in t for _s, c, t in findings), findings
+diff --git a/tests/test_run_directories.py b/tests/test_run_directories.py
+index f4b18d6..c3289ef 100644
+--- a/tests/test_run_directories.py
++++ b/tests/test_run_directories.py
+@@ -11,20 +11,22 @@ something at the right time —
+     gate's STRUCTURE check, so the plan is built on the old idea,
+   * `snapshot_run_evidence` rotating what was about to be cleared.
+ 
+ A new directory cannot contain an old run's refined idea, so all three go. The
+ invariant moves from "we remembered to delete it" to "it was never the same path",
+ which is why these tests pin the paths rather than the absence of files.
+ """
+ import os
+ import sys
+ 
++import pytest
++
+ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "template"))
+ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "driver"))
+ import card_render
+ import file_lanes
+ import run
+ 
+ 
+ def test_a_lanes_hand_offs_live_under_its_own_run():
+     a = card_render.lane_paths("/repo", "b", 1, "b-20260912-090000")
+     z = card_render.lane_paths("/repo", "b", 1, "b-20260912-100000")
+@@ -400,29 +402,64 @@ def test_drift_from_an_earlier_run_is_not_written_into_a_later_summary(monkeypat
+     assert sorted(r.STATE.drift) == []
+ 
+ 
+ def test_gate_announcements_are_keyed_by_a_title_that_repeats(monkeypatch, tmp_path):
+     """Why _ANNOUNCED has to be cleared rather than left to grow: the key is not
+     unique across runs."""
+     import lanes as L
+     assert L.card_title("Gc", 1) == L.card_title("Gc", 1)
+ 
+ 
+-def test_patches_land_in_the_runs_own_directory_without_a_second_timestamp():
+-    """The run directory already names the run; a timestamp inside it invited reading
+-    the inner name as a different run. And beside artifacts/, not inside — artifacts/
+-    holds the lane hand-offs the document chain stats, and a patch is not one."""
+-    import inspect
++def test_patches_land_in_the_runs_own_directory(monkeypatch, tmp_path):
++    """REPLACED 2026-09-24 — this test used to assert two strings in
++    inspect.getsource(r.preserve_artifacts), which passes whether the copier works,
++    copies nothing, or reads the wrong directory (2026-09-23 review, Critical 8). It
++    now DRIVES the function: one card, one attachment, one file where it belongs — in
++    runs/<run-id>/patches/, beside artifacts/ and with no second timestamp — and a
++    second call that must not overwrite what the first one kept.
++
++    The source is hermes_kanban_dir(), not a hardcoded ~/.hermes: on a host whose
++    HERMES_HOME is elsewhere the literal path copied nothing and the run still reported
++    complete (review Important 23)."""
++    import run as r
++    monkeypatch.setattr(r.STATE, "run_dir", str(tmp_path / "run-20260924-000000"))
++    os.makedirs(r.STATE.run_dir)
++    monkeypatch.setattr(r, "BOARD", "b")
++    monkeypatch.setattr(r, "log", lambda m: None)
++    monkeypatch.setattr(r, "hermes_kanban_dir", lambda: str(tmp_path / "kanban"))
++    monkeypatch.setattr(r, "board", lambda: {"C1: implement - lane 1": {"id": "t_c"}})
++    attachments = tmp_path / "kanban" / "boards" / "b" / "attachments" / "t_c"
++    attachments.mkdir(parents=True)
++    (attachments / "t_c.patch").write_text("diff --git a/x b/x\n")
++    r.preserve_artifacts()
++    patches = os.path.join(r.STATE.run_dir, "patches")
++    assert sorted(os.listdir(patches)) == ["t_c.patch"]
++    assert open(os.path.join(patches, "t_c.patch")).read() == "diff --git a/x b/x\n"
++    # idempotent: a later, different copy of the same patch must not replace what was kept
++    (attachments / "t_c.patch").write_text("diff --git a/other b/other\n")
++    r.preserve_artifacts()
++    assert open(os.path.join(patches, "t_c.patch")).read() == "diff --git a/x b/x\n"
++
++
++def test_a_run_with_no_attachments_says_so(monkeypatch, tmp_path):
++    """The silent-empty case: a glob that matched nothing returned having logged
++    nothing, so a run whose patches were never collected read exactly like one that had
++    none (review Important 23)."""
+     import run as r
+-    src = inspect.getsource(r.preserve_artifacts)
+-    assert 'os.path.join(STATE.run_dir, "patches")' in src
+-    assert "strftime" not in src
++    monkeypatch.setattr(r.STATE, "run_dir", str(tmp_path))
++    monkeypatch.setattr(r, "BOARD", "b")
++    monkeypatch.setattr(r, "hermes_kanban_dir", lambda: str(tmp_path / "kanban"))
++    monkeypatch.setattr(r, "board", lambda: {"C1: implement - lane 1": {"id": "t_c"}})
++    lines = []
++    monkeypatch.setattr(r, "log", lines.append)
++    r.preserve_artifacts()
++    assert any("no provenance patches" in m for m in lines), lines
+ 
+ 
+ def test_the_timing_report_is_written_again_when_the_run_finishes(monkeypatch, tmp_path):
+     """The gate copy stops two minutes short: it shows the code gate itself as `blocked`,
+     which is true when it is written and misleading afterwards."""
+     import inspect
+     import run as r
+     assert "write_timing_report(lane, final=True)" in inspect.getsource(r.finish_run)
+     written = []
+     monkeypatch.setattr(r.STATE, "run_dir", str(tmp_path))
+@@ -430,10 +467,48 @@ def test_the_timing_report_is_written_again_when_the_run_finishes(monkeypatch, t
+     import subprocess
+     monkeypatch.setattr(subprocess, "run",
+                         lambda *a, **k: type("R", (), {"returncode": 0, "stdout": "report", "stderr": ""})())
+     r.STATE.timed.clear()
+     r.write_timing_report(1)
+     r.write_timing_report(1)                      # the gate holds for ticks; one copy only
+     assert open(tmp_path / "timing-report-lane-1.txt").read() == "report"
+     r.write_timing_report(1, final=True)          # the run's own end rewrites it
+     assert 1 in r.STATE.timed
+     r.STATE.timed.clear()
++
++
++def test_the_summary_is_never_visible_half_written(monkeypatch, tmp_path):
++    """os.replace is atomic: the file holds the old content or the new, never half.
++    Not cosmetic — run-audit.py json.loads this file, so one torn write made every
++    later audit of that run die (review Critical 4)."""
++    import run as r
++    monkeypatch.setattr(r.STATE, "run_dir", str(tmp_path))
++    monkeypatch.setattr(r, "log", lambda m: None)
++    monkeypatch.setattr(r, "board_lane_count", lambda state: 0)
++    monkeypatch.setattr(r, "commit_target", lambda: "main")
++    monkeypatch.setattr(r, "expected_workdir_facts", lambda: {})
++
++    def boom(obj, f, **kw):
++        f.write('{"wall_min": 13.1, "agent_w')
++        raise RuntimeError("killed mid-write")
++
++    monkeypatch.setattr(r.json, "dump", boom)
++    with pytest.raises(RuntimeError):
++        r.write_summary({})
++    assert not os.path.exists(os.path.join(str(tmp_path), "run-summary.json"))
++
++
++def test_the_summary_marks_minutes_it_could_not_read(monkeypatch, tmp_path):
++    """A refused runs CLI recorded agent_min 0.0 as fact in a file written once
++    (review Important 15)."""
++    import json as _json
++    import run as r
++    monkeypatch.setattr(r.STATE, "run_dir", str(tmp_path))
++    monkeypatch.setattr(r, "log", lambda m: None)
++    monkeypatch.setattr(r, "board_lane_count", lambda state: 0)
++    monkeypatch.setattr(r, "commit_target", lambda: "main")
++    monkeypatch.setattr(r, "expected_workdir_facts", lambda: {})
++    monkeypatch.setattr(r.runs_util, "board_runs", lambda b, cid: None)
++    r.write_summary({"C1: implement - lane 1": {"id": "t_c", "status": "done"}})
++    with open(os.path.join(str(tmp_path), "run-summary.json")) as f:
++        row = _json.load(f)["cards"]["C1: implement - lane 1"]
++    assert row["runs_unreadable"] is True and row["agent_min"] is None, row
+diff --git a/tests/test_runs_util.py b/tests/test_runs_util.py
+index 42ce486..612ce5a 100644
+--- a/tests/test_runs_util.py
++++ b/tests/test_runs_util.py
+@@ -48,30 +48,35 @@ def test_board_runs_hands_the_cli_a_clean_env(monkeypatch):
+         return R()
+ 
+     monkeypatch.setenv("HERMES_DELEGATED_CHILD_CONTEXT", "1")
+     monkeypatch.setattr(runs_util.subprocess, "run", fake_run)
+     assert runs_util.board_runs("b", "t1")[0]["outcome"] == "completed"
+     assert "HERMES_DELEGATED_CHILD_CONTEXT" not in seen["env"]
+     assert seen["argv"][:3] == ["hermes", "kanban", "--board"]
+ 
+ 
+ def test_board_runs_warns_instead_of_reporting_an_empty_card(monkeypatch, capsys):
++    """REWRITTEN 2026-09-24 — this test asserted `board_runs(...) == []` on a refused
++    CLI, which made "the CLI could not be read" and "this card has no runs" one value.
++    Callers read the second: a gate parked ten minutes and then halted naming a review
++    that had said nothing, and the timing report printed 0.0 min of agent work as fact
++    (2026-09-23 review, Important 15). None now means UNKNOWN; the warning stays."""
+     def fake_run(argv, **kw):
+         class R:
+             returncode = 1
+             stdout = ""
+             stderr = "kanban: board 'b' does not exist"
+         return R()
+ 
+     runs_util._WARNED.clear()
+     monkeypatch.setattr(runs_util.subprocess, "run", fake_run)
+-    assert runs_util.board_runs("b", "t1") == []
++    assert runs_util.board_runs("b", "t1") is None
+     assert "WARNING" in capsys.readouterr().err
+     runs_util._WARNED.clear()
+ 
+ 
+ def test_cli_env_drops_the_delegated_child_marker(monkeypatch):
+     """A leaked child marker makes the kanban CLI refuse every mutation, so the
+     driver must never hand it to a hermes subprocess. Everything else survives."""
+     monkeypatch.setenv("HERMES_DELEGATED_CHILD_CONTEXT", "1")
+     env = runs_util.cli_env()
+     assert "HERMES_DELEGATED_CHILD_CONTEXT" not in env
+@@ -79,10 +84,23 @@ def test_cli_env_drops_the_delegated_child_marker(monkeypatch):
+ 
+ 
+ def test_a_timed_out_attempt_counts_as_worked_time():
+     """The ceiling exists to surface a card that burned its budget, and a timed-out
+     attempt IS that event — so the summaries and the timing report, which sum only
+     CLOSED_OUTCOMES, cannot drop it; dropped, its minutes reappear as "overhead" and
+     the auditor calls the run clean."""
+     assert "timed_out" in runs_util.CLOSED_OUTCOMES
+     assert runs_util.elapsed_min({"started_at": 1_700_000_000, "ended_at": 1_700_000_600}) == 10
+     assert runs_util.elapsed_min({"started_at": 10}) == 0.0
++
++
++def test_a_card_with_no_runs_is_still_an_empty_list(monkeypatch):
++    """The other side: `[]` stays DATA — the CLI answered, and the card has no runs."""
++    def fake_run(argv, **kw):
++        class R:
++            returncode = 0
++            stdout = "[]"
++            stderr = ""
++        return R()
++
++    monkeypatch.setattr(runs_util.subprocess, "run", fake_run)
++    assert runs_util.board_runs("b", "t1") == []
