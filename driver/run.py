@@ -3861,8 +3861,14 @@ def adopt_and_refile(state):
             log(f"WARNING: {len(left)} card(s) survived the archive: {', '.join(left)} "
                 f"— archive them by hand before arming another idea")
     # One id for the cards' idempotency keys AND the run directory, so a card in
-    # the engine names the directory holding its evidence.
-    key = f"{BOARD}-{datetime.datetime.now():%Y%m%d-%H%M%S}"
+    # the engine names the directory holding its evidence. Its shape is the
+    # minted-run idiom every other producer uses — `run-<stamp>`, asserted at
+    # file_lanes.RUN_ID_RE. It used to carry the board name, so arming minted a
+    # second, differently-shaped directory beside the create-time one and `runs/`
+    # read as two schemes at once (measured 2026-09-26). A run's name says when it
+    # was filed; the board it belongs to is the directory it sits in.
+    key = f"run-{datetime.datetime.now():%Y%m%d-%H%M%S}"
+    assert file_lanes.RUN_ID_RE.fullmatch(key), key
     mint_run(key, armed)
     # Per-RUN state, cleared the moment the run changes — before filing, which can
     # fail and leave the next tick treating the new run's lanes as already open. A

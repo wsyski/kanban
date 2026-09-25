@@ -631,7 +631,9 @@ def test_a_refile_that_fails_after_minting_halts_naming_the_empty_run(monkeypatc
         run.adopt_and_refile({})
     key = run._read_current_run()
     reason = run.STATE.halted["reason"]
-    assert key.startswith("b-") and key in reason
+    # The arm mint uses the minted-run idiom every producer shares, not a
+    # board-named id — pin it against the one place that shape lives.
+    assert file_lanes.RUN_ID_RE.fullmatch(key) and key in reason
     assert "hermes kanban create failed" in reason
     assert "reset.sh" in reason and "create-board.sh" in reason
     assert "re-arm" not in reason
