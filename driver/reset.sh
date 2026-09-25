@@ -100,7 +100,7 @@ echo "KEEPING:  $WORKDIR (the product)"
 echo "KEEPING:  $BOARD_DIR/runs (every run's evidence) — both yours to rm, never this script's"
 echo "keeping:  $BOARD_DIR/board.json, lane-*.md, README.md"
 [ "$BATCH" = 1 ] || { read -rp "Archive ALL live cards on '$SLUG' and unstage its run state? [y/N] " a
-                    [ "$a" = y ] || exit 1; }
+                    case "$a" in y|Y|yes|YES|Yes) ;; *) exit 1 ;; esac; }
 
 # Nothing is deleted here — not the work directory and not the run directories
 # either. Each run's evidence lives under runs/<run-id>/ and stays there: it is
@@ -144,19 +144,52 @@ if git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1; then
   # directories make a narrower pathspec both wrong and fragile (a glob that
   # matches no tracked path fails the WHOLE restore, silently, under `|| true`).
   # A board outside the repo (REL stays absolute) makes git refuse the pathspec —
-  # "outside repository" — and under `set -e` that failure took the whole reset
-  # down AFTER the report and BEFORE it archived anything, with no message. No
-  # readable staged entries means none to unstage.
-  staged=$(git -C "$REPO" diff --cached --name-only \
-             -- "$REL/work" "$REL/runs" 2>/dev/null || true)
+  # "outside repository" — and that refusal is reported like any other failed index
+  # read: an index this script cannot read is not an index with nothing staged, so
+  # the reset stops here and says so rather than exiting 0 having done nothing.
+  # ONE read, and its failure is its own answer: `2>/dev/null` (and under `set -e`, a
+  # bare assignment) made a FAILING index read the same as a clean one, so the unstage
+  # silently did nothing and the reset still exited 0 (2026-09-24 review). Same shape as
+  # create-board.sh's registry probe: say it, and do not exit 0.
+  # STDOUT is the path list and nothing else. Its stderr is NOT captured into the same
+  # variable: a warning git writes to stderr on a read that SUCCEEDED became an entry in
+  # "N path(s)" and a pathspec handed to `git restore --staged` (2026-09-25 fix-pass
+  # verification). Left on this script's own stderr, where a warning is still seen — so
+  # on a FAILED read git's own line reaches stderr first and this header follows it;
+  # both are on stderr, which is what the door promises.
+  if ! staged=$(git -C "$REPO" diff --cached --name-only -- "$REL/work" "$REL/runs"); then
+    echo "reset: cannot read the git index ('git diff --cached' failed):" >&2
+    [ -z "$staged" ] || printf '%s\n' "$staged" >&2
+    exit 1
+  fi
   if [ -n "$staged" ]; then
-    printf '%s\n' "$staged" | xargs -r -d '\n' git -C "$REPO" restore --staged --
+    # NUL-separated (`xargs -d` is GNU-only), and the RESTORE's status is checked: it
+    # used to print "unstaged N" even when git refused (errors I12 / code S10).
+    if ! printf '%s\n' "$staged" | tr '\n' '\0' | xargs -0 git -C "$REPO" restore --staged --; then
+      echo "reset: git restore --staged refused — the entries under $REL are still staged" >&2
+      exit 1
+    fi
     echo "unstaged $(printf '%s\n' "$staged" | wc -l) generated path(s) under $REL"
   fi
 fi
 
 # archive every non-archived card on the board, if the board still exists
-if hermes kanban boards list 2>/dev/null | awk '{print $1; print $2}' | grep -qx "$SLUG"; then
+# ONE read, and its failure is its own answer: piped straight into grep, a CLI that
+# FAILED read as "no such board", so the door printed "not in the registry — nothing to
+# archive" and exited 0 while every live card stayed unarchived (probed 2026-09-24 with
+# a failing hermes stub). The same shape as create-board.sh's own registry probe.
+# The capture is the CLI's STDOUT, and the slug match below reads that and nothing else:
+# `2>&1` merged the streams, so a CLI that exited 0 while naming the slug on STDERR (a
+# warning, a progress line) matched, and the door took the ARCHIVE branch — `list --json`
+# and `archive` against a board the CLI never listed (2026-09-25 fix-pass verification).
+# Its stderr is not captured at all: the CLI's own words stay on this script's stderr,
+# visible on the way out of the exit 4 below.
+REGISTRY=$(hermes kanban boards list) || {
+  echo "cannot read the board registry ('hermes kanban boards list' failed):" >&2
+  [ -z "$REGISTRY" ] || printf '%s\n' "$REGISTRY" >&2
+  exit 4
+}
+if printf '%s\n' "$REGISTRY" | awk '{print $1; print $2}' | grep -qx "$SLUG"; then
   ids=$(hermes kanban --board "$SLUG" list --json | python3 -c "
 import json,sys
 for t in json.load(sys.stdin):

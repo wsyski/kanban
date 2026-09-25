@@ -66,14 +66,14 @@ validate_board_files "$SLUG"
 
 # The board may set its own driver cap; --timeout-min on the command line wins.
 if [ -z "${TIMEOUT:-}" ]; then
+  # The manifest was validated just above, so a read failure here is news: say it,
+  # instead of starting the driver with no cap and nothing in the log (errors S7).
   TIMEOUT=$(python3 -c "
 import json, sys
-try:
-    v = json.load(open('$REPO/boards/$SLUG/board.json')).get('timeout-min')
-except Exception:
-    v = None
+v = json.load(open(sys.argv[1])).get('timeout-min')
 print(v if v else '')
-" 2>/dev/null)
+" "$REPO/boards/$SLUG/board.json") || {
+    echo "start-board: cannot read timeout-min from boards/$SLUG/board.json" >&2; exit 2; }
 fi
 
 cd "$REPO"
@@ -82,9 +82,15 @@ LOCK="$REPO/boards/$SLUG/runs/driver.lock"
 mkdir -p "$(dirname "$RUNLOG")"
 
 # Already up? Say so and stop. The lock FILE existing proves nothing — a driver
-# killed with SIGKILL leaves one behind — so ask whether a live process holds it.
-if [ -f "$LOCK" ] && kill -0 "$(cat "$LOCK" 2>/dev/null)" 2>/dev/null; then
-  echo "driver for '$SLUG' already running (pid $(cat "$LOCK"))"
+# killed with SIGKILL leaves one behind — so ask whether THIS REPO'S DRIVER holds it,
+# the way create-board.sh and reset.sh already ask. The old `kill -0` on the raw lock
+# content answered "already running" for ever once the OS reused that pid for any
+# other process — and this is the cron entry (2026-09-23 review, Important 16). A pid
+# that is not a driver is no reason to refuse: run.py's own lock is a kernel flock, so
+# a stale file is taken over there too.
+. "$REPO/driver/driver-pid.sh"
+if DRIVER_PID=$(live_driver_pid "$REPO/boards/$SLUG"); then
+  echo "driver for '$SLUG' already running (pid $DRIVER_PID)"
   exit 0
 fi
 
@@ -94,7 +100,7 @@ if [ "$ONCE" = 1 ]; then
     exit 1; }
   # Nothing is released from here: the driver's own first tick opens the lane
   # (writes the <IDEA> snapshot, prunes TI/RVc on an integration_tests:false
-  # board, clears the lane's stale outputs) and only then unblocks the root —
+  # board) and only then unblocks the root —
   # both inside one tick. Unblocking from the shell instead let the dispatcher
   # claim the root before that tick ran, so the researcher started 9 seconds
   # BEFORE the snapshot its body is told to read existed (the chain reports it

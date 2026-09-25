@@ -4,6 +4,8 @@ import json
 import os
 import sys
 
+import pytest
+
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 spec = importlib.util.spec_from_file_location(
     "run_audit", os.path.join(REPO, "driver", "run-audit.py"))
@@ -206,6 +208,10 @@ def test_a_worker_outliving_the_run_is_a_warning(monkeypatch):
         return R()
 
     monkeypatch.setattr(ra.subprocess, "run", fake_run)
+    # pid 1234 is a real /proc entry on SOME hosts — in state Z there, the zombie filter
+    # would drop the E8 this test expects. The real read has its own test below; here it
+    # is pinned to a live state (review tests S6).
+    monkeypatch.setattr(ra, "_proc_state", lambda pid: "S")
     findings = ra.board_findings("b", "unused")
     assert "E8" in codes(findings, "WARNING")
 
@@ -542,6 +548,63 @@ def test_the_current_run_is_used_when_runs_is_given(tmp_path):
     assert ra.resolve_run_dir(str(flat)) == str(flat)
 
 
+def test_a_pointer_that_escapes_the_runs_directory_is_no_current_run(tmp_path):
+    """run-audit resolves `--runs` through `runs_util`, so the READER's own check
+    applies here too: a hand-edited `current` of `../../../x` is a path, not a run name,
+    and the audit must not read that directory as this run's evidence (2026-09-24
+    review)."""
+    board = tmp_path / "boards" / "b"
+    runs = board / "runs"
+    (runs / "r1").mkdir(parents=True)
+    (tmp_path / "x").mkdir()                      # the escaping path EXISTS
+    (runs / "current").write_text("../../../x\n")
+    assert ra.resolve_run_dir(str(runs)) == str(runs)
+    (runs / "current").write_text("r1\n")
+    assert ra.resolve_run_dir(str(runs)) == str(runs / "r1")
+
+
+def test_a_chain_record_with_an_unusable_ts_is_counted_not_a_traceback(tmp_path, monkeypatch):
+    """A VALID-JSON chain line with `"ts": "yesterday"` raised ValueError out of
+    doc-chain's parse_ts, so `audit()` died with a traceback instead of reporting
+    (2026-09-24 review). A record whose ts is not a timestamp is skipped and COUNTED,
+    like a torn line — the E3 finding is the audit's answer."""
+    clean_probe(monkeypatch)
+    runs = fixture(tmp_path, chain_recs=worker_chain())
+    with open(os.path.join(runs, "chain.jsonl"), "a") as f:
+        f.write(json.dumps({"ts": "yesterday", "event": "start", "lane": 1, "code": "C2",
+                            "card_id": "t_c2", "title": "C2: implement - lane 1",
+                            "inputs": {}, "unresolved": []}) + "\n")
+    findings, _rows, _stats = ra.audit(runs)
+    assert any(c == "E3" and "1 unreadable record(s)" in t for _s, c, t in findings), findings
+
+
+@pytest.mark.parametrize("bad_slot", ["inputs", "unresolved"])
+def test_a_wrongly_typed_start_record_is_a_finding_not_a_traceback(tmp_path, monkeypatch,
+                                                                   bad_slot):
+    """`analyze` needs `inputs` to be a dict (and iterates `unresolved`); a JSON `null`
+    or a list there raised AttributeError / TypeError out of `audit()`, so the audit
+    died instead of reporting the chain (2026-09-24 review). One tolerance per reader,
+    and the card is still judged."""
+    clean_probe(monkeypatch)
+    recs = worker_chain()
+    recs[0][bad_slot] = None        # JSON null: what a half-written hand-edit leaves
+    findings, rows, _stats = ra.audit(fixture(tmp_path, chain_recs=recs))
+    assert [r["code"] for r in rows] == ["C1"], rows
+    assert not [f for f in findings if f[1] == "E3"], findings   # judged, not crashed
+
+
+def test_a_start_record_whose_inputs_are_a_list_is_not_an_attribute_error(tmp_path,
+                                                                         monkeypatch):
+    """The other wrong type: `[]` where a dict belongs (`[].items` is the traceback),
+    the shape a half-written hand-edit produces (2026-09-24 review)."""
+    clean_probe(monkeypatch)
+    recs = worker_chain()
+    recs[0]["inputs"] = []
+    findings, rows, _stats = ra.audit(fixture(tmp_path, chain_recs=recs))
+    assert [r["code"] for r in rows] == ["C1"], rows
+    assert not [f for f in findings if f[1] == "E3"], findings
+
+
 def test_a_run_without_kanban_records_is_refused(tmp_path, capsys):
     """This reads a KANBAN run's records. A run directory that has none of them — the
     dropped driver left eleven of them under boards/is-even/runs/, and runs/ is
@@ -681,3 +744,222 @@ def test_an_escalated_triage_card_is_an_e12_and_a_resting_one_is_not(monkeypatch
                                    "status": "done"},
                                   {"id": "t2", "title": "Idea 1", "status": "triage"}])
     assert codes(ra.board_findings("b", "unused"), "ERROR") == []
+
+
+def test_an_unreadable_lock_says_unreadable_not_none(tmp_path, monkeypatch):
+    """`pid none` read as "there is no lock file" when the file was there and named
+    nothing readable — a different claim, and the one a human needs to act on (errors
+    S14). The run here is mid-flight (no finish banner), which is the only path that
+    names the lock at all."""
+    clean_probe(monkeypatch)
+    runs = fixture(tmp_path, log=GOOD_LOG[:-1])            # no ALL GATES COMPLETE
+    (tmp_path / "boards" / "b" / "runs" / "driver.lock").write_text("")
+    findings, _rows, _stats = ra.audit(runs)
+    assert any("unreadable" in t for _s, _c, t in findings), findings
+
+
+def test_a_driver_holding_the_kernel_lock_is_alive_whatever_pid_it_names(tmp_path):
+    """The auditor asks the kernel first: a live driver holds a flock on runs/driver.lock
+    for its whole life, so "is the driver alive" no longer depends on a pid the OS may
+    have reused."""
+    import fcntl
+    root = tmp_path / "runs"
+    root.mkdir()
+    lock = root / "driver.lock"
+    lock.write_text("999999")                               # names a dead pid
+    fd = os.open(lock, os.O_RDWR)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    try:
+        assert ra._driver_alive(str(root)) == (True, "999999")
+    finally:
+        os.close(fd)
+    assert ra._driver_alive(str(root)) == (False, "999999")
+    assert ra._driver_alive(str(tmp_path / "nowhere")) == (False, None)
+
+
+def test_a_missing_manifest_is_an_error_not_a_clean_run(tmp_path, monkeypatch):
+    """Measured 2026-09-23: a run with a 90-minute card under a declared 60m ceiling and
+    NO board.json audited "0 error(s), 0 warning(s)", exit 0 — cfg = {} left the ceiling
+    None (E6 is guarded on it), emptied auto-gates and made the slug the directory name.
+    The auditor's exit code is the board's definition of DONE (review Critical 3)."""
+    clean_probe(monkeypatch)
+    runs = fixture(tmp_path)
+    os.unlink(os.path.join(os.path.dirname(runs), "board.json"))
+    findings, _rows, _stats = ra.audit(runs)
+    assert any(s == "ERROR" and c == "E4" and "no board.json" in t
+               for s, c, t in findings), findings
+
+
+def test_a_present_manifest_still_audits_clean(tmp_path, monkeypatch):
+    """The other side: the new E4 must not fire when the manifest is there, or every
+    shipped run audits red."""
+    clean_probe(monkeypatch)
+    runs = fixture(tmp_path, chain_recs=worker_chain())
+    findings, _rows, _stats = ra.audit(runs)
+    assert not [t for _s, c, t in findings if "board.json" in t], findings
+
+
+def test_a_truncated_summary_is_one_e4_not_a_traceback(tmp_path, monkeypatch):
+    """write_summary was not atomic, so a driver killed mid-write left a truncated
+    run-summary.json and every later audit of that run died with JSONDecodeError
+    (review Critical 4). ONE finding — not also "the run wrote no summary"."""
+    clean_probe(monkeypatch)
+    runs = fixture(tmp_path)
+    with open(os.path.join(runs, "run-summary.json"), "w") as f:
+        f.write('{"wall_min": 13.1, "agent_w')
+    findings, _rows, _stats = ra.audit(runs)
+    summary_lines = [t for _s, c, t in findings if c == "E4" and "summary" in t]
+    assert len(summary_lines) == 1 and "not readable JSON" in summary_lines[0], findings
+
+
+def test_a_truncated_manifest_is_an_error_not_a_traceback(tmp_path, monkeypatch):
+    """The manifest half of the same finding — and the wording names the file's state,
+    not "no board.json" (review Critical 4)."""
+    clean_probe(monkeypatch)
+    runs = fixture(tmp_path)
+    (tmp_path / "boards" / "b" / "board.json").write_text('{"slug": "b", "auto-gates": [')
+    findings, _rows, _stats = ra.audit(runs)
+    assert any(s == "ERROR" and c == "E4" and "board.json is not readable JSON" in t
+               for s, c, t in findings), findings
+
+
+def test_a_manifest_that_is_not_an_object_is_an_error(tmp_path, monkeypatch):
+    """`[]` parses — and every reader calls .get() on it."""
+    clean_probe(monkeypatch)
+    runs = fixture(tmp_path)
+    (tmp_path / "boards" / "b" / "board.json").write_text("[]")
+    findings, _rows, _stats = ra.audit(runs)
+    assert any(c == "E4" and "not a JSON object" in t for _s, c, t in findings), findings
+
+
+def test_a_malformed_summary_exits_nonzero_through_the_cli(tmp_path, monkeypatch, capsys):
+    """Through main(), human report path: its own manifest read must not traceback."""
+    clean_probe(monkeypatch)
+    runs = fixture(tmp_path)
+    (tmp_path / "boards" / "b" / "board.json").write_text("{not json")
+    open(os.path.join(runs, "run-summary.json"), "w").write("{")
+    assert ra.main(["--runs", runs]) == 1
+
+
+def test_a_torn_chain_line_is_an_e3_finding_not_a_traceback(tmp_path, monkeypatch):
+    """The auditor's side of Critical 5: the skipped count is REPORTED."""
+    clean_probe(monkeypatch)
+    runs = fixture(tmp_path, chain_recs=worker_chain())
+    with open(os.path.join(runs, "chain.jsonl"), "a") as f:
+        f.write('{"ts": "2026-09-11T21:30:00", "event": "start", "code": "C1"')
+    findings, _rows, _stats = ra.audit(runs)
+    assert any(c == "E3" and "unreadable" in t for _s, c, t in findings), findings
+
+
+def test_the_json_contract_is_what_the_caller_reads(tmp_path, monkeypatch, capsys):
+    """`--json` is the machine-readable path and had NO test: ra.main was called five
+    times in this file and never with the flag (2026-09-23 review, Critical 9). The
+    three keys are the contract; `findings` must be what audit() returned, and the exit
+    code must follow the findings."""
+    clean_probe(monkeypatch)
+    runs = fixture(tmp_path, chain_recs=worker_chain())
+    assert ra.main(["--runs", runs, "--json"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert sorted(out) == ["findings", "rows", "stats"], sorted(out)
+    assert out["findings"] == [list(f) for f in ra.audit(runs)[0]]
+
+
+def test_the_json_exit_code_follows_the_findings(tmp_path, monkeypatch, capsys):
+    """A WARNING is enough to make the audit non-zero — the rule a key rename or a
+    one-sided edit to the exit computation would break while the human report stayed
+    green."""
+    clean_probe(monkeypatch)
+    runs = fixture(tmp_path, chain_recs=worker_chain(), restarts=True)
+    findings, _rows, _stats = ra.audit(runs)
+    assert [s for s, _c, _t in findings if s in ("ERROR", "WARNING")], findings
+    assert ra.main(["--runs", runs, "--json"]) == 1
+    out = json.loads(capsys.readouterr().out)
+    assert out["findings"] == [list(f) for f in findings]
+
+
+def test_a_card_whose_minutes_are_unknown_is_not_under_its_ceiling(tmp_path, monkeypatch):
+    """write_summary records `runs_unreadable` when the runs CLI refused: the card's
+    minutes are unknown, so its ceiling was not checked — and the audit says so rather
+    than reading the missing number as zero (review Important 15)."""
+    clean_probe(monkeypatch)
+    runs = fixture(tmp_path, chain_recs=worker_chain(),
+                   cards={"C1: implement - lane 1": {"agent_min": None,
+                                                     "runs_unreadable": True}})
+    findings, _rows, _stats = ra.audit(runs)
+    assert any(c == "E6" and "unknown" in t for _s, c, t in findings), findings
+
+
+def test_the_real_proc_reader_reads_a_real_proc():
+    """The zombie filter that fixed the 2026-09-15 false E8 was monkeypatched away in
+    both E8 tests, so its /proc parse never ran (review tests I28)."""
+    state = ra._proc_state(os.getpid())
+    assert state and state.isalpha(), state            # this process: R or S
+    assert ra._proc_state(2 ** 22 + 12345) is None       # above pid_max: cannot exist
+
+
+def test_no_gate_evidence_in_the_summary_is_an_e4(tmp_path, monkeypatch):
+    """E4's "no gate evidence" arm appeared 0 times in tests/ (review tests I29)."""
+    clean_probe(monkeypatch)
+    runs = fixture(tmp_path, gates={})
+    findings, _rows, _stats = ra.audit(runs)
+    assert ("ERROR", "E4", "no gate evidence in the summary") in findings, findings
+
+
+def test_an_idea_gate_without_the_refined_idea_is_an_e4(tmp_path, monkeypatch):
+    """The failure direction of the Gi check never fired: 'refined idea present' was in
+    tests/ only inside the positive GOOD_GATES fixture (review tests I29)."""
+    clean_probe(monkeypatch)
+    runs = fixture(tmp_path, gates={**GOOD_GATES, "Gi1": "auto-gate (lane 1): all "
+                                                       "sections. NOTHING COMMITTED."})
+    findings, _rows, _stats = ra.audit(runs)
+    assert any(c == "E4" and "Gi1 completed without the refined idea" in t
+               for _s, c, t in findings), findings
+
+
+def test_cards_with_no_agent_minutes_are_an_e10(tmp_path, monkeypatch):
+    """E10 appeared 0 times in tests/ (review tests I29)."""
+    clean_probe(monkeypatch)
+    runs = fixture(tmp_path, summary_extra={"agent_union_min": 0.0, "agent_work_min": 0.0})
+    findings, _rows, _stats = ra.audit(runs)
+    assert "E10" in codes(findings, "WARNING"), findings
+
+
+def test_an_external_workdir_is_not_the_boards_noise(tmp_path):
+    """work_noise_findings' guard for a board that builds in ANOTHER project was dead in
+    tests: every caller used the board's own work/ (review tests I30)."""
+    runs = fixture(tmp_path)
+    outside = tmp_path / "elsewhere"
+    (outside / "__pycache__").mkdir(parents=True)
+    assert ra.work_noise_findings(runs, workdir=str(outside)) == []
+    inside = tmp_path / "boards" / "b" / "work"
+    (inside / "__pycache__").mkdir(parents=True)
+    assert codes(ra.work_noise_findings(runs, workdir=str(inside))) == ["E16"]
+
+
+def test_a_board_whose_cards_cannot_be_read_says_so(monkeypatch):
+    """`except Exception: cards = []` read an unreachable board as "no unfinished
+    cards", so E12 could not fire on exactly the board the audit could not see
+    (review errors S2)."""
+    class R:
+        returncode = 1
+        stdout = ""
+        stderr = "kanban: database is locked"
+
+    monkeypatch.setattr(ra.subprocess, "run", lambda cmd, **kw: R())
+    findings = ra.board_findings("b", "unused")
+    assert any(c == "E12" and "could not be read" in t and "database is locked" in t
+               for _s, c, t in findings), findings
+
+
+def test_a_failing_index_read_is_an_e14_not_a_clean_index(tmp_path, monkeypatch):
+    """repo_findings never checked `git diff --cached`'s status, so a failing read
+    was a clean index and E14 could not fire (review errors S3)."""
+    runs = os.path.join(ra.REPO, "boards", "no-such-board-e14", "runs")
+    class R:
+        returncode = 128
+        stdout = ""
+        stderr = "fatal: index file corrupt"
+
+    monkeypatch.setattr(ra.subprocess, "run", lambda cmd, **kw: R())
+    findings = ra.repo_findings(runs)
+    assert any(c == "E14" and "index file corrupt" in t for _s, c, t in findings), findings

@@ -121,6 +121,61 @@ def test_a_current_naming_a_missing_directory_is_not_a_mint(tmp_path):
     assert file_lanes.next_run_key(repo, SLUG, now=LATER) == f"run-{LATER:%Y%m%d-%H%M%S}"
 
 
+# ---- the reader's own check: a pointer that leaves the board ----------------
+
+ESCAPE = "../../../../OUTSIDE"
+
+
+def test_a_pointer_that_escapes_the_board_is_not_reused(tmp_path):
+    """A hand-edited `runs/current` holding `../../../../OUTSIDE` was joined to the
+    runs root with nothing but an isdir check, so `unstarted_mint` returned it and
+    `next_run_key` handed it to create-board.sh, which then `makedirs`ed it and
+    pointed `runs/current` at a directory OUTSIDE the board (final review
+    F.1/A Minor-1). `run.use_run` refuses the same string at the driver's end; the
+    reader's check belongs where the join is. A name that cannot be joined onto
+    `runs/` reads exactly like a pointer that is not there."""
+    outside = tmp_path.parent / (tmp_path.name + "-OUTSIDE")
+    outside.mkdir()
+    runs = tmp_path / "boards" / SLUG / "runs"
+    runs.mkdir(parents=True)
+    (runs / "current").write_text(f"../../../../{outside.name}\n")
+    repo = str(tmp_path)
+    assert file_lanes.unstarted_mint(repo, SLUG) is None
+    assert file_lanes.next_run_key(repo, SLUG, now=LATER) == \
+        f"run-{LATER:%Y%m%d-%H%M%S}"
+    assert sorted(p.name for p in runs.iterdir()) == ["current"]
+    # the contrast the finding draws: the driver refuses the very same string
+    import run as r
+    for bad in (f"../../../../{outside.name}", ESCAPE):
+        with pytest.raises(SystemExit):
+            r.use_run(bad)
+
+
+def test_a_pointer_that_escapes_is_refused_even_when_the_directory_is_missing(tmp_path):
+    """The same refusal without a directory to find: the check is on the NAME, not on
+    whether the join happened to miss."""
+    runs = tmp_path / "boards" / SLUG / "runs"
+    runs.mkdir(parents=True)
+    (runs / "current").write_text(ESCAPE + "\n")
+    assert file_lanes.unstarted_mint(str(tmp_path), SLUG) is None
+    assert file_lanes.next_run_key(str(tmp_path), SLUG, now=LATER) == \
+        f"run-{LATER:%Y%m%d-%H%M%S}"
+
+
+def test_a_legacy_run_name_still_reuses(tmp_path):
+    """The check is a PATH check, not a shape one: the repo's own older runs and this
+    suite's fixtures are named otherwise ('r1', 'b-20260912-090000'), and a reader
+    that refused them would refuse to rejoin a pre-rename run (measured 2026-09-24:
+    17 tests)."""
+    for good in ("r1", "b-20260912-090000", f"run-{MINTED}"):
+        assert file_lanes.is_safe_run_name(good), good
+    for bad in (ESCAPE, "/etc", "a/b", "..", ".", ""):
+        assert not file_lanes.is_safe_run_name(bad), bad
+    repo = _repo(tmp_path, run_id="r1")
+    assert file_lanes.unstarted_mint(repo, SLUG) == "r1"
+    assert file_lanes.next_run_key(repo, SLUG, now=LATER) == "r1"
+
+
 @pytest.mark.parametrize("current", [None, "", "   "])
 def test_no_run_named_means_a_fresh_key(tmp_path, current):
     repo = _repo(tmp_path)
@@ -258,3 +313,225 @@ def test_two_filings_leave_one_run_directory(tmp_path):
     dirs = sorted(d.name for d in runs.iterdir() if d.is_dir())
     assert len(dirs) == 1, dirs
     assert (runs / "current").read_text().strip() == dirs[0]
+
+
+def test_the_manifest_create_board_writes_validates(tmp_path):
+    """The script files a board into the manifest it just wrote, and nothing checked
+    that manifest: line 447 emitted `"auto-gates": false` where board_schema's option
+    table declares a LIST of gate codes, so start-board.sh's validator exit 2s on every
+    board this script creates — the "1. serve it: driver/start-board.sh --slug …" line
+    the script prints one step later could never work (2026-09-23 review, Critical 1).
+
+    Through the real script, on the path --help documents for a new board (`--slug`),
+    in the same throwaway-repo harness the filing tests use.
+    """
+    if not os.path.exists("/usr/bin/lsof"):
+        pytest.skip("create-board.sh's dispatcher pre-flight needs lsof")
+    repo, script, home, holder = _probe_repo(tmp_path)
+    env = dict(os.environ, PATH=f"{_stub_hermes(tmp_path)}:{os.environ['PATH']}",
+               HERMES_HOME=str(home))
+    env.pop("HERMES_DELEGATED_CHILD_CONTEXT", None)
+    try:
+        filed = subprocess.run([str(script), "--slug", "probe", "--title", "Probe board"],
+                               capture_output=True, text=True, env=env, cwd=str(repo))
+        assert filed.returncode == 0, filed.stderr[-2000:]
+    finally:
+        holder.kill()
+    manifest = repo / "boards" / "probe" / "board.json"
+    assert manifest.exists(), sorted(os.listdir(repo / "boards"))
+    checked = subprocess.run(
+        [sys.executable, os.path.join(repo, "template", "board_schema.py"), str(manifest)],
+        capture_output=True, text=True)
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+
+
+def test_the_default_manifest_writes_a_gate_list_not_a_boolean():
+    """The cheap pin beside the end-to-end one: a heredoc's logic is only reachable as
+    text (the reason test_create_board_mints_through_the_decision reads the script), and
+    this is the exact token the Critical is about. A future edit that re-introduces a
+    scalar here fails without needing the stub harness."""
+    src = open(CREATE).read()
+    assert '"auto-gates": []' in src
+    assert '"auto-gates": false' not in src
+
+
+def test_the_manifest_this_script_writes_points_at_the_schema():
+    """--help says "Every `board.json` carries `"$schema": …`" and shows it in the
+    example manifest — the manifest the --slug path actually writes did not, while
+    all 7 shipped boards do (final review D). The text is the contract, so the
+    writer carries it too: an editor finds the generated schema for a brand-new
+    board the same way it does for a shipped one."""
+    src = open(CREATE).read()
+    writer = src[src.index("NEW_MANIFEST=$(printf"):src.index("CHECK_DIR=$(mktemp")]
+    assert '"$schema": "../../template/board.schema.json"' in writer
+
+
+def test_the_board_a_slug_filing_writes_carries_the_schema_reference(tmp_path):
+    """The same claim through the real script, on the path --help documents for a new
+    board: read the manifest back off disk and look."""
+    if not os.path.exists("/usr/bin/lsof"):
+        pytest.skip("create-board.sh's dispatcher pre-flight needs lsof")
+    repo, script, home, holder = _probe_repo(tmp_path)
+    env = dict(os.environ, PATH=f"{_stub_hermes(tmp_path)}:{os.environ['PATH']}",
+               HERMES_HOME=str(home))
+    env.pop("HERMES_DELEGATED_CHILD_CONTEXT", None)
+    try:
+        filed = subprocess.run([str(script), "--slug", "probe", "--title", "Probe board"],
+                               capture_output=True, text=True, env=env, cwd=str(repo))
+        assert filed.returncode == 0, filed.stderr[-2000:]
+    finally:
+        holder.kill()
+    with open(repo / "boards" / "probe" / "board.json") as f:
+        import json as _json
+        manifest = _json.load(f)
+    assert manifest.get("$schema") == "../../template/board.schema.json", manifest
+
+
+def test_the_run_id_shape_has_one_declaration():
+    """The minted shape was prose in next_run_key's docstring, pinned only on the
+    producer (review Important 11)."""
+    assert file_lanes.RUN_ID_RE.fullmatch("run-20260924-120000")
+    for bad in ("../../x", "/etc", "run-2026092-120000", "run-20260924-1200000", ""):
+        assert not file_lanes.RUN_ID_RE.fullmatch(bad), bad
+
+
+def test_a_pointer_that_escapes_the_runs_directory_is_refused(monkeypatch, tmp_path):
+    """The consumer side: use_run joined ANY string onto RUNS_ROOT, so a runs/current
+    holding '../../x' or an absolute path escaped the board's tree — and the same
+    string is rendered into every card body. The reader refuses a path, not a shape:
+    the repo's own older runs are named otherwise, and must still be rejoinable."""
+    import run as r
+    monkeypatch.setattr(r, "RUNS_ROOT", str(tmp_path))
+    for bad in ("../../x", "/etc", "a/b", ".."):
+        with pytest.raises(SystemExit):
+            r.use_run(bad)
+    for good in ("run-20260924-120000", "r1", "b-20260912-090000"):
+        assert r.use_run(good) == os.path.join(str(tmp_path), good)
+
+
+def test_a_pointer_file_naming_a_path_reads_as_no_run(monkeypatch, tmp_path, capsys):
+    import run as r
+    pointer = tmp_path / "current"
+    pointer.write_text("../../x\n")
+    monkeypatch.setattr(r, "CURRENT_RUN", str(pointer))
+    assert r._read_current_run() is None
+    assert "not a run directory name" in capsys.readouterr().out
+    pointer.write_text("b-20260912-090000\n")
+    assert r._read_current_run() == "b-20260912-090000"
+
+
+def test_a_title_with_a_quote_still_writes_valid_json(tmp_path):
+    """The heredoc interpolated "\\"$TITLE\\"" into JSON, so a title with a double quote
+    wrote a manifest that is not JSON at all. The manifest is now built once, escaped,
+    and put through the schema gate BEFORE the board exists (review errors I11)."""
+    if not os.path.exists("/usr/bin/lsof"):
+        pytest.skip("create-board.sh's dispatcher pre-flight needs lsof")
+    repo, script, home, holder = _probe_repo(tmp_path)
+    env = dict(os.environ, PATH=f"{_stub_hermes(tmp_path)}:{os.environ['PATH']}",
+               HERMES_HOME=str(home))
+    env.pop("HERMES_DELEGATED_CHILD_CONTEXT", None)
+    try:
+        filed = subprocess.run([str(script), "--slug", "quoted", "--title", 'Say "hi"'],
+                               capture_output=True, text=True, env=env, cwd=str(repo))
+    finally:
+        holder.kill()
+    assert filed.returncode == 0, filed.stderr[-2000:]
+    import json as _json
+    with open(repo / "boards" / "quoted" / "board.json") as f:
+        assert _json.load(f)["name"] == 'Say "hi"'
+
+
+def test_the_slug_manifest_is_gated_before_the_board_exists():
+    """Order is the point: the --slug manifest goes through board_schema BEFORE `hermes
+    kanban boards create`, and the text written is the text that passed. A shell
+    guard's order is only reachable as text here (the reason
+    test_create_board_mints_through_the_decision reads the script)."""
+    src = open(CREATE).read()
+    gate = src.index('board_schema.py" "$CHECK_DIR/board.json"')
+    assert gate < src.index('hermes kanban boards create "$SLUG"')
+    assert 'printf \'%s\\n\' "$NEW_MANIFEST" > "$BOARD_DIR/board.json"' in src
+
+
+def test_a_registry_that_cannot_be_read_is_not_an_empty_registry(tmp_path):
+    """`hermes kanban boards list 2>/dev/null | awk | grep -qx` read a failing CLI as
+    "no such board", and the script went on to `boards create` (review errors S8)."""
+    if not os.path.exists("/usr/bin/lsof"):
+        pytest.skip("create-board.sh's dispatcher pre-flight needs lsof")
+    repo, script, home, holder = _probe_repo(tmp_path)
+    bin_dir = _stub_hermes(tmp_path)
+    stub = bin_dir / "hermes"
+    stub.write_text(stub.read_text().replace(
+        '#!/usr/bin/env bash\n',
+        '#!/usr/bin/env bash\n'
+        'if [ "$1" = "kanban" ] && [ "$2" = "boards" ] && [ "$3" = "list" ]; then\n'
+        '  echo "kanban: database is locked" >&2; exit 1\nfi\n', 1))
+    env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}", HERMES_HOME=str(home))
+    env.pop("HERMES_DELEGATED_CHILD_CONTEXT", None)
+    try:
+        r = subprocess.run([str(script), "--slug", "probe", "--title", "Probe"],
+                           capture_output=True, text=True, env=env, cwd=str(repo))
+    finally:
+        holder.kill()
+    assert r.returncode == 4, r.stdout + r.stderr
+    assert "cannot read the board registry" in r.stderr and "database is locked" in r.stderr
+    assert not (repo / "boards" / "probe" / "board.json").exists()
+
+
+def test_runs_current_has_one_writer(tmp_path):
+    """The pointer write was two copies — create-board.sh's heredoc and run.mint_run
+    (review Suggestion 3). Both call file_lanes.set_current_run now."""
+    file_lanes.set_current_run(str(tmp_path), "run-20260924-120000")
+    assert (tmp_path / "current").read_text() == "run-20260924-120000\n"
+    assert not (tmp_path / "current.tmp").exists()
+    import run as r
+    import inspect
+    assert "file_lanes.set_current_run(" in inspect.getsource(r.mint_run)
+    assert "file_lanes.set_current_run(" in open(CREATE).read()
+
+
+def test_the_pointer_writer_does_not_follow_a_planted_tmp_symlink(tmp_path):
+    """`current + ".tmp"` is a name anybody who can write the runs root can predict,
+    and `open()` FOLLOWS a symlink: a planted `current.tmp` pointing at another file
+    was truncated with driver-chosen content, and the `os.replace` then moved the
+    symlink over `current` (probed 2026-09-24; final review F.2). mkstemp creates a
+    name nobody could plant, with O_EXCL."""
+    victim = tmp_path / "victim.txt"
+    victim.write_text("not the driver's to touch\n")
+    (tmp_path / "current.tmp").symlink_to(victim)
+    file_lanes.set_current_run(str(tmp_path), "run-20260924-120000")
+    assert victim.read_text() == "not the driver's to touch\n"
+    assert (tmp_path / "current").read_text() == "run-20260924-120000\n"
+    assert not (tmp_path / "current").is_symlink(), "current must be a real file"
+    assert (tmp_path / "current.tmp").is_symlink(), "nothing may write through it"
+    # and the temp mkstemp made is gone: the runs root is the run's record
+    assert sorted(p.name for p in tmp_path.iterdir()) == \
+        ["current", "current.tmp", "victim.txt"]
+
+
+def test_the_pointer_has_the_mode_open_would_have_given_it(tmp_path):
+    """`open(path, "w")` leaves 0666 less the process umask; mkstemp leaves 0600, and the
+    fix pass that moved the pointer write onto mkstemp left it there (2026-09-25
+    fix-pass verification). `runs/current` is the only private file in a
+    group-readable, group-writable board tree: a second user's `create-board.sh` read
+    fails soft (`unstarted_mint` → None) and mints a DUPLICATE run — the exact burial
+    this pointer's reuse logic exists to prevent. Same rule `run._write_atomic` states
+    for its targets, applied to the pointer."""
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    file_lanes.set_current_run(str(runs), "run-20260924-120000")
+    umask = os.umask(0)
+    os.umask(umask)
+    mode = (runs / "current").stat().st_mode & 0o777
+    assert mode == 0o666 & ~umask, oct(mode)
+
+
+def test_a_failed_pointer_write_leaves_no_temp_behind(tmp_path, monkeypatch):
+    """The temp is OURS — mkstemp made the name — and it sits in the runs root, which
+    is the run's record: a write that fails has to take it with it."""
+    def boom(*_a, **_k):
+        raise OSError("no space left on device")
+    monkeypatch.setattr(file_lanes.os, "fdopen", boom)
+    with pytest.raises(OSError):
+        file_lanes.set_current_run(str(tmp_path), "run-20260924-120000")
+    assert sorted(p.name for p in tmp_path.iterdir()) == []
+    assert not (tmp_path / "current").exists()

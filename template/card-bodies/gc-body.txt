@@ -1,6 +1,6 @@
 CODE GATE — lane <N>. A person holds this card: no worker runs it, and the driver never commits. Nothing is committed unless you choose to commit it.
 
-The gate becomes ready only when the newest implementation-review verdict is PASS; the driver records the staged path list in the result. It runs no build of its own: the review cards ran the plan's Run commands, and here you run whatever verification you want.
+The gate becomes ready only when the newest implementation-review verdict is PASS; the driver records how many files are staged in the result; the path list is in the driver log (first eight). It runs no build of its own: the review cards ran the plan's Run commands, and here you run whatever verification you want.
 
 WHAT YOU DO (from this card, in the dashboard or the CLI):
 1. Wait for the driver's comment starting "GATE READY" on this card. Until it appears the review has not passed, and a verdict you write is not applied (the driver answers "NOT APPLIED" and says why).

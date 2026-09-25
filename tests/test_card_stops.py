@@ -1234,3 +1234,65 @@ def test_the_timeout_halt_reason_carries_the_model_note(monkeypatch):
         assert "(on qwen38-27b)" in run.STATE.halted["reason"], run.STATE.halted["reason"]
     finally:
         run.STATE.halted["reason"] = None
+
+
+def test_a_message_whose_ids_vary_between_ticks_still_counts(monkeypatch, tmp_path):
+    """The counter keyed on the whole MESSAGE, so a CLI error carrying a card id or a
+    number that changed every tick reset it each time and TICK_ERROR_LIMIT was never
+    reached (review Important 18). Same type, same shape, different ids: one loop —
+    and the halt still quotes the last error verbatim."""
+    _ledger_env(monkeypatch, tmp_path)
+    for n in (1, 2, 3):
+        run.note_tick_outcome(ValueError(f"card t_{n}a{n} unreadable after {n * 7} s"))
+    reason = run.STATE.halted["reason"]
+    assert reason and "ValueError" in reason, reason
+    assert "t_3a3 unreadable after 21 s" in reason, reason
+
+
+def test_the_other_wording_for_a_removed_board_is_recognised(monkeypatch):
+    """One literal matched; every other wording of "the board is gone" fell to the
+    generic branch, which logged a traceback and kept driving (review Important 18).
+    Contiguous and case-insensitive — never the slug and a phrase found apart."""
+    monkeypatch.setattr(run, "BOARD", "b1")
+    monkeypatch.setattr(run, "log", lambda m: None)
+    monkeypatch.setattr(run, "record_halt", lambda *a, **k: None)
+    assert run.board_removed_exit(RuntimeError("Board 'b1' not found"), idle=True) == 0
+    assert run.board_removed_exit(RuntimeError("BOARD 'b1' DOES NOT EXIST"), idle=False) == 1
+    assert run.board_removed_exit(
+        RuntimeError("board 'b1': card t_1 not found"), idle=False) is None
+    assert run.board_removed_exit(
+        RuntimeError("board 'b1' is fine but the workdir does not exist"), idle=False) is None
+
+
+def test_a_card_whose_record_cannot_be_read_escalates_instead_of_stalling(monkeypatch, tmp_path):
+    """halt_if_exhausted and the reasonless-block scan read an unreadable card as
+    healthy, and promotion — which does count unreadable reads — never visits a card
+    behind a held parent: such a card stalled with nothing in the log (review Important
+    19). The exhaustion scan reads every live card each tick, so it counts, and a
+    streak of UNREADABLE_LIMIT escalates naming the card and the error."""
+    _ledger_env(monkeypatch, tmp_path)
+    monkeypatch.setattr(run, "kb", lambda *a: (_ for _ in ()).throw(RuntimeError(LOCKED)))
+    monkeypatch.setattr(run, "lane_graph", lambda state: [])
+    escalations = []
+    monkeypatch.setattr(run, "escalate",
+                        lambda cid, code, reason, key=None: (
+                            escalations.append((cid, code, reason)),
+                            run.STATE.halted.update(reason=reason)))
+    st = {"C2: code - lane 2": card("C2: code - lane 2", "c")}
+    for tick in range(1, run.UNREADABLE_LIMIT):
+        run.STATE.tick_serial[0] += 1
+        assert run.halt_if_exhausted(st) is None, tick
+    run.STATE.tick_serial[0] += 1
+    reason = run.halt_if_exhausted(st)
+    assert reason and "could not read card C2" in reason and "database is locked" in reason
+    assert escalations and escalations[0][:2] == ("c", "C2")
+
+
+def test_an_unreadable_card_is_counted_once_per_tick_whichever_scan_asks():
+    """Two scans read the same card in one tick; counting both would escalate a
+    transient after two ticks instead of UNREADABLE_LIMIT."""
+    run.STATE.tick_serial[0] += 1
+    assert run.count_unreadable("c") == 1
+    assert run.count_unreadable("c") == 1
+    run.STATE.tick_serial[0] += 1
+    assert run.count_unreadable("c") == 2

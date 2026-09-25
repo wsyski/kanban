@@ -15,6 +15,8 @@ Usage:
   driver/run-audit.py --runs boards/<slug>/runs [--board boards/<slug>] [--json]
 """
 import argparse
+import datetime
+import fcntl
 import importlib.util
 import json
 import os
@@ -58,6 +60,13 @@ BENIGN = (
 )
 
 
+ERROR_VOCAB = re.compile(
+    r"(?i)\b(traceback|exception|error|failed|failure|warning|refused|halted|"
+    r"panic|no such file|command not found|did not match|permission denied|"
+    r"skipped|not found)\b")
+DONE_STATES = ("done", "archived", "triage")
+
+
 def ceiling_minutes(text):
     """'4m' -> 4.0, '1h30m' -> 90.0, '90s' -> 1.5. None when unset.
 
@@ -67,11 +76,6 @@ def ceiling_minutes(text):
     """
     seconds = board_schema.duration_seconds(text)
     return round(seconds / 60.0, 2) if seconds else None
-ERROR_VOCAB = re.compile(
-    r"(?i)\b(traceback|exception|error|failed|failure|warning|refused|halted|"
-    r"panic|no such file|command not found|did not match|permission denied|"
-    r"skipped|not found)\b")
-DONE_STATES = ("done", "archived", "triage")
 
 # Warnings the board's other voice prints: CLI-shaped lines, never prose. A
 # tester running before the coder's file exists can legitimately print
@@ -105,11 +109,30 @@ def _driver_alive(root):
     """(alive, pid) for the driver runs/driver.lock names — the board's own lock, the
     one start-board.sh and acquire_lock check. It tells "audited too early" from a
     driver that died without a halt; a pgrep for the command line matched any board's
-    driver, and missed a serve driver started without --timeout-min."""
-    pid = None
+    driver, and missed a serve driver started without --timeout-min.
+
+    The KERNEL lock answers first: a driver holds a flock on the file for its whole
+    life (driver_lock.take), so a lock we cannot share is a live driver whatever pid
+    the file names. The pid read below is the fallback for a driver that predates the
+    flock. `pid` is "" when the file exists and names nothing readable, and None when
+    there is no file — the wording in audit() tells the two apart (errors S14).
+    """
+    path = os.path.join(root, "driver.lock")
     try:
-        with open(os.path.join(root, "driver.lock")) as f:
-            pid = f.read().strip()
+        fd = os.open(path, os.O_RDONLY)
+    except OSError:
+        return False, None
+    try:
+        pid = os.read(fd, 64).decode(errors="replace").strip()
+        try:
+            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True, pid
+        except OSError:
+            pass
+    finally:
+        os.close(fd)
+    try:
         if int(pid) <= 0:
             return False, pid
         os.kill(int(pid), 0)
@@ -195,6 +218,13 @@ def summary_findings(summary, ceiling):
     for name, minutes in over.items():
         out.append(("WARNING", "E6",
                     f"{name} took {minutes} of a {ceiling}-minute ceiling"))
+    for name, c in cards.items():
+        if c.get("runs_unreadable"):
+            # write_summary could not read this card's runs, so its minutes are
+            # unknown and the ceiling above could not be checked for it (review I15)
+            out.append(("WARNING", "E6", f"{name}: agent minutes unknown — the runs CLI "
+                                         f"refused when the summary was written, so its "
+                                         f"ceiling was not checked"))
     # The union when the summary has one (a forked lane double-counts on the sum):
     # overhead is wall minus the minutes anyone was working, and `overlap_min` is
     # reported beside it so two cards holding the clock at once is visible rather
@@ -203,7 +233,9 @@ def summary_findings(summary, ceiling):
     if agent is None:
         agent = summary.get("agent_work_min")
     if cards and not agent:
-        out.append(("WARNING", "E10", f"agent_work_min={agent!r} with {len(cards)} cards"))
+        field = ("agent_union_min" if summary.get("agent_union_min") is not None
+                 else "agent_work_min")
+        out.append(("WARNING", "E10", f"{field}={agent!r} with {len(cards)} cards"))
     return out, {"cards": cards, "agent": agent, "wall": summary.get("wall_min"),
                  "overlap": summary.get("overlap_min")}
 
@@ -214,8 +246,8 @@ def result_findings(rows):
     for row in rows:
         code = lanes.base_code(row["code"])
         if not row.get("done"):
-            continue        # still in flight: it has no result YET (reading "-"
-                            # as a finished card that produced nothing is #32)
+            continue        # still in flight: it has no result YET, and reading its
+                            # "-" as a finished card that produced nothing is wrong
         if code in lanes.WORKER_CODES and not (row.get("result") or "").strip():
             out.append(("WARNING", "E7", f"{row['code']} finished with an empty result"))
     return out
@@ -243,7 +275,8 @@ def card_log_findings(slug, started, offsets=None):
             try:
                 if started and os.path.getmtime(path) < started:
                     continue
-                text = open(path, errors="replace").read()
+                with open(path, encoding="utf-8", errors="replace") as fh:
+                    text = fh.read()
             except OSError:
                 continue
             for line in text.splitlines():
@@ -290,11 +323,19 @@ def repo_findings(runs_dir):
     # so an older run's staged leftover is still in the index and still reaches
     # every later `git diff --cached`.
     rel = os.path.relpath(runs_root(runs_dir), REPO)
+    if rel == ".." or rel.startswith(".." + os.sep):
+        return out          # runs/ outside this repo: its index cannot hold them, and git
+                            # refuses a pathspec outside the repository
     try:
-        staged = subprocess.run(["git", "-C", REPO, "diff", "--cached",
-                                 "--name-only", "--", rel],
-                                capture_output=True, text=True).stdout
-    except Exception:
+        r = subprocess.run(["git", "-C", REPO, "diff", "--cached", "--name-only", "--", rel],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            # a failing index read is not a clean index: E14 could never fire (errors S3)
+            out.append(("ERROR", "E14", f"cannot read the index to check {rel} "
+                                        f"({r.stderr.strip()[:120] or 'git failed'})"))
+        staged = r.stdout if r.returncode == 0 else ""
+    except OSError as e:
+        out.append(("ERROR", "E14", f"cannot run git to check {rel} ({e})"))
         staged = ""
     for line in staged.splitlines():
         if line.strip():
@@ -375,12 +416,21 @@ def board_findings(slug, runs_dir):
     out = []
     cards = []
     if slug:
+        why = None
         try:
             raw = subprocess.run(["hermes", "kanban", "--board", slug, "list", "--json"],
                                  capture_output=True, text=True, env=runs_util.cli_env())
-            cards = json.loads(raw.stdout) if raw.returncode == 0 else []
-        except Exception:
-            cards = []
+            if raw.returncode == 0:
+                cards = json.loads(raw.stdout)
+            else:
+                why = runs_util.cli_error(raw.stderr) or f"exit {raw.returncode}"
+        except (OSError, ValueError) as e:
+            why = str(e)
+        if why is not None:
+            # "no unfinished cards" was what an unreachable board read as, so E12 could
+            # never fire on exactly the board the audit could not see (errors S2)
+            out.append(("WARNING", "E12", f"the board's cards could not be read ({why}) — "
+                                          f"its end state and live workers are unchecked"))
         # `triage` is where the UNASSIGNED idea card rests until a human
         # promotes it; an assigned card there is a card the board escalated.
         left = [(c.get("title"), c.get("status")) for c in cards
@@ -397,22 +447,56 @@ def board_findings(slug, runs_dir):
                 text = worker_outlived_run(line, cards)
                 if text:
                     out.append(("WARNING", "E8", text))
-    except Exception:
-        pass
+    except OSError as e:
+        out.append(("INFO", "E8", f"pgrep unavailable ({e}) — live workers not checked"))
     return out
+
+
+def _load_json(path, code, what):
+    """(value, finding) for a manifest or a summary the audit depends on.
+
+    A malformed file is a FINDING, never a traceback: this tool's exit code is the
+    board's definition of done, and a file that will not parse is exactly when a human
+    needs the report (2026-09-23 review, Critical 4). A missing file is (None, None) —
+    what absence means differs per file, so the caller says it. A file that parses to
+    something other than an object is malformed too: every reader below calls .get().
+    """
+    try:
+        with open(path, encoding="utf-8") as f:
+            value = json.load(f)
+    except FileNotFoundError:
+        return None, None
+    except (OSError, ValueError) as e:
+        return None, ("ERROR", code, f"{what} is not readable JSON ({e})")
+    if not isinstance(value, dict):
+        return None, ("ERROR", code, f"{what} is not a JSON object "
+                                     f"(got {type(value).__name__})")
+    return value, None
 
 
 def audit(runs_dir, board_dir=None):
     board_dir = board_dir or board_dir_for(runs_dir)
-    cfg = {}
     cfg_path = os.path.join(board_dir, "board.json")
-    if os.path.exists(cfg_path):
-        cfg = json.load(open(cfg_path))
+    cfg, cfg_finding = _load_json(cfg_path, "E4", "board.json")
+    if cfg is None and cfg_finding is None:
+        # NOT a silent `cfg = {}`: an empty cfg disarms the per-card ceiling
+        # (ceiling_minutes -> None, and E6 is guarded on it), empties auto-gates (a held
+        # auto-gate grades INFO instead of WARNING) and makes the slug the directory
+        # name. Measured 2026-09-23: 90 agent minutes under a 60m ceiling, no
+        # board.json -> exit 0, "0 error(s), 0 warning(s)" (review Critical 3).
+        cfg_finding = ("ERROR", "E4",
+                       f"no board.json at {cfg_path} — the per-card ceiling, auto-gates "
+                       f"and the board's end state could not be checked")
+    cfg = cfg or {}
     slug = cfg.get("slug") or os.path.basename(board_dir)
     ceiling = ceiling_minutes(cfg.get("max-runtime"))
 
     findings, stats = driver_findings(read(os.path.join(runs_dir, "driver.log")),
                                      cfg.get("auto-gates") or ())
+    # BEFORE the mid-flight block: that block rewrites only E1 lines, so this finding
+    # survives it, and "the manifest is gone" is worth saying even mid-flight.
+    if cfg_finding:
+        findings.append(cfg_finding)
     if any(c == "E1" and "did not finish" in t for _s, c, t in findings):
         # Mid-flight: one line beats a cascade of E4/E7/E12 that all mean the
         # same thing (the auditor was run too early), and the cause is a person
@@ -430,17 +514,33 @@ def audit(runs_dir, board_dir=None):
                    f"Wait for the banner, then audit; the driver may keep serving."
                    if alive
                    else f"the driver died without a halt or the finish banner — no live "
-                        f"process holds runs/driver.lock (pid {pid or 'none'}); restart "
+                        f"process holds runs/driver.lock "
+                        f"(pid {'none' if pid is None else (pid or 'unreadable')}); restart "
                         f"it with start-board.sh")
         findings = [(s, c, wording if c == "E1" else t) for s, c, t in findings]
         return findings, [], {}
-    s_findings, s_stats = summary_findings(
-        json.load(open(os.path.join(runs_dir, "run-summary.json")))
-        if os.path.exists(os.path.join(runs_dir, "run-summary.json")) else None, ceiling)
-    findings += s_findings
-    stats.update(s_stats)
+    summary, s_finding = _load_json(os.path.join(runs_dir, "run-summary.json"),
+                                    "E4", "run-summary.json")
+    if s_finding:
+        # ONE finding, not a cascade: "the run wrote no summary" would be a lie about a
+        # file that is there and truncated, and the malformed file is the cause a human
+        # needs. summary_findings is skipped so it cannot report the absence underneath.
+        findings.append(s_finding)
+    else:
+        s_findings, s_stats = summary_findings(summary, ceiling)
+        findings += s_findings
+        stats.update(s_stats)
 
-    recs = CHAIN.load(runs_dir)
+    recs, unusable = CHAIN.load_report(runs_dir)
+    if unusable:
+        # The count is the difference between "tolerated a torn write" and "silently
+        # audited a run whose chain is incomplete" (2026-09-23 review, Critical 5). The
+        # record whose `ts` is not a timestamp joined the count on 2026-09-24: it used
+        # to raise ValueError out of analyze() and take this audit down.
+        findings.append(("ERROR", "E3",
+                         f"chain.jsonl: {unusable} unreadable record(s) skipped — a write "
+                         f"torn by a kill or a ts that is not a timestamp; what they said "
+                         f"is not in this audit"))
     rows, chain_findings = CHAIN.analyze(recs, runs_dir) if recs else ([], [])
     for f in chain_findings:
         findings.append(("ERROR", "E3", f))
@@ -452,7 +552,7 @@ def audit(runs_dir, board_dir=None):
         if ts:
             try:
                 started = min(started or 1e18,
-                              __import__("datetime").datetime.fromisoformat(ts).timestamp())
+                              datetime.datetime.fromisoformat(ts).timestamp())
             except ValueError:
                 pass
     findings += card_log_findings(slug, started, runs_util.ledger_log_offsets(runs_dir))
@@ -507,7 +607,6 @@ def report(findings, rows, stats, ceiling):
 
 def runs_root(runs_dir):
     """The board's runs/ tree, given either it or one run inside it."""
-    import os
     p = os.path.abspath(runs_dir)
     return os.path.dirname(p) if os.path.basename(os.path.dirname(p)) == "runs" \
         else p
@@ -520,7 +619,6 @@ def board_dir_for(runs_dir):
     level deeper, and getting this wrong is SILENT — board.json goes unread, so the
     per-card ceiling and auto-gates both default and the audit still prints a clean
     table."""
-    import os
     return os.path.dirname(runs_root(runs_dir))
 
 
@@ -570,11 +668,11 @@ def main(argv=None):
     if a.json:
         print(json.dumps({"findings": findings, "rows": rows, "stats": stats}, indent=2))
         return 1 if any(f[0] in ("ERROR", "WARNING") for f in findings) else 0
-    cfg_path = os.path.join(a.board or board_dir_for(a.runs), "board.json")
-    ceiling = None
-    if os.path.exists(cfg_path):
-        rt = json.load(open(cfg_path)).get("max-runtime")
-        ceiling = ceiling_minutes(rt)
+    # audit() already reported a missing or malformed manifest; the human report only
+    # needs the ceiling, and must not traceback on the file audit() just reported.
+    cfg, _finding = _load_json(os.path.join(a.board or board_dir_for(a.runs), "board.json"),
+                               "E4", "board.json")
+    ceiling = ceiling_minutes((cfg or {}).get("max-runtime"))
     return report(findings, rows, stats, ceiling)
 
 

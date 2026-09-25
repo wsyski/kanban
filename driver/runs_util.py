@@ -34,7 +34,13 @@ def _warn_once(msg):
 
 
 def board_runs(board, card_id, timeout=30):
-    """A card's runs as dicts (kanban _RUNS_RUN_FIELDS), [] on any failure.
+    """A card's runs as dicts (kanban _RUNS_RUN_FIELDS); None when the CLI refused.
+
+    `[]` is DATA — this card has no runs — and a refused or failed call is not that.
+    The two were one value and callers read the second: a gate parked for ten minutes
+    and then halted naming a review that had said nothing, the chain wrote an empty
+    verdict into the ledger, and the timing report printed 0.0 min as fact (2026-09-23
+    review, Important 15). Every caller must handle None.
 
     The CLI call carries `cli_env()`: this module is used by the timing report
     and by the driver's verdict fallback, so a leaked child-context marker here
@@ -46,11 +52,11 @@ def board_runs(board, card_id, timeout=30):
             capture_output=True, text=True, timeout=timeout, env=cli_env())
         if r.returncode != 0:
             _warn_once(f"board_runs {board} {card_id}: {cli_error(r.stderr)}")
-            return []
+            return None
         return json.loads(r.stdout)
     except Exception as e:
         _warn_once(f"board_runs {board} {card_id}: {e}")
-        return []
+        return None
 
 
 def elapsed_min(run):
@@ -112,8 +118,8 @@ def cli_error(stderr, limit=300):
     the banner — and hid "board 'minimal-development' does not exist" behind it
     for a night (driver.log, 2026-09-10 23:52). Drop the banner, keep the tail.
     """
-    lines = [l for l in (stderr or "").strip().splitlines()
-             if not l.strip().startswith(_UPDATE_BANNER)]
+    lines = [line for line in (stderr or "").strip().splitlines()
+             if not line.strip().startswith(_UPDATE_BANNER)]
     return "\n".join(lines).strip()[-limit:]
 
 
@@ -145,10 +151,13 @@ def ledger_log_offsets(run_dir):
             for line in f:
                 try:
                     rec = json.loads(line)
-                except ValueError:
-                    continue
-                if rec.get("event") == "attempt" and rec.get("card_id"):
-                    out.setdefault(rec["card_id"], []).append(int(rec.get("log_offset") or 0))
+                    if rec.get("event") == "attempt" and rec.get("card_id"):
+                        offset = int(rec.get("log_offset") or 0)
+                    else:
+                        continue
+                except (ValueError, TypeError, AttributeError):
+                    continue            # a malformed line, like its siblings: skipped (T-13)
+                out.setdefault(rec["card_id"], []).append(offset)
     except OSError:
         pass
     return out
@@ -165,7 +174,7 @@ def upstream_hits_since(path, offset):
             text = f.read().decode(errors="replace")
     except OSError:
         return 0, None
-    hits = [l.strip() for l in text.splitlines() if UPSTREAM_ERROR.search(l)]
+    hits = [line.strip() for line in text.splitlines() if UPSTREAM_ERROR.search(line)]
     return len(hits), (hits[0] if hits else None)
 
 
@@ -178,6 +187,12 @@ def resolve_run_dir(path):
     point it at runs/ for the current run, or at runs/<run-id> for any earlier one —
     which is the whole reason the older ones are kept.
 
+    The pointer is a NAME, checked by its owner: `file_lanes.is_safe_run_name` is the
+    READER's check, the same one run.py applies at rejoin, and a hand-written `current`
+    holding `../../x` was joined onto the runs directory and read as this run's evidence
+    (probed 2026-09-24). An unsafe name reads as "no current run" — the flat layout —
+    and the import is local because `file_lanes` imports this module.
+
     ONE copy: `run-audit.py` and `doc-chain.py` both read `--runs`, and the two
     resolvers were byte-identical until they were folded in here.
     """
@@ -185,6 +200,10 @@ def resolve_run_dir(path):
     if os.path.isfile(current):
         with open(current) as f:
             run_id = f.read().strip()
-        if run_id and os.path.isdir(os.path.join(path, run_id)):
-            return os.path.join(path, run_id)
+        if run_id:
+            from file_lanes import is_safe_run_name
+            if not is_safe_run_name(run_id):
+                return path                 # a pointer naming a PATH, not a run directory
+            if os.path.isdir(os.path.join(path, run_id)):
+                return os.path.join(path, run_id)
     return path

@@ -1,10 +1,10 @@
-import card_render
 import json
 import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "template"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "driver"))
+import card_render
 import lanes
 import run
 
@@ -293,7 +293,10 @@ def test_an_auto_gate_result_is_kept_verbatim(monkeypatch, tmp_path):
 
 
 def test_a_forked_pair_counts_its_overlap_once(monkeypatch, tmp_path):
-    """TW and C run together, so their minutes overlap. Summing them made the agent
+    """REWRITTEN 2026-09-24 — the old form injected `write_summary._t0`; this pins the
+    same property on `STATE.t0`, the state that replaced it.
+
+    TW and C run together, so their minutes overlap. Summing them made the agent
     total exceed the wall and the overhead go negative — which used to read as "a
     restart happened". The summary now records the union and the overlap beside the
     sum, and `restarts_observed` compares the union, which no single process can
@@ -303,7 +306,7 @@ def test_a_forked_pair_counts_its_overlap_once(monkeypatch, tmp_path):
     path = tmp_path / "runs" / "run-summary.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(run.STATE, "process_recorded", [True])
-    monkeypatch.setattr(run.write_summary, "_t0", time.time() - 600, raising=False)
+    monkeypatch.setattr(run.STATE, "t0", [time.time() - 600])
     monkeypatch.setattr(run.runs_util, "board_runs", lambda board, cid: {
         "id-TW": [{"outcome": "completed", "started_at": 1000, "ended_at": 1120}],
         "id-C":  [{"outcome": "completed", "started_at": 1030, "ended_at": 1150}],
@@ -446,3 +449,49 @@ def test_attaching_runs_before_the_chain_records_what_a_card_produced():
     import run as r
     src = inspect.getsource(r._tick)
     assert src.index("attach_hand_offs(st)") < src.index("record_chain_done(st)")
+
+
+def test_a_verdict_is_not_lost_when_the_run_directory_is_missing(monkeypatch, tmp_path):
+    """ledger() created the BOARD directory and appended to the RUN directory's
+    verdicts.jsonl, so a missing run dir lost the verdict to a swallowed OSError
+    (review Important 22)."""
+    monkeypatch.setattr(run, "BOARD", "b")
+    monkeypatch.setattr(run, "BOARD_DIR", str(tmp_path / "boards" / "b"))
+    monkeypatch.setattr(run.STATE, "verdicts_path",
+                        str(tmp_path / "boards" / "b" / "runs" / "run-20260924-120000"
+                            / "verdicts.jsonl"))
+    lines = []
+    monkeypatch.setattr(run, "log", lines.append)
+    run.ledger({"event": "verdict", "verdict": "PASS", "code": "RVp1", "lane": 1})
+    with open(run.STATE.verdicts_path) as f:
+        assert json.loads(f.readline())["verdict"] == "PASS"
+    assert not lines, lines
+
+
+def test_a_per_run_log_that_cannot_be_written_is_said_once(monkeypatch, tmp_path, capsys):
+    """log() swallowed the per-run append with `except OSError: pass`; run-audit reads
+    THAT file, so the run then audited as "the run never started" (review errors S1)."""
+    run_dir = tmp_path / "run-20260924-120000"
+    (run_dir / "driver.log").mkdir(parents=True)          # a directory: the append fails
+    monkeypatch.setattr(run.STATE, "run_dir", str(run_dir))
+    monkeypatch.setattr(run.STATE, "log_write_failed", set())
+    run.log("first")
+    run.log("second")
+    out = capsys.readouterr().out
+    assert out.count("NOTICE: cannot append to") == 1, out
+    assert "first" in out and "second" in out
+
+
+def test_an_idea_card_that_looks_like_a_lane_card_is_not_recorded(monkeypatch, tmp_path):
+    """`card_id_lane` matches any `<letters><digits>:` title, so an idea card headed
+    `Idea2: …` was recorded as lane 2's; `is_lane_card` exists for exactly that (prior
+    review T-10)."""
+    started = []
+    monkeypatch.setattr(run, "record_chain_start",
+                        lambda card, lane, observed=False: started.append((card["id"], lane)))
+    monkeypatch.setattr(run.STATE, "chain_started", set())
+    run.record_chain_starts({
+        "Idea2: a screener": {"id": "t_idea", "status": "ready", "title": "Idea2: a screener"},
+        "P2: implementation plan - lane 2": {"id": "t_p", "status": "running",
+                                             "title": "P2: implementation plan - lane 2"}})
+    assert started == [("t_p", 2)], started

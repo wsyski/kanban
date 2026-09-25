@@ -2,7 +2,7 @@ VERDICT CARD — plan review for lane <N>. You review a PLAN, not code. Never ed
 
 HARD RULES: (1) Read-only on the repository; write only `<RUNS>/scratch/<YOUR-CARD-ID>/review.md` (create the directory) — nothing temporary belongs in `work/`. (2) Do not commit, branch, stash, reset, restore or clean. (3) Do not write profile memories or create, patch or delete skills — the profile serves every later card.
 
-TASK: the parent card staged a plan at <PLAN> — that file, and never a document under `docs/`, the engine or the tests. Its contract is the refined idea at <REFINED> — the raw idea at <IDEA> only when <REFINED> says `refinement failed`, or on a lane that runs no refinement (`refinement: false`), where <IDEA> is the contract and the plan must say it planned from it. This lane's files are <REFINED>, <PLAN> and exactly the files the plan's Files blocks name; anything else in the index belongs to someone else and is not this lane's to judge. Check the plan against this checklist, item by item:
+TASK: the parent card wrote a plan at <PLAN> (a run hand-off the driver attaches to its card — never staged, so do not look for it in the index) — that file, and never a document under `docs/`, the engine or the tests. Its contract is the refined idea at <REFINED> — the raw idea at <IDEA> only when <REFINED> says `refinement failed`, or on a lane that runs no refinement (`refinement: false`), where <IDEA> is the contract and the plan must say it planned from it. This lane's files are <REFINED>, <PLAN> and exactly the files the plan's Files blocks name; anything else in the index belongs to someone else and is not this lane's to judge. Check the plan against this checklist, item by item:
 
 <PLAN_CHECKLIST>
 

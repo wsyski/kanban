@@ -55,6 +55,11 @@ def test_board_runs_hands_the_cli_a_clean_env(monkeypatch):
 
 
 def test_board_runs_warns_instead_of_reporting_an_empty_card(monkeypatch, capsys):
+    """REWRITTEN 2026-09-24 — this test asserted `board_runs(...) == []` on a refused
+    CLI, which made "the CLI could not be read" and "this card has no runs" one value.
+    Callers read the second: a gate parked ten minutes and then halted naming a review
+    that had said nothing, and the timing report printed 0.0 min of agent work as fact
+    (2026-09-23 review, Important 15). None now means UNKNOWN; the warning stays."""
     def fake_run(argv, **kw):
         class R:
             returncode = 1
@@ -64,7 +69,7 @@ def test_board_runs_warns_instead_of_reporting_an_empty_card(monkeypatch, capsys
 
     runs_util._WARNED.clear()
     monkeypatch.setattr(runs_util.subprocess, "run", fake_run)
-    assert runs_util.board_runs("b", "t1") == []
+    assert runs_util.board_runs("b", "t1") is None
     assert "WARNING" in capsys.readouterr().err
     runs_util._WARNED.clear()
 
@@ -86,3 +91,45 @@ def test_a_timed_out_attempt_counts_as_worked_time():
     assert "timed_out" in runs_util.CLOSED_OUTCOMES
     assert runs_util.elapsed_min({"started_at": 1_700_000_000, "ended_at": 1_700_000_600}) == 10
     assert runs_util.elapsed_min({"started_at": 10}) == 0.0
+
+
+def test_a_card_with_no_runs_is_still_an_empty_list(monkeypatch):
+    """The other side: `[]` stays DATA — the CLI answered, and the card has no runs."""
+    def fake_run(argv, **kw):
+        class R:
+            returncode = 0
+            stdout = "[]"
+            stderr = ""
+        return R()
+
+    monkeypatch.setattr(runs_util.subprocess, "run", fake_run)
+    assert runs_util.board_runs("b", "t1") == []
+
+
+def test_a_pointer_that_escapes_the_runs_directory_is_no_current_run(tmp_path):
+    """A hand-edited `boards/<slug>/runs/current` of `../../../x` is a PATH, not a run
+    name: joined onto the runs directory it read as this run's evidence (probed
+    2026-09-24). The check is file_lanes' — the READER's, the same one run.py applies
+    at rejoin — not a second copy. Legacy names must still resolve."""
+    runs = tmp_path / "boards" / "b" / "runs"
+    (runs / "r1").mkdir(parents=True)
+    (tmp_path / "x").mkdir()                     # the escaping path EXISTS: it was read
+    (runs / "current").write_text("../../../x\n")
+    assert runs_util.resolve_run_dir(str(runs)) == str(runs)
+    # a legacy name the repo's own older runs carry still resolves
+    (runs / "b-20260912-090000").mkdir()
+    (runs / "current").write_text("b-20260912-090000\n")
+    assert runs_util.resolve_run_dir(str(runs)) == str(runs / "b-20260912-090000")
+    (runs / "current").write_text("r1\n")
+    assert runs_util.resolve_run_dir(str(runs)) == str(runs / "r1")
+
+
+def test_a_malformed_log_offset_is_skipped_like_a_malformed_line(tmp_path):
+    """`int(rec.get("log_offset") or 0)` sat outside the per-record try, so one
+    non-numeric offset raised out of the whole read (prior review T-13)."""
+    import json
+    (tmp_path / "verdicts.jsonl").write_text("\n".join(json.dumps(r) for r in (
+        {"event": "attempt", "card_id": "t_1", "log_offset": "abc"},
+        {"event": "attempt", "card_id": "t_1", "log_offset": 42},
+        {"event": "attempt", "card_id": "t_2"}))+ "\n")
+    assert runs_util.ledger_log_offsets(str(tmp_path)) == {"t_1": [42], "t_2": [0]}

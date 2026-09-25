@@ -6,6 +6,8 @@ since a worker may write anything there. This tool reports and stops; the `rm` i
 human's to type.
 """
 import json
+
+import pytest
 import os
 import subprocess
 import sys
@@ -132,3 +134,76 @@ def test_the_timing_report_prints_the_end_state_not_every_status_entered():
     src = open(path).read()
     assert "end status histogram" not in src
     assert 'c["status"] for c in card_snaps[-1]["cards"].values()' in src
+
+
+def test_size_scales():
+    """`_size` had no test at all (review tests I36)."""
+    assert rr._size(0) == "0B"
+    assert rr._size(999) == "999B"
+    assert rr._size(1536) == "2K"
+    assert rr._size(5 * 1024 ** 2) == "5M"
+    assert rr._size(3 * 1024 ** 3) == "3G"
+
+
+def test_a_run_that_opened_a_lane_is_not_superseded(tmp_path):
+    """The False direction of `never_opened_a_lane` was unreachable: the fixture made no
+    snapshots/ (review tests I36)."""
+    runs = _runs(tmp_path)
+    (runs / "r2" / "snapshots").mkdir()
+    (runs / "r2" / "snapshots" / "lane-1.md").write_text("idea\n")
+    rows, _live = rr.runs_in(str(runs))
+    by_run = {r["run"]: r for r in rows}
+    assert by_run["r2"]["superseded"] is False
+    assert by_run["r1"]["superseded"] is True
+
+
+def test_the_report_can_be_asked_for_by_board(tmp_path, monkeypatch, capsys):
+    """`--board` had no test (review tests I36): it resolves boards/<slug>/runs."""
+    board_runs = tmp_path / "boards" / "b"
+    board_runs.mkdir(parents=True)
+    _runs(board_runs)
+    monkeypatch.setattr(rr, "REPO", str(tmp_path))
+    assert rr.main(["--board", "b"]) == 0
+    assert "2 run(s)" in capsys.readouterr().out
+
+
+def test_a_pointer_that_escapes_the_runs_directory_is_no_current_run(tmp_path, capsys):
+    """A hand-edited `runs/current` of `../../../x` is a PATH, not a run name. This tool
+    only reports, but it printed that string as the board's current run (and would mark
+    it in `--json`). The check is file_lanes' — the READER's, the one run.py uses."""
+    runs = _runs(tmp_path, current="../../../x")
+    assert rr.current_run(str(runs)) is None
+    rows, live = rr.runs_in(str(runs))
+    assert live is None
+    assert not any(r["current"] for r in rows)
+    assert rr.main(["--runs", str(runs), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["current"] is None
+    # a name that is a run still resolves
+    (runs / "current").write_text("r1\n")
+    assert rr.current_run(str(runs)) == "r1"
+
+
+def test_no_arguments_is_a_usage_error(capsys):
+    with pytest.raises(SystemExit) as excinfo:
+        rr.main([])
+    assert excinfo.value.code == 2
+    assert "--board <slug> or --runs <dir> is required" in capsys.readouterr().err
+
+
+def test_a_run_removed_mid_report_does_not_lose_the_report(tmp_path, monkeypatch, capsys):
+    """`os.path.getmtime` was unguarded in the loop over a live runs/ directory, and this
+    tool's own advice tells a human to `rm -rf` those paths — one removal mid-read lost
+    the whole report (review errors S9)."""
+    runs = _runs(tmp_path)
+    real = os.path.getmtime
+
+    def vanishing(path):
+        if os.path.basename(path) == "r1":
+            raise FileNotFoundError(path)
+        return real(path)
+
+    monkeypatch.setattr(rr.os.path, "getmtime", vanishing)
+    assert rr.main(["--runs", str(runs)]) == 0
+    captured = capsys.readouterr()
+    assert "1 run(s)" in captured.out and "r2" in captured.out
+    assert "disappeared while reading" in captured.err and "r1" in captured.err

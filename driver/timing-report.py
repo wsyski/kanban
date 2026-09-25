@@ -4,10 +4,10 @@
 Reads the board's timing.jsonl (written by run.py's record_timing each tick)
 and merges per-card run records from `hermes kanban runs <id>` to produce:
 
-  - per-card: agent elapsed (from runs data), dispatch gap (time triaged->ready
-    ->running vs parent-done), first-running and done timestamps
-  - phase totals: work time vs overhead (gaps), by task
-  - budget-exhaustion events (failed runs)
+  - per-card: first-running and done timestamps, and agent elapsed (from runs data)
+  - per-lane and per-role agent minutes
+  - totals: agent work, minutes in flight, wall time and the non-agent overhead
+  - budget-exhaustion events (gave_up / timed_out runs)
 
 Usage: driver/timing-report.py --board <slug> [--jsonl <path>]
 
@@ -15,13 +15,14 @@ The board is required and has no default: timing data is board-scoped, and a
 default slug would silently report on a board you did not ask about — or, once
 that board is gone, on nothing at all.
 """
-import json, re, subprocess, sys, os, collections, datetime
+import json, re, sys, os, collections, datetime
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))      # runs_util lives here
 sys.path.insert(0, os.path.join(REPO, "template"))                   # lanes lives there
 import lanes  # noqa: E402  — card code -> role, so roles are never hardcoded here
 import runs_util  # noqa: E402  — runs parsing shared with the driver
+import file_lanes  # noqa: E402  — the owner of the READER's run-name check
 
 ROLE = {row[0]: row[2] for row in lanes.LANE_CARDS}
 # A rework round's title carries a round suffix — "TI1-rev-1: …", "RVa1-r2: …" — and the
@@ -71,14 +72,21 @@ def _args(argv):
     try:
         with open(os.path.join(runs, "current")) as f:
             run_id = f.read().strip()
-        if run_id and os.path.isdir(os.path.join(runs, run_id)):
+        # The pointer is a NAME, checked by its owner (file_lanes.is_safe_run_name, the
+        # same check run.py applies at rejoin): a hand-edited `current` of `../../x` was
+        # joined onto the runs path and read as this run's evidence (2026-09-24 review).
+        # Read it as "no current run" and report the flat layout.
+        if run_id and file_lanes.is_safe_run_name(run_id) \
+                and os.path.isdir(os.path.join(runs, run_id)):
             runs = os.path.join(runs, run_id)
     except OSError:
         pass                      # a pre-per-run board: the flat layout still reads
     return board, os.path.join(runs, "timing.jsonl")
 
 
-BOARD, JSONL = _args(sys.argv[1:])
+# Set by main(). Parsing argv at IMPORT made importing this module parse the
+# importer's argv — and SystemExit on it (2026-09-23 review, Important 25).
+BOARD = JSONL = None
 
 def load_snaps():
     snaps = []
@@ -92,25 +100,40 @@ def load_snaps():
     return snaps
 
 def transitions(snaps):
-    """First time each card entered each status."""
+    """First time each card entered each status: {(title, status): epoch}.
+
+    The card ids used to ride in the SAME dict under 3-tuple keys, and every reader
+    filtered on `len(k) == 2` — a new key shape would silently have changed the row set
+    (prior review S24). They are card_ids(), a dict of their own."""
     seen = {}
     for s in snaps:
         for title, c in s["cards"].items():
-            key = (title, c["status"])
-            if key not in seen:
-                seen[key] = s["epoch"]
-                seen[(title, c["status"], "id")] = c["id"]
+            seen.setdefault((title, c["status"]), s["epoch"])
     return seen
 
+
+def card_ids(snaps):
+    """{(title, status): card id} for the first time each card entered each status."""
+    ids = {}
+    for s in snaps:
+        for title, c in s["cards"].items():
+            ids.setdefault((title, c["status"]), c["id"])
+    return ids
+
 def runs_elapsed(card_id):
-    """Closed runs for a card, via the shared runs --json parser.
+    """Closed runs for a card, via the shared runs --json parser; None when the runs
+    CLI could not be read.
 
     The text table this used to parse formats elapsed as 9s/45m/1.2h and the
     old column math misread `45m` as 4.0 minutes (parts[-2] grabs the PROFILE
     column once a summary line shifts the row); the JSON fields are exact.
     """
+    runs = runs_util.board_runs(BOARD, card_id)
+    if runs is None:
+        return None          # the CLI refused: UNKNOWN, which main() says out loud —
+                             # never 0.0 min printed as fact (review Important 15)
     out = []
-    for r in runs_util.board_runs(BOARD, card_id):
+    for r in runs:
         if r.get("outcome") in runs_util.CLOSED_OUTCOMES \
                 and r.get("ended_at") and r.get("started_at"):
             out.append({"outcome": r["outcome"],
@@ -119,28 +142,9 @@ def runs_elapsed(card_id):
                         "note": (r.get("summary") or r.get("error") or "")[:80]})
     return out
 
-def parse_elapsed_minutes(el_raw):
-    """Legacy text-format parser, kept for rows already stored in old
-    timing.jsonl files; new snapshots carry `elapsed_min` directly."""
-    if not el_raw:
-        return None
-    el_raw = el_raw.strip()
-    if el_raw.endswith("m"):
-        try:
-            return float(el_raw[:-1])
-        except ValueError:
-            return None
-    if el_raw.endswith("s"):
-        try:
-            return float(el_raw[:-1]) / 60
-        except ValueError:
-            return None
-    try:
-        return float(el_raw)
-    except ValueError:
-        return None
-
-def main():
+def main(argv=None):
+    global BOARD, JSONL
+    BOARD, JSONL = _args(sys.argv[1:] if argv is None else argv)
     snaps = load_snaps()
     if not snaps:
         print(f"no timing data — is {JSONL} empty?")
@@ -153,6 +157,7 @@ def main():
     t0, t1 = snaps[0]["epoch"], snaps[-1]["epoch"]
     card_snaps = [s for s in snaps if "cards" in s]
     tr = transitions(card_snaps)
+    ids = card_ids(card_snaps)
     # The END state, one entry per card — not every status each card ever ENTERED, which
     # is what this counted until 2026-09-16: a finished 12-card board printed
     # `{'blocked': 11, 'running': 6, 'done': 8, …}`, 28 entries, and read as a stuck board.
@@ -166,15 +171,19 @@ def main():
     print()
     print(f"{'card':<50} {'first_running':>13} {'done_at':>13} {'status':>8}")
     print("-" * 90)
-    order = sorted({k[0] for k in tr if len(k) == 2},
+    order = sorted({k[0] for k in tr},
                    key=lambda t: tr.get((t, "running"), t1) or t1)
     work_total = 0.0
     intervals = []
+    unknown = []           # cards whose runs the CLI would not return
     per_card = {}
     for title in order:
-        cid = tr.get((title, "done", "id")) or tr.get((title, "running", "id")) or "?"
+        cid = ids.get((title, "done")) or ids.get((title, "running")) or "?"
         # agent elapsed from board runs data
         rows = runs_elapsed(cid)
+        if rows is None:
+            unknown.append(title.split(":")[0])
+            rows = []
         agent = sum(r.get("elapsed_min") or 0
                     for r in rows if r.get("outcome") in runs_util.CLOSED_OUTCOMES)
         intervals += [(r.get("started_at"), r.get("ended_at")) for r in rows
@@ -199,7 +208,11 @@ def main():
     by_lane = collections.defaultdict(list)
     for title, d in per_card.items():
         by_lane[card_lane(title)].append(d)
-    if len([l for l in by_lane if l is not None]) > 1:
+    if any(l is not None for l in by_lane):
+        # Printed whenever a card carries a lane at all: a one-lane board's row is still
+        # that lane's minutes, and the module's header promises per-lane minutes for
+        # every board. Requiring MORE THAN ONE lane meant 6 of the 7 shipped boards (one
+        # lane each) never printed the table at all (2026-09-24 review).
         print(f"{'lane':<8} {'cards':>6} {'agent':>9} {'wall':>9}")
         print("-" * 36)
         for lane in sorted(l for l in by_lane if l is not None):
@@ -212,8 +225,8 @@ def main():
         print()
 
     # Per ROLE, not per profile: the role is the identity and several of them share
-    # one profile now (tester and reviewer are worked on the coder). Invisible above,
-    # where reviewer time is spread over three separate cards per lane.
+    # one profile (the plan, test, implementation and review cards are all the
+    # coder's). Invisible above, where review time is spread over three cards per lane.
     by_role = collections.defaultdict(float)
     for title, d in per_card.items():
         by_role[ROLE.get(card_code(title), "?")] += d["agent"]
@@ -225,6 +238,9 @@ def main():
             if mins:
                 print(f"{role:<14} {mins:>8.1f}m   {100*mins/tot:>3.0f}%")
         print()
+    if unknown:
+        print(f"⚠ agent minutes UNKNOWN for {len(unknown)} card(s) ({', '.join(unknown)}) — "
+              f"`hermes kanban runs` refused; the totals below leave them out")
     union = runs_util.union_min(intervals)
     overlap = max(0.0, work_total - union)
     print(f"total agent work time: {work_total:.1f} min"
@@ -235,10 +251,10 @@ def main():
           f"({100*((t1-t0)/60 - union)/max((t1-t0)/60,.1):.0f}%)")
     # budget exhaustion flags
     for title in order:
-        cid = tr.get((title, "done", "id")) or tr.get((title, "running", "id"))
+        cid = ids.get((title, "done")) or ids.get((title, "running"))
         if not cid:
             continue
-        rows = runs_elapsed(cid)
+        rows = runs_elapsed(cid) or []
         for r in rows:
             if r.get("outcome") == "gave_up":
                 print(f"⚠ BUDGET: {title.split(':')[0]} gave_up — {r.get('note','')}")

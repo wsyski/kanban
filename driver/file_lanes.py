@@ -10,12 +10,24 @@ says, and where a lane's hand-offs live, is `card_render.py`.
 import datetime
 import json
 import os
+import re
 import subprocess
+import tempfile
 
 import board_schema
 import lanes
 import runs_util
 import card_render
+
+
+# The mode `open(path, "w")` leaves a file: 0666 less the process umask. Read ONCE, at
+# import, where the process is single-threaded — `os.umask` is the only way to ask, and
+# setting it around each write would hand umask 0 to anything forked inside that window
+# (2026-09-25 fix-pass verification). run._WRITE_MODE is the same number read the same
+# way; a test pins the two together, and each writer pins it against `0666 & ~umask`.
+_UMASK = os.umask(0)
+os.umask(_UMASK)
+WRITE_MODE = 0o666 & ~_UMASK
 
 
 
@@ -31,7 +43,9 @@ def kb(board, *args):
     return r.stdout
 
 
-DEFAULT_MAX_RUNTIME = "60m"
+# The option table's own defaults, read, not restated (2026-09-23 review, Important
+# 10; the house rule lanes.py states beside MAX_REWORKS).
+DEFAULT_MAX_RUNTIME = board_schema.OPTIONS["max-runtime"][1]
 # ONE attempt per card, always. A failure — a timeout, a crash, a spawn that never
 # started — is FINAL (user rule, 2026-09-12): the dispatcher's breaker blocks the
 # card on that first failure and the driver halts the board. The only retry the
@@ -39,7 +53,7 @@ DEFAULT_MAX_RUNTIME = "60m"
 # revision round); re-running a card against an unchanged body and hoping for a
 # different outcome is not a mechanism this board has, and the 3-retry budget the
 # cards feeding a reviewer used to get was exactly that hope.
-DEFAULT_MAX_RETRIES = 1
+DEFAULT_MAX_RETRIES = board_schema.OPTIONS["max-retries"][1]
 
 
 # Every key a board.json may carry, from the one declaration: board_schema knows
@@ -81,6 +95,16 @@ def unstarted_mint(repo, board):
         return None
     if not run_id:
         return None
+    # The READER's check, at the join. `current` is a plain file a human may edit and
+    # nothing else here refuses a name that leaves the board: a hand-edited
+    # `../../../../OUTSIDE` resolved with the join below, passed the isdir check when it
+    # happened to exist, and was then RETURNED — create-board.sh makedirs'd it and
+    # pointed `current` at a directory outside the board, where `run.use_run` refuses
+    # the very same string (probed 2026-09-24; final review F.1/A Minor-1). A name that
+    # cannot be joined onto `runs/` reads exactly like a pointer that is not there: a
+    # filing has nothing to reuse, and mints its own key.
+    if not is_safe_run_name(run_id):
+        return None
     directory = os.path.join(runs, run_id)
     if not os.path.isdir(directory):
         # A stale pointer, not a mint: the human pruned the directory, or the run is
@@ -92,6 +116,56 @@ def unstarted_mint(repo, board):
     return run_id
 
 
+# The shape a MINTED run id has, in one place. It was prose in next_run_key's docstring
+# and pinned only by a test on the producer (2026-09-23 review, Important 11). It is
+# checked where an id is minted, not where one is read: the repo's own older runs and
+# the suite's fixtures carry other names ("r1", "b-20260912-090000"), and a reader that
+# refused them would refuse to rejoin a pre-rename run (measured 2026-09-24: 17 tests).
+RUN_ID_RE = re.compile(r"^run-\d{8}-\d{6}$")
+
+
+def is_safe_run_name(name):
+    """Can `name` be joined onto RUNS_ROOT without leaving it? The READER's check: one
+    path segment, not `.`/`..`, nothing absolute — whatever its shape."""
+    return bool(name) and name not in (".", "..") and "/" not in name and "\0" not in name
+
+
+def set_current_run(runs_root, run_id):
+    """Point `runs_root/current` at `run_id`, atomically (temp file + os.replace).
+
+    The ONE writer of the pointer: create-board.sh's filing and run.mint_run both call
+    it. It was two copies of the same four lines (2026-09-23 review, Suggestion 3), and
+    the reader side (unstarted_mint, run._read_current_run) depends on both writing
+    exactly one line.
+
+    The temp is mkstemp's, created IN the runs root. `current + ".tmp"` is a name
+    anybody who can write here can predict, and `open()` FOLLOWS a symlink: a planted
+    `current.tmp` was truncated with driver-chosen content, and the `os.replace` then
+    moved the link over `current` (probed 2026-09-24; final review F.2). mkstemp makes
+    a name that cannot be planted, and opens it O_EXCL. The temp is ours, so a failed
+    write takes it with it — the runs root is the run's record, not a scratch dir.
+    Same directory, so the replace stays atomic: one id is visible, never half of one.
+
+    The mode is the one `open(path, "w")` would have given it (0666 less the process
+    umask), not mkstemp's 0600 — the same rule run._write_atomic states for its
+    targets. This pointer is the one file in a group-readable, group-writable board
+    tree, and it is read by whoever files a board: a second user's create-board.sh
+    finds it unreadable, `unstarted_mint` answers None, and the filing MINTS A
+    DUPLICATE run — the burial this pointer's reuse logic exists to prevent (2026-09-25
+    fix-pass verification).
+    """
+    current = os.path.join(runs_root, "current")
+    fd, tmp = tempfile.mkstemp(dir=runs_root, prefix="current.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(run_id + "\n")
+        os.chmod(tmp, WRITE_MODE)
+    except BaseException:
+        os.unlink(tmp)
+        raise
+    os.replace(tmp, current)
+
+
 def next_run_key(repo, board, now=None):
     """The run id a filing should use: the unstarted mint's, or a fresh timestamp.
 
@@ -100,23 +174,17 @@ def next_run_key(repo, board, now=None):
     a fresh key is the one every run id in `runs/` already has — `run-<YYYYmmdd-HHMMSS>`
     — so a run's name says when it was filed and nothing else; the board it belongs to
     is the directory it sits in.
+
+    The reused name is one `unstarted_mint` already passed through
+    `is_safe_run_name`, so the only key this can return that it did not just mint is a
+    name that stays inside `runs/`.
     """
     reuse = unstarted_mint(repo, board)
     if reuse:
         return reuse
-    return f"run-{(now or datetime.datetime.now()):%Y%m%d-%H%M%S}"
-
-
-
-
-
-
-
-
-
-
-
-
+    key = f"run-{(now or datetime.datetime.now()):%Y%m%d-%H%M%S}"
+    assert RUN_ID_RE.fullmatch(key), key          # the producer cannot drift from the shape
+    return key
 
 
 def _board_cfg(board_dir):
@@ -170,10 +238,26 @@ def file_board(board, repo, workdir, lane_count, key_prefix, max_runtime=None,
     # 2026-09-11's run 10 wedged.
     try:
         board_cfg = _board_cfg(os.path.join(repo, "boards", board))
-    except Exception:
-        board_cfg = {}            # unreadable manifest: keep the documented defaults
+    except FileNotFoundError:
+        # ONLY a missing manifest keeps the documented defaults. A blanket `except
+        # Exception` also swallowed a malformed one and a permission error, and filing
+        # then went on with 60m ceilings, the goal judge off and NO model flag at all:
+        # on a board that pins a work model plus a model_override, every review would
+        # have run the author's model (2026-09-23 review, Important 13).
+        board_cfg = {}
     if goal_cards is None:
         goal_cards = board_cfg.get("goal-cards", board_schema.OPTIONS["goal-cards"][1])
+    # `model`/`provider` may be a per-lane ARRAY — board_schema accepts it and
+    # create-board.sh's help documents it ("a list with exactly one value per lane"),
+    # the normal local setup being one backend serving a different model per lane — but
+    # a `create` call takes one value, and a card belongs to one lane. So the array is
+    # indexed HERE, by the lane being filed, BEFORE anything exists: a list that does not
+    # cover every lane stops the filing with no card created, the way a manifest fault
+    # does, instead of half-filing the board and dying inside subprocess.
+    models = {lane: dict(board_cfg,
+                         model=lanes.lane_value(board_cfg.get("model"), lane),
+                         provider=lanes.lane_value(board_cfg.get("provider"), lane))
+              for lane in range(1, lane_count + 1)}
     made = {}
     for lane in range(1, lane_count + 1):
         cards = lanes.lane_cards(lane, integration_tests=True,
@@ -182,20 +266,20 @@ def file_board(board, repo, workdir, lane_count, key_prefix, max_runtime=None,
         for card in cards:
             body = card_render.render_body(card["body"], repo=repo, board=board, workdir=workdir,
                                lane=lane, targets=targets or (), run_id=run_id)
-            retries = max_retries
             args = ["create", card["title"], "--body", body,
                     "--assignee", card["assignee"], "--workspace", f"dir:{workdir}",
-                    "--max-runtime", runtime, "--max-retries", str(retries),
+                    "--max-runtime", runtime, "--max-retries", str(max_retries),
                     "--initial-status", "blocked",
                     "--idempotency-key", f"{key_prefix}-{card['id']}",
                     "--created-by", "coder", "--json"]
             if card["skill"]:
                 args += ["--skill", card["skill"]]
-            # The model this card runs on: the board's `model`/`provider` (a lane's
-            # own header is not known yet — the idea is entered after filing and
-            # open_lane() re-points the lane's cards), and the review pin on the
+            # The model this card runs on: the board's `model`/`provider`, this lane's
+            # entry when the board declares an array (`models[lane]`) — a lane's own
+            # header is not known yet, the idea is entered after filing, and
+            # open_lane() re-points the lane's cards — and the review pin on the
             # review cards over it. Which cards get which is lanes.model_args.
-            args += lanes.model_args(card["code"], board_cfg)
+            args += lanes.model_args(card["code"], models[lane])
             args += lanes.goal_args(card["code"], cards=goal_cards,
                                     max_turns=goal_max_turns)
             cid = json.loads(kb(board, *args))["id"]
@@ -232,10 +316,16 @@ def _options_line(repo, board, lane, text, workdir=None):
     """
     try:
         defaults = card_render.read_board(os.path.join(repo, "boards", board))
-        headers, _ = lanes.parse_idea(text)
-        opts = lanes.resolve_lane_options(defaults, headers, lane)
-    except Exception as exc:      # never let a display line stop a board filing
+    except OSError as exc:        # a manifest this process cannot READ: say so on the card
         return f"Lane options: unavailable ({exc})"
+    # NOT inside the try: parse_idea and resolve_lane_options raise ValueError for a
+    # per-lane array whose length does not match `lanes` and for a header that
+    # contradicts the option table, and the old blanket catch turned those real
+    # configuration faults into a sentence in a card body while the filing went on
+    # (2026-09-23 review, Important 14). A malformed manifest (JSONDecodeError, a
+    # ValueError) propagates for the same reason.
+    headers, _ = lanes.parse_idea(text)
+    opts = lanes.resolve_lane_options(defaults, headers, lane)
     def _as_kind(key, raw):
         """One option value normalized for COMPARISON: a bool option reads as a bool,
         everything else as its lowercased text — so `unit-tests: True` and `unit-tests: true`
@@ -254,9 +344,10 @@ def _options_line(repo, board, lane, text, workdir=None):
         # they do not, the header silently wins and the board file lies. So say it
         # here, on the card the human actually reads.
         try:
-            board_value = lanes._board_default(defaults, key, lane, None)
-        except Exception:
-            board_value = None
+            board_value = lanes.board_default(defaults, key, lane, None)
+        except ValueError:
+            board_value = None      # a per-lane list the wrong length: resolve_lane_options
+                                    # above already refused it, so this cannot be reached
         if board_value is not None and _as_kind(key, board_value) != _as_kind(key, headers[key]):
             return (f"idea header — CONFLICTS with the board file, which says "
                     f"{str(board_value).lower()} for lane {lane}; the header wins")
@@ -286,7 +377,8 @@ def file_ideas(board, repo, ideas_dir, lane_count, key_prefix, run_id=None,
         path = os.path.join(ideas_dir, f"lane-{lane}.md")
         if not os.path.exists(path):
             continue
-        text = open(path).read()
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
         if not text.strip():
             continue
         # The RUN directory is minted when an idea is armed, so a card that will be

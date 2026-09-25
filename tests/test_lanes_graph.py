@@ -166,3 +166,111 @@ def test_sequential_changes_nothing_on_a_lane_with_no_unit_tests():
 def test_sequential_does_not_change_which_cards_a_lane_files():
     assert ([c["code"] for c in lanes.lane_cards(1)]
             == [c["code"] for c in lanes.lane_cards(1, sequential=True)])
+
+
+def test_goal_args_ignores_a_bare_string():
+    """goal_args had gate_is_auto's defect: a bare string read as a list of card codes
+    (review Important 5)."""
+    assert lanes.goal_args("C", cards="C") == []
+    assert lanes.goal_args("C", cards="TC") == []
+    assert lanes.goal_args("C", cards=["C"]) == ["--goal", "--goal-max-turns", "40"]
+
+
+def test_the_gate_and_goal_vocabularies_have_one_source():
+    """Four declarations of the gate/goal vocabularies, no test that they agree
+    (2026-09-23 review, Important 12): a code added to one would silently not exist
+    for the others."""
+    import board_schema
+    import run as r
+    assert set(r.GATE_CODE_OF.values()) == set(board_schema.GATE_CODES)
+    assert set(r.GATE_NAMES) == set(r.GATE_CODE_OF)
+    assert r.VERDICT_GATES == frozenset(board_schema.GATE_CODES)
+    assert lanes.WORKER_CODES == board_schema.GOAL_CODES
+    assert {c for c, *_ in lanes.LANE_CARDS if c.startswith("G")} == set(board_schema.GATE_CODES)
+
+
+def test_an_unknown_gate_kind_is_a_named_error():
+    """`GATE_CODE_OF[kind]` was a bare dict index in gate_action — a KeyError from inside
+    a tick says nothing about what went wrong."""
+    import pytest
+    import run as r
+    with pytest.raises(r.UnknownGateKind):
+        r.gate_code_of("qx")
+    assert r.gate_code_of("gc") == "Gc"
+
+
+def test_max_reworks_reads_one_shape():
+    """`0`/False read as "unset" (3 rounds), "0" as a cap of ZERO and True as 1 — three
+    sentinels read three ways (types S5/S10). The option is a count >= 1; anything else
+    is named, not guessed."""
+    import pytest
+    assert lanes.max_reworks({}) == 3
+    assert lanes.max_reworks(None) == 3
+    assert lanes.max_reworks({"max-reworks": 4}) == 4
+    for bad in (0, "0", "4", True, False, -1):
+        with pytest.raises(ValueError):
+            lanes.max_reworks({"max-reworks": bad})
+
+
+def test_a_header_given_twice_is_refused():
+    """A repeated header key was last-wins with no report (prior review T-3)."""
+    import board_schema
+    text = ("<!-- unit-tests: true -->\n<!-- unit-tests: false -->\n"
+            "## Idea 1\n\n### Done means\n\nx\n")
+    problems = board_schema.validate_headers(text, where="lane-1.md")
+    assert any("given twice" in p and "line 1" in p for p in problems), problems
+
+
+# ---- per-lane values: the array form, indexed by lane -----------------------
+
+def test_lane_value_indexes_a_per_lane_list_by_lane():
+    """`model`/`provider` are per-lane options and board_schema accepts the array form
+    (one backend serving a different model per lane is the normal local setup), but a
+    `create` call takes ONE value and a card belongs to one lane: the value it takes
+    is that lane's entry. Anything that is not a list comes back unchanged, so a
+    scalar stays byte-identical."""
+    assert lanes.lane_value("m1", 1) == "m1"
+    assert lanes.lane_value(None, 2) is None
+    assert lanes.lane_value(True, 3) is True
+    assert lanes.lane_value(["m1", "m2"], 1) == "m1"
+    assert lanes.lane_value(["m1", "m2"], 2) == "m2"
+
+
+def test_a_per_lane_list_with_no_entry_for_the_lane_is_named():
+    """A list too short for the lane is a configuration fault to name, not to guess: a
+    fallback would file the card on a model nobody chose — the failure the option
+    exists to prevent, and the reason board_schema refuses the same shape at the door."""
+    import pytest
+    for lane in (0, 2, 3):
+        with pytest.raises(ValueError) as e:
+            lanes.lane_value(["m1"], lane)
+        assert f"lane {lane}" in str(e.value), e.value
+        assert "per-lane" in str(e.value), e.value
+
+
+# ---- prose this branch made false ------------------------------------------
+
+def test_the_model_args_docstring_says_what_a_caller_passes():
+    """It said the lane pair is "resolved by `resolve_lane_options` into `lane_cfg`" —
+    that IS the bug this branch fixed (Important 8): `resolve_lane_options` fills a
+    missing provider from the board, so a lane naming a local model on a cloud board
+    asks the cloud backend for it. Every lane-scoped caller now passes the lane's idea
+    HEADER pair itself, and `cfg` alone is the filing-time answer."""
+    doc = " ".join(lanes.model_args.__doc__.split())
+    assert "resolved by" not in doc, doc
+    assert "header" in doc and "lane_model_opts" in doc, doc
+
+
+def test_the_max_reworks_comment_does_not_blame_the_import_order():
+    """The comment said MAX_REWORKS "lives here rather than with the function above
+    because this module's board_schema imports come after the graph (a module-level
+    read up there is a NameError)" — this branch moved the imports to the top of the
+    file (lanes.py:17-21), so the reason was false. driver/file_lanes.py points readers
+    at that comment as the house rule, so it has to be true."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "..", "template", "lanes.py")
+    src = open(path).read()
+    block = src[src.index("# The house rework budget"):src.index("MAX_REWORKS = ")]
+    assert "NameError" not in block, block
+    # and it IS a plain module-level read: the import sits above it
+    assert src.index("import board_schema") < src.index("MAX_REWORKS = ")

@@ -305,8 +305,9 @@ def _recording(monkeypatch):
 
 def test_the_house_default_is_three():
     """Declared once, in the option table: a lane that says nothing gets 3, and the
-    option exists to ask for FEWER (a board that does not want a review spending
-    rounds), not to repeat the default in six manifests."""
+    option exists to CHANGE it for a board or a lane — fewer where rounds should be
+    cheap, more where reviews keep finding real faults — not to repeat the default in
+    six manifests."""
     assert lanes.MAX_REWORKS == 3
     assert lanes.max_reworks() == 3
     assert lanes.max_reworks({}) == 3
@@ -561,7 +562,10 @@ def test_an_integration_test_finding_files_the_integration_cards_revision(monkey
 
 @pytest.fixture
 def quiet_halt(monkeypatch, tmp_path):
-    monkeypatch.setattr(run, "kb", lambda *a, **k: "")
+    # `show` answers a readable, empty record: an unreadable card is now counted and
+    # escalated in halt_if_exhausted (review Important 19), so a stub that makes every
+    # read FAIL would test that path instead of the exhaustion under test.
+    monkeypatch.setattr(run, "kb", lambda *a, **k: "{}" if a[:1] == ("show",) else "")
     monkeypatch.setattr(run.STATE, "run_dir", str(tmp_path))
     monkeypatch.setattr(run, "notify_deadman", lambda st: None)
     monkeypatch.setattr(run, "log", lambda msg: None)
@@ -586,7 +590,8 @@ def test_a_timeout_halts_and_blocks_the_card_instead_of_retrying(monkeypatch, qu
     """
     monkeypatch.setattr(run, "_exhaustion_event", _event("timed_out"))
     calls = []
-    monkeypatch.setattr(run, "kb", lambda *a, **k: calls.append(a) or "")
+    monkeypatch.setattr(run, "kb", lambda *a, **k: calls.append(a) or
+                        ("{}" if a[:1] == ("show",) else ""))   # a readable record
     st = {lanes.card_title("P", 1): {"id": "t1", "status": "ready",
                                      "title": lanes.card_title("P", 1)}}
     assert run.halt_if_exhausted(st)
@@ -689,3 +694,52 @@ def test_the_idea_loop_still_holds_on_its_re_gate():
     st = {"I1-rev-1: idea refinement round 1 - lane 1": card("I1-rev-1", status="done"),
           "Gi1-r2: idea re-gate round 2 - lane 1": card("Gi1-r2", status="blocked")}
     assert run.rework_hold(st, 1, "I", "Gi") is True
+
+
+# --- an unreadable runs history is UNKNOWN, not "no verdict" (review Important 15) ---
+
+def _done_review_with_empty_result(monkeypatch, runs):
+    st = full_lane_state()
+    st[lanes.card_title("RVp", 1)].update(status="done", result=None, completed_at=100)
+    monkeypatch.setattr(run.runs_util, "board_runs", lambda b, cid: runs)
+    return st
+
+
+def test_an_unreadable_runs_history_is_unknown_not_empty(monkeypatch):
+    """`latest_verdict_card` fell back to the closing run's summary through
+    board_runs, and a refused CLI returned [] — so "the review said nothing" and "I
+    could not read the review" were one answer, and the gate parked then halted naming
+    the review. Unknown is None now."""
+    st = _done_review_with_empty_result(monkeypatch, None)
+    assert run.latest_verdict(st, 1, "RVp") is None
+
+
+def test_a_card_behind_an_unreadable_verdict_stays_held(monkeypatch):
+    """Unknown must never RELEASE: the card behind the review waits this tick."""
+    st = _done_review_with_empty_result(monkeypatch, None)
+    assert run.held_by_verdict(st, "gp", 1)
+    st = _done_review_with_empty_result(
+        monkeypatch, [{"outcome": "completed", "summary": "PASS: fine", "ended_at": 100}])
+    assert not run.held_by_verdict(st, "gp", 1)
+
+
+def test_a_gate_says_the_verdict_is_unreadable_not_what_it_was(monkeypatch):
+    """The waiting line names the cause — the old line quoted an empty verdict, and ten
+    minutes of it halted the board naming the review."""
+    st = _done_review_with_empty_result(monkeypatch, None)
+    monkeypatch.setattr(run, "manifest", lambda: {"slug": "b"})
+    monkeypatch.setattr(run, "lane_options", lambda lane: {})
+    msg = run._gate_action(st, lanes.card_title("Gp", 1), "gp", 1)
+    assert msg.startswith("waiting:") and "unreadable" in msg, msg
+
+
+def test_rework_keys_are_scoped_to_the_run(monkeypatch):
+    """The engine's idempotency key was `<board>-rev-P1-1` in EVERY run of the board, so
+    a second run's first plan revision collided with the first run's and the engine's
+    dedup answered with the old card (prior review T-5)."""
+    monkeypatch.setattr(run, "BOARD", "b")
+    monkeypatch.setattr(run.STATE, "run_dir", "/x/boards/b/runs/run-20260924-100000")
+    first = run.rework_key("rev", "P", 1, 1)
+    monkeypatch.setattr(run.STATE, "run_dir", "/x/boards/b/runs/run-20260924-110000")
+    assert run.rework_key("rev", "P", 1, 1) != first
+    assert "run-20260924-110000" in run.rework_key("rev", "P", 1, 1)

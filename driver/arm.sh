@@ -5,9 +5,9 @@
 # `armed_ideas`). The dashboard makes that state with the panel's `→ ready` button or a
 # drag to Todo, and no CLI subcommand can: `promote`, `block` and `schedule` all refuse
 # a `triage` card (measured 2026-09-15 — see DESIGN.md, *Known traps*). This script
-# reaches the same state the supported way round: it CREATES an unassigned card in
-# `todo` carrying the lane's idea, in the body shape `file_ideas` writes, which is what
-# the driver reads:
+# reaches the same state the supported way round: it CREATES an unassigned card that is
+# `blocked` — never dispatched — carrying the lane's idea, in the body shape
+# `file_ideas` writes, which is what the driver reads:
 #
 #     RAW IDEA for lane <N> — human input, not a work card.
 #     ---
@@ -16,8 +16,10 @@
 # Usage: driver/arm.sh <slug> [lane]        (lane defaults to 1)
 #
 # The board must be SERVING (driver/start-board.sh --slug <slug>), or the card just
-# sits in todo. Arming the same lane twice is caught downstream: the driver refuses a
-# lane it has two ideas for rather than running one of them.
+# sits blocked and nobody reads it. Arming the same lane twice is NOT caught anywhere:
+# armed_ideas returns one entry per armed card and adopt_and_refile writes one
+# lane-<k>.md per entry, the last one winning — a second idea for a lane silently
+# replaces the first at refile time. Arm a lane once.
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 
@@ -33,7 +35,9 @@ if [ ! -f "$IDEA" ]; then
   exit 2
 fi
 
-TITLE=$(grep -m1 '^## ' "$IDEA" | sed 's/^## //')
+# `|| true`: under pipefail a headingless idea makes grep exit 1 and set -e aborts
+# BEFORE the fallback below — which was dead code (2026-09-23 review, Important 21).
+TITLE=$(grep -m1 '^## ' "$IDEA" | sed 's/^## //' || true)
 [ -n "$TITLE" ] || TITLE="Idea $LANE"
 
 # One command substitution, not two: `$(printf …)` on its own loses the trailing newline

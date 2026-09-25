@@ -137,8 +137,14 @@ GATE_CODES = ("Gi", "Gp", "Gc")
 
 
 def gate_is_auto(value, code):
-    """Does `auto-gates` hand gate `code` ('Gi') to the driver?"""
-    return code in (value or [])
+    """Does `auto-gates` hand gate `code` ('Gi') to the driver?
+
+    A LIST only. The body was `code in (value or [])`, which on a string is substring
+    containment: `gate_is_auto('xxGi', 'Gi')` was True (2026-09-23 review, Important 5).
+    validate refuses a string `auto-gates`, so the shape is unreachable through the
+    validated path — this function's own contract still must not answer yes to it.
+    """
+    return isinstance(value, (list, tuple)) and code in value
 
 # Options whose VALUE the board's contract fixes, whatever their type allows. A
 # failed card is FINAL (user rule, 2026-09-12): the dispatcher's breaker blocks it
@@ -153,7 +159,9 @@ ONE_ATTEMPT = {
 
 # `<n><unit>` one or more times, as run-audit.py's ceiling parser reads it, so a
 # manifest cannot state a ceiling the auditor scores as zero minutes.
-_DURATION_RE = re.compile(r"^(?:\d+(?:\.\d+)?[hms])+$")
+# Whitespace between the parts is allowed because duration_seconds below reads it
+# ('1h 30m' is 5400 there): the regex and the parser used to disagree about it.
+_DURATION_RE = re.compile(r"^(?:\d+(?:\.\d+)?\s*[hms]\s*)+$")
 
 
 def duration_seconds(text):
@@ -184,7 +192,7 @@ def _kind_error(kind, value):
         # bool is an int in Python; `"lanes": true` is not a lane count.
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             return f"expected a positive integer, got {value!r}"
-    elif kind in ("text", "slug", "path", "abspath"):
+    elif kind in ("text", "slug", "abspath"):
         if not isinstance(value, str) or not value.strip():
             return f"expected a non-empty string, got {value!r}"
         if kind == "slug" and not re.fullmatch(r"[a-z0-9][a-z0-9-]*", value):
@@ -204,6 +212,17 @@ def _kind_error(kind, value):
         if not isinstance(value, list) or not all(
                 isinstance(p, str) and p.strip() for p in value):
             return f"expected a list of non-empty paths, got {value!r}"
+        # card_render.targets_text writes these into every card body, where the worker
+        # runs in WORKDIR: a relative target is read from the wrong tree (2026-09-23
+        # review, Important 4). `~` IS allowed here, unlike `abspath`: targets_text
+        # expands it (tests/test_render_body.py pins that), so `~/x` names one place.
+        bad = [p for p in value if not (p.startswith("/") or p == "~"
+                                        or p.startswith("~/"))]
+        if bad:
+            return (f"expected absolute (or ~/) paths — {bad} would be read relative to "
+                    f"each card's work directory")
+        if len(set(value)) != len(value):
+            return f"expected each target once — {value!r} names one twice"
     elif kind == "gates":
         if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
             return (f"expected a list of gate codes {list(GATE_CODES)} — [] is every "
@@ -212,6 +231,8 @@ def _kind_error(kind, value):
         if unknown:
             return (f"unknown gate code(s) {unknown} — the lane's gates are "
                     f"{list(GATE_CODES)}")
+        if len(set(value)) != len(value):
+            return f"expected each gate code once — {value!r} names one twice"
     elif kind == "cards":
         if not isinstance(value, list) or not all(isinstance(c, str) for c in value):
             return f"expected a list of card codes, got {value!r}"
@@ -219,10 +240,19 @@ def _kind_error(kind, value):
         if unknown:
             return (f"unknown card code(s) {unknown} — the goal judge runs on "
                     f"worker cards only: {list(GOAL_CODES)}")
+        if len(set(value)) != len(value):
+            return f"expected each card code once — {value!r} names one twice"
     elif kind == "duration":
         if not isinstance(value, str) or not _DURATION_RE.match(value.strip()):
             return (f"expected a duration like '90s', '10m', '2h' or '1h30m', "
                     f"got {value!r}")
+        if duration_seconds(value) is None:
+            # '0s'/'0m' pass the regex and then mean NO budget: duration_seconds
+            # collapses zero into None, so the card gets no --run-budget and no
+            # subprocess timeout, and the auditor's ceiling is None — E6 silently
+            # disabled (2026-09-23 review, Important 3).
+            return (f"expected a positive duration — {value!r} means no budget at all, "
+                    f"which disables the per-card ceiling")
     elif kind == "roles":
         if not isinstance(value, dict):
             return f"expected a mapping of role to profile, got {value!r}"
@@ -234,8 +264,6 @@ def _kind_error(kind, value):
                      if not isinstance(v, str) or not v.strip())
         if bad:
             return f"role(s) {bad} must name a profile as a non-empty string"
-    elif kind == "unchecked":
-        return None
     else:                                       # pragma: no cover - typo guard
         raise KeyError(f"unknown option kind {kind!r}")
     return None
@@ -325,9 +353,21 @@ def validate(cfg, *, where="board.json", only=None, lists=True):
     # model belongs to one provider — the flag pair is filed together or not at all.
     for provider_key, model_key in (("provider_override", "model_override"),
                                     ("provider", "model")):
-        if provider_key in allowed and cfg.get(provider_key) and not cfg.get(model_key):
+        if provider_key not in allowed or not cfg.get(provider_key):
+            continue
+        prov, mod = cfg[provider_key], cfg.get(model_key)
+        if not mod:
             problems.append(f"{where}: {provider_key!r} requires {model_key!r} "
                             f"— a provider alone does not say which model to run")
+        elif isinstance(prov, list) and not isinstance(mod, list):
+            # Per-lane providers beside ONE model would file that model on every lane's
+            # provider, and a model belongs to one provider — a spawn failure is final
+            # (2026-09-23 review, Important 1). The other direction, one provider
+            # serving a different model per lane, is the normal local setup and stays
+            # valid.
+            problems.append(f"{where}: {provider_key!r} is per-lane but {model_key!r} is "
+                            f"one value — {mod!r} would be asked of every lane's provider; "
+                            f"give {model_key!r} one value per lane too")
     return problems
 
 
@@ -428,8 +468,16 @@ def validate_headers(text, *, where="lane-<k>.md"):
                 + "; as written the line is kept as prose and the option is "
                   "silently ignored")
             continue
+        if key in headers:
+            # last-wins silently, in the one file a person reads to learn the lane's
+            # options — the first line then lies (prior review T-3). `lines` keeps the
+            # FIRST occurrence, which is the line to look at: overwriting it per
+            # occurrence made a THIRD repeat report the second's line as the first, and
+            # the line prefix below names that same line (final review, item 4b).
+            problems.append(f"{at}: {key!r} is given twice (first on line {lines[key]}) "
+                            f"— the second would silently win; keep one")
         headers[key] = value
-        lines[key] = n
+        lines.setdefault(key, n)
 
     for p in validate(headers_to_cfg(headers), where=where,
                       only=PER_LANE, lists=False):
@@ -486,6 +534,14 @@ def workdir_notices(cfg, *, where="board.json"):
         return []                     # not a repo: nothing stages, nothing to say
     staged = subprocess.run(["git", "-C", wd, "diff", "--cached", "--name-only"],
                             capture_output=True, text=True)
+    if staged.returncode != 0:
+        # A failing index read is NOT a clean index: this notice exists to tell the
+        # operator their pending entries are about to reach every reviewer's `git diff
+        # --cached`, and "nothing staged" says the opposite (2026-09-23 review, I17).
+        return [f"{where}: cannot read the index of {inside.stdout.strip()} (git diff "
+                f"--cached exited {staged.returncode}: "
+                f"{(staged.stderr.strip() or 'no message')[:120]}) — what is staged "
+                f"there is unknown, not clean"]
     pending = [ln for ln in staged.stdout.splitlines() if ln.strip()]
     if not pending:
         return []
@@ -606,12 +662,20 @@ SCHEMA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 # as a comment for whoever reads the file in an editor.
 _KIND_SCHEMA = {
     "slug":     {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
-    "text":     {"type": "string", "minLength": 1},
+    # `\\S`: validate strips before its non-empty check, so '   ' is refused there —
+    # `minLength: 1` alone accepted it here (2026-09-23 review, Important 2).
+    "text":     {"type": "string", "minLength": 1, "pattern": "\\S"},
     "count":    {"type": "integer", "minimum": 1},
     "bool":     {"type": "boolean"},
-    "duration": {"type": "string", "pattern": "^(?:\\d+(?:\\.\\d+)?[hms])+$"},
+    # _DURATION_RE's language, with the surrounding whitespace validate strips. The
+    # zero case ('0m') is not expressible here without refusing values validate
+    # accepts; validate stays the authority for it, and json_schema()'s docstring below
+    # lists it among the rules this file cannot state.
+    "duration": {"type": "string",
+                 "pattern": "^\\s*(?:\\d+(?:\\.\\d+)?\\s*[hms]\\s*)+$"},
     "abspath":  {"type": "string", "pattern": "^/"},
-    "paths":    {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "paths":    {"type": "array", "uniqueItems": True,
+                 "items": {"type": "string", "pattern": "^(/|~$|~/)"}},
     "cards":    {"type": "array", "uniqueItems": True,
                  "items": {"enum": list(GOAL_CODES)}},
     "gates":    {"type": "array", "uniqueItems": True,
@@ -627,36 +691,46 @@ def json_schema():
     complete a `board.json` as it is written.
 
     It is a CONVENIENCE, not the authority: `validate` above is what a board is
-    actually judged by, and it decides three things this cannot — a per-lane array's
-    length against `lanes`, an `abspath` that exists on this host, and the cross-key
-    rule that `provider_override` needs `model_override`.
+    actually judged by, and it decides five things this cannot — a per-lane array's
+    length against `lanes`, an `abspath` that exists on this host, a `duration` of zero
+    ('0m' satisfies the pattern here and means no budget at all), the cross-key rule
+    that `provider_override` needs `model_override`, and the same rule for a per-lane
+    `provider` declared beside one `model`.
     """
     props = {"$schema": {"type": "string",
                          "description": "Path to this generated schema."}}
     for key, (kind, default, per_lane, _flag) in OPTIONS.items():
         spec = dict(_KIND_SCHEMA[kind])
-        if default is not None:
-            spec["default"] = default
         if key in ONE_ATTEMPT:
             spec = {"const": 1, "description": ONE_ATTEMPT[key]}
         if per_lane:
-            # one value for the whole board, or one per lane
+            # one value for the whole board, or one per lane — EXACTLY `lanes` of
+            # them, which JSON Schema cannot say; validate() checks the length
             spec = {"oneOf": [spec, {"type": "array", "items": spec, "minItems": 1,
-                                     "description":
-                                     "one entry per lane, in lane order"}]}
+                                     "description": "one entry per lane, in lane "
+                                                    "order — exactly `lanes` entries"}]}
+        if default is not None:
+            spec["default"] = default          # on the option, not inside its items
         props[key] = spec
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "title": "kanban board.json",
         "$comment": ("Generated by template/board_schema.py --write-schema; that "
-                     "module is the authority. A per-lane array must have exactly "
-                     "`lanes` entries and an abspath must exist on the host — "
-                     "checks JSON Schema cannot express, so a manifest that the "
-                     "editor accepts can still be refused by board_schema.py."),
+                     "module is the authority. A manifest this schema ACCEPTS can still "
+                     "be refused there: a per-lane array must have exactly `lanes` "
+                     "entries, an `abspath` must exist on the host, a `duration` of "
+                     "zero means no budget at all, and a `provider` (or "
+                     "`provider_override`) needs a model beside it — one value per lane "
+                     "when the provider is per-lane. Checks JSON Schema cannot "
+                     "express."),
         "type": "object",
         "additionalProperties": False,
+        # validate treats any `$`-prefixed key as a meta-key ($schema, $comment, $id);
+        # without this, `{"$comment": "..."}` passed validate and failed the schema.
+        "patternProperties": {"^\\$": {}},
         "properties": props,
-        "required": ["lanes"],
+        # no "required": `lanes` defaults to 1 in the option table, and validate
+        # accepts a manifest that omits it (review Important 2)
     }
 
 
@@ -708,7 +782,12 @@ if __name__ == "__main__":
         if args[0] == "--jsonschema":
             print(json.dumps(json_schema(), indent=2, sort_keys=True))
         elif args[0] == "--write-schema":
-            print(f"wrote {write_schema(target)}")
+            try:
+                print(f"wrote {write_schema(target)}")
+            except OSError as e:
+                # every other branch answers with a line; this one was a traceback
+                # (2026-09-23 review, errors S16)
+                sys.exit(f"cannot write {target or SCHEMA_PATH}: {e.strerror or e}")
         elif schema_is_current(target):
             print(f"{target or SCHEMA_PATH} is current")
         else:

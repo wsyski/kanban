@@ -271,3 +271,135 @@ def test_filed_bodies_carry_no_raw_placeholders(monkeypatch, tmp_path):
     for a in fake.created():
         body = a[a.index("--body") + 1]
         assert not run.unresolved_placeholders(body), a[1]
+
+
+def test_the_filing_defaults_are_the_option_tables():
+    """DEFAULT_MAX_RUNTIME / DEFAULT_MAX_RETRIES were literals byte-equal to the option
+    table's defaults, against the house rule of reading them (review Important 10)."""
+    import board_schema
+    assert file_lanes.DEFAULT_MAX_RUNTIME == board_schema.OPTIONS["max-runtime"][1]
+    assert file_lanes.DEFAULT_MAX_RETRIES == board_schema.OPTIONS["max-retries"][1]
+
+
+def _repo_with_manifest(tmp_path, text):
+    repo = tmp_path / "repo"
+    (repo / "boards" / "b").mkdir(parents=True)
+    (repo / "boards" / "b" / "board.json").write_text(text)
+    return repo
+
+
+def test_the_options_line_names_a_header_that_conflicts_with_the_board(tmp_path, monkeypatch):
+    """The success path and its CONFLICTS line had never run: every test passed "/repo",
+    so read_board raised and control fell into the except (review tests I5 / I31). The
+    header wins silently otherwise, and the board file lies on the card a human reads."""
+    repo = _repo_with_manifest(tmp_path, json.dumps({"slug": "b", "lanes": 1,
+                                                     "integration-tests": True}))
+    line = file_lanes._options_line(
+        str(repo), "b", 1,
+        "## Idea 1: a lane\n\n<!-- integration-tests: false -->\n\n### Done means\n\nx\n")
+    assert "CONFLICTS with the board file" in line, line
+    assert "integration-tests=false (idea header" in line, line
+
+
+def test_a_manifest_that_will_not_parse_stops_the_filing(tmp_path, monkeypatch):
+    """`except Exception: board_cfg = {}` filed every card on defaults — 60m ceilings,
+    the goal judge off, and NO model flag, so the reviews ran the author's model (review
+    Important 13). Only a MISSING manifest keeps the documented defaults. The engine is
+    a FakeKb: before the fix this call went on to file cards."""
+    fake = FakeKb()
+    monkeypatch.setattr(file_lanes, "kb", fake)
+    repo = _repo_with_manifest(tmp_path, '{"slug": "b", "lanes": 1,')
+    with pytest.raises(ValueError):            # json.JSONDecodeError is a ValueError
+        file_lanes.file_board("b", str(repo), str(tmp_path / "w"), 1, "k")
+    assert fake.created() == [], "cards were filed on invented defaults"
+
+
+def test_a_header_that_contradicts_the_board_stops_the_idea_filing(tmp_path, monkeypatch):
+    """A per-lane array whose length does not match `lanes` is a configuration fault;
+    the old catch turned it into "Lane options: unavailable (...)" in a card body and
+    filed anyway (review Important 14)."""
+    fake = FakeKb()
+    monkeypatch.setattr(file_lanes, "kb", fake)
+    repo = _repo_with_manifest(tmp_path, json.dumps({"slug": "b", "lanes": 1,
+                                                     "unit-tests": [True, False, True]}))
+    ideas = tmp_path / "ideas"
+    ideas.mkdir()
+    (ideas / "lane-1.md").write_text("## Idea 1\n\n### Done means\n\nx\n")
+    with pytest.raises(ValueError):
+        file_lanes.file_ideas("b", str(repo), str(ideas), 1, "k")
+    assert fake.created() == []
+
+
+# ---- a per-lane `model`/`provider` array is indexed by the lane filed -------
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _filing_repo(tmp_path, manifest):
+    """A repo laid out like this one around a manifest of the test's choosing:
+    `boards/b/board.json`, and `template/` symlinked so the REAL card bodies render
+    (render_body resolves them from the repo it is handed)."""
+    repo = tmp_path / "repo"
+    (repo / "boards" / "b").mkdir(parents=True)
+    (repo / "boards" / "b" / "board.json").write_text(json.dumps(manifest))
+    os.symlink(os.path.join(REPO, "template"), repo / "template")
+    return repo
+
+
+def _model_of(fake, title):
+    """(model, provider) as the stub saw the flags on the card with this title."""
+    for a in fake.created():
+        if a[1] == title:
+            return (a[a.index("--model") + 1] if "--model" in a else None,
+                    a[a.index("--provider") + 1] if "--provider" in a else None)
+    raise AssertionError(f"no card titled {title!r}: {[a[1] for a in fake.created()]}")
+
+
+def test_a_per_lane_model_array_is_indexed_by_the_lane_filed(monkeypatch, tmp_path):
+    """`model`/`provider` are per-lane options and board_schema accepts the array form
+    (test_board_schema pins "one backend, a model per lane" and both-arrays as valid),
+    but the filing path handed the raw list to `subprocess` — `TypeError: expected
+    str, bytes or os.PathLike object, not list` (final review, item 4). One provider
+    serving a different model per lane is the normal local setup, so the array is
+    indexed by the lane being filed rather than dropped."""
+    fake = FakeKb()
+    monkeypatch.setattr(file_lanes, "kb", fake)
+    repo = _filing_repo(tmp_path, {"slug": "b", "lanes": 2,
+                                   "model": ["m1", "m2"], "provider": ["p1", "p2"]})
+    file_lanes.file_board("b", str(repo), str(tmp_path / "w"), 2, "k")
+    assert _model_of(fake, "C1: implement - lane 1") == ("m1", "p1")
+    assert _model_of(fake, "C2: implement - lane 2") == ("m2", "p2")
+    # every card of a lane takes that lane's pair, the researcher and a review included
+    assert _model_of(fake, "I1: idea refinement - lane 1") == ("m1", "p1")
+    assert _model_of(fake, "RVa2: code review - lane 2") == ("m2", "p2")
+
+
+def test_a_scalar_board_pair_files_byte_identically_for_every_lane(monkeypatch, tmp_path):
+    """The scalar path is unchanged: `lane_value` returns anything that is not a list
+    as it is, so every card carries the board's own pair — the two tokens
+    `lanes.model_args` builds for a scalar, in the same order."""
+    import lanes
+    fake = FakeKb()
+    monkeypatch.setattr(file_lanes, "kb", fake)
+    repo = _filing_repo(tmp_path, {"slug": "b", "lanes": 2,
+                                   "model": "m1", "provider": "p1"})
+    file_lanes.file_board("b", str(repo), str(tmp_path / "w"), 2, "k")
+    want = lanes.model_args("C", {"model": "m1", "provider": "p1"})
+    assert want == ["--model", "m1", "--provider", "p1"]
+    assert fake.created()
+    for a in fake.created():
+        i = a.index("--model")
+        assert list(a[i:i + len(want)]) == want, a[1]
+
+
+def test_a_model_array_with_no_entry_for_a_lane_stops_the_filing(monkeypatch, tmp_path):
+    """A list with no entry for the lane being filed cannot be honoured, and inventing
+    one (or filing a model-less card) is worse than refusing: board_schema refuses the
+    shape at the door, so a caller that gets here has skipped the door. Nothing is
+    filed — the array is read before the first create, the way a manifest fault is."""
+    fake = FakeKb()
+    monkeypatch.setattr(file_lanes, "kb", fake)
+    repo = _filing_repo(tmp_path, {"slug": "b", "lanes": 2, "model": ["m1"]})
+    with pytest.raises(ValueError, match="lane 2"):
+        file_lanes.file_board("b", str(repo), str(tmp_path / "w"), 2, "k")
+    assert fake.created() == [], "a card was filed before the array was checked"

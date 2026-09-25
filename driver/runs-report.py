@@ -21,6 +21,9 @@ import os
 import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # file_lanes lives here
+sys.path.insert(0, os.path.join(REPO, "template"))               # and its own layer
+import file_lanes  # noqa: E402  — the owner of the READER's run-name check
 
 
 def dir_size(path):
@@ -43,11 +46,19 @@ def _size(n):
 
 
 def current_run(runs):
+    """What `runs/current` names, or None when it names nothing usable.
+
+    The pointer is a NAME, checked by its owner (`file_lanes.is_safe_run_name`, the
+    READER's check run.py applies at rejoin): a hand-edited `current` holding `../../x`
+    is a path, not a run, and reporting it as this board's current run puts it in
+    `--json` (2026-09-24 review). Legacy names — "r1", "b-20260912-090000" — pass it.
+    """
     try:
         with open(os.path.join(runs, "current")) as f:
-            return f.read().strip()
+            named = f.read().strip()
     except OSError:
         return None
+    return named if named and file_lanes.is_safe_run_name(named) else None
 
 
 # The driver's own state, in runs/ itself whatever the layout: the log it appends
@@ -89,8 +100,13 @@ def never_opened_a_lane(path):
     return not os.path.isdir(os.path.join(path, "artifacts"))
 
 
-def runs_in(runs):
-    """Every run directory, newest first, with what it costs and what it holds."""
+def runs_in(runs, vanished=None):
+    """Every run directory, newest first, with what it costs and what it holds.
+
+    `vanished`, when given, collects the names of run directories that disappeared
+    between the listing and the stat — this tool's own advice is to `rm` them, so a
+    report taken while someone does must not die on one (2026-09-23 review, errors S9).
+    """
     live = current_run(runs)
     out = []
     if not os.path.isdir(runs):
@@ -100,16 +116,20 @@ def runs_in(runs):
         if not os.path.isdir(path) or name in FLAT_SUBDIRS:
             continue                    # a pre-per-run layout's own subdirectories
         scratch = os.path.join(path, "scratch")
-        out.append({
-            "run": name,
-            "current": name == live,
-            "bytes": dir_size(path),
-            "scratch_bytes": dir_size(scratch) if os.path.isdir(scratch) else 0,
-            "modified": datetime.datetime.fromtimestamp(
-                os.path.getmtime(path)).isoformat(timespec="seconds"),
-            "superseded": never_opened_a_lane(path),
-            "path": path,
-        })
+        try:
+            out.append({
+                "run": name,
+                "current": name == live,
+                "bytes": dir_size(path),
+                "scratch_bytes": dir_size(scratch) if os.path.isdir(scratch) else 0,
+                "modified": datetime.datetime.fromtimestamp(
+                    os.path.getmtime(path)).isoformat(timespec="seconds"),
+                "superseded": never_opened_a_lane(path),
+                "path": path,
+            })
+        except FileNotFoundError:
+            if vanished is not None:
+                vanished.append(name)
     if not out and os.path.isdir(runs) and os.listdir(runs):
         # A board last run before per-run directories: its state sits flat in runs/.
         # Reported as the one run it is, rather than as nothing at all.
@@ -151,7 +171,11 @@ def main(argv=None):
                       else None)
     if not runs:
         ap.error("--board <slug> or --runs <dir> is required")
-    rows, live = runs_in(runs)
+    vanished = []
+    rows, live = runs_in(runs, vanished)
+    if vanished:
+        print(f"{len(vanished)} run directory(ies) disappeared while reading — not "
+              f"listed: {', '.join(vanished)}", file=sys.stderr)
     if a.json:
         print(json.dumps({"runs": runs, "current": live, "entries": rows}, indent=2))
         return 0

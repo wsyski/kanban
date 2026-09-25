@@ -9,8 +9,21 @@
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 
+usage() {
+  # a heredoc, not `sed -n '2,8p' "$0"`: a line range in the script's own source
+  # printed a fragment the moment a line was added above it (errors S11)
+  cat <<'EOF'
+Print one task's review package: its commits, its stat, then its diff.
+
+  driver/review-package.sh <base> [<head>] [-- <path>...]
+
+`head` defaults to HEAD. A commit range also carries whatever else was
+committed in it — a plan or a spec, say — so pass the task's own paths after
+`--` to scope the package to that task's files.
+EOF
+}
 if [ $# -eq 0 ] || [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
-  sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'
+  usage
   [ $# -eq 0 ] && exit 2 || exit 0
 fi
 

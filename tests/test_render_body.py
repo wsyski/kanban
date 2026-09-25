@@ -111,3 +111,14 @@ def test_every_body_that_names_the_state_gets_it_resolved():
         text = card_render.render_body(_os.path.basename(path), repo=here + "/..",
                                       board="b", workdir=here, lane=1)
         assert "<WORKDIR-STATE>" not in text, path
+
+
+def test_a_workdir_reached_through_a_symlink_is_still_the_boards_own(tmp_path):
+    """Ownership compared abspath prefixes, so a symlink into the board's own tree read
+    as "an EXISTING PROJECT this board did not create" (prior review T-22)."""
+    board = tmp_path / "boards" / "b"
+    (board / "work").mkdir(parents=True)
+    (board / "work" / "x.py").write_text("x = 1\n")
+    link = tmp_path / "link-to-work"
+    os.symlink(board / "work", link)
+    assert "PREVIOUS RUN" in card_render.workdir_state(str(link), str(board))

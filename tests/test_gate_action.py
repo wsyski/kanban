@@ -400,3 +400,37 @@ def test_a_gate_not_in_the_list_still_asks_a_person(monkeypatch, held, card):
     run.gate_action(state, GP, "gp", 1)
     assert not card.completed()
     assert [c for c in card.driver_comments() if c.startswith(run.GATE_READY_MARK)]
+
+
+def test_a_code_rework_round_files_the_lanes_model_not_the_boards_array(monkeypatch, tmp_path):
+    """The revision cards are the driver's other lane-scoped model site: `card_model_args`
+    hands `--model`/`--provider` straight to `hermes kanban create`, so a per-lane board
+    array arrives here as `--model <list>` — the `subprocess` TypeError this fixes
+    (`expected str, bytes or os.PathLike object, not list`). Indexed by the lane the
+    round belongs to (lane 2), and every token is a string."""
+    creates = []
+
+    def kb(*a, **k):
+        if a[:1] == ("create",):
+            creates.append(a)
+            return '{"id": "x"}'
+        return ""
+
+    monkeypatch.setattr(run, "kb", kb)
+    monkeypatch.setattr(run, "log", lambda m: None)
+    monkeypatch.setattr(run, "chain_record", lambda *a, **k: None)
+    monkeypatch.setattr(run, "ledger", lambda *a, **k: None)
+    monkeypatch.setattr(run, "manifest", lambda: {"lanes": 2, "model": ["m1", "m2"],
+                                                  "provider": ["p1", "p2"]})
+    monkeypatch.setattr(run, "lane_model_opts", lambda lane: {})
+    monkeypatch.setattr(run, "BOARD", "b")
+    monkeypatch.setattr(run.STATE, "run_dir", str(tmp_path / "runs" / "run-1"))
+    state = {"Gc2: code gate - lane 2": {"id": "id-Gc2", "status": "blocked"}}
+    run.file_code_revision(state, 2, 1, "OWNER: C fix the parser")
+    assert len(creates) == 2, [a[1] for a in creates]
+    for a in creates:
+        assert all(isinstance(t, str) for t in a), a
+    for title in ("C2-rev-1:", "RVa2-r2:"):
+        [a] = [c for c in creates if c[1].startswith(title)]
+        i = a.index("--model")
+        assert list(a[i:i + 4]) == ["--model", "m2", "--provider", "p2"], a

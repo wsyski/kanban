@@ -62,6 +62,32 @@ def test_the_generated_schema_describes_the_same_options():
         assert role in props["assignees"]["propertyNames"]["enum"], role
 
 
+def test_the_schema_docstring_lists_every_rule_it_defers_to_validate():
+    """The duration comment cites "the docstring below" for the zero case, and the
+    docstring listed three rules where validate decides five — the two this branch
+    added (a `duration` of zero, and a per-lane `provider` beside one `model`) were
+    missing (final review, item 4a). A citation that does not say what it claims is
+    how the next reader learns to distrust the comments."""
+    doc = " ".join(board_schema.json_schema.__doc__.split())
+    assert "three things" not in doc, doc
+    for rule in ("per-lane array's length", "abspath", "duration", "provider_override",
+                 "per-lane `provider`"):
+        assert rule in doc, (rule, doc)
+
+
+def test_the_generated_schema_comment_names_what_it_cannot_state():
+    """The `$comment` under-enumerated what JSON Schema cannot express, so an editor
+    that accepted a manifest read as a promise that board_schema.py would too (final
+    review, item 4g: fix `json_schema()` and regenerate)."""
+    comment = " ".join(board_schema.json_schema()["$comment"].split())
+    for rule in ("`lanes` entries", "abspath", "zero", "provider"):
+        assert rule in comment, comment
+    # the shipped file is the generated text (test_the_generated_schema_is_current
+    # proves it, this names the value that has to move with the generator)
+    with open(os.path.join(REPO, "template", "board.schema.json")) as f:
+        assert json.load(f)["$comment"] == board_schema.json_schema()["$comment"]
+
+
 def test_every_shipped_manifest_points_at_the_schema():
     import glob, json
     boards = os.path.join(os.path.dirname(os.path.dirname(
@@ -176,7 +202,9 @@ def idea(text):
 
 
 def test_a_good_header_set_is_valid():
-    assert idea("<!-- unit-tests: false -->\n<!-- unit-tests: true -->\n# Idea\n") == []
+    """REWRITTEN 2026-09-24: it used the SAME key twice, which pinned last-wins — the
+    defect prior review T-3 names. Two different keys is the valid set."""
+    assert idea("<!-- unit-tests: false -->\n<!-- integration-tests: true -->\n# Idea\n") == []
 
 
 def test_a_comment_that_is_not_a_header_is_left_alone():
@@ -226,6 +254,18 @@ def test_a_header_may_not_carry_the_per_lane_array_form():
 def test_a_header_problem_names_its_line():
     found = idea("# Idea\n\n\n<!-- unit-tests: yes -->\n")
     assert found[0].startswith("lane-1.md:4:")
+
+
+def test_a_third_repeat_names_the_FIRST_occurrence_line():
+    """`lines[key]` was overwritten per occurrence, so a third repeat printed the SECOND
+    one's line as the first — and the whole point of the message is to say which line a
+    person should keep (final review, item 4b)."""
+    found = idea("<!-- unit-tests: true -->\n"
+                 "<!-- unit-tests: false -->\n"
+                 "<!-- unit-tests: true -->\n")
+    twice = [p for p in found if "given twice" in p]
+    assert len(twice) == 2, found           # the second AND the third are each a repeat
+    assert all("first on line 1" in p for p in twice), twice
 
 
 def test_the_script_refuses_a_bad_idea_file(tmp_path):
@@ -537,3 +577,171 @@ def test_an_empty_goal_card_list_arms_nothing():
     assert problems(slug="b", **{"goal-cards": []}) == []
     assert problems(slug="b", **{"goal-cards": [], "goal-max-turns": 80}) == []
     assert lanes.goal_args("C", cards=[]) == []
+
+
+import pytest  # noqa: E402  (appended section)
+
+
+@pytest.mark.parametrize("cfg,why", [
+    ({"max-runtime": "0s"}, "a zero duration means no ceiling at all"),
+    ({"max-runtime": "0m"}, "the same, in the other unit"),
+    ({"max-runtime": "0h0m"}, "and in two parts"),
+    ({"targets": ["relative/dir"]}, "a relative target is read from the work directory"),
+    ({"lanes": 2, "provider": ["p1", "p2"], "model": "m1"},
+     "one model asked of every lane's provider"),
+])
+def test_the_validator_refuses_what_the_engine_cannot_honour(cfg, why):
+    """Each was reproduced 2026-09-24. '0s' validated and then disabled the per-card
+    ceiling, so E6 never fired (review Important 3); a relative target is emitted into
+    every card body (Important 4); per-lane providers beside one model file that model
+    on every lane's provider (Important 1)."""
+    assert board_schema.validate({"slug": "b", "lanes": 1, **cfg}), f"{cfg} validated: {why}"
+
+
+@pytest.mark.parametrize("cfg", [
+    {"max-runtime": "10m"},
+    {"max-runtime": "1h 30m"},                     # the parser reads it; so does the regex now
+    {"targets": ["/abs/dir", "~/x"]},              # targets_text expands `~`
+    {"lanes": 2, "provider": "p1", "model": ["m1", "m2"]},   # one backend, a model per lane
+    {"lanes": 2, "provider": ["p1", "p2"], "model": ["m1", "m2"]},
+    {"provider": "p1", "model": "m1"},
+    {"model": "m1"},
+])
+def test_the_validator_still_accepts_what_the_engine_honours(cfg):
+    """The other side of each refusal above — none of them may widen into a neighbour."""
+    assert board_schema.validate({"slug": "b", "lanes": 1, **cfg}) == [], cfg
+
+
+def test_a_zero_duration_still_has_no_seconds():
+    """The refusal is the fix; this pins the collapse that made it necessary, so a reader
+    sees why '0s' cannot simply be read as zero."""
+    assert board_schema.duration_seconds("0s") is None
+    assert board_schema.duration_seconds("1h 30m") == 5400
+
+
+def test_a_bare_string_is_not_a_list_of_gates():
+    """String containment: 'Gi' in 'xxGi' is True, so the shape the schema refuses read as
+    "auto" (review Important 5)."""
+    assert board_schema.gate_is_auto("Gi", "Gi") is False
+    assert board_schema.gate_is_auto("xxGi", "Gi") is False
+    assert board_schema.gate_is_auto(["Gi"], "Gi") is True
+    assert board_schema.gate_is_auto(["Gi", "Gp"], "Gc") is False
+
+
+CORPUS = [
+    {"slug": "b"},                                                  # no `lanes`: defaults to 1
+    {"slug": "b", "lanes": 2, "name": "two lanes"},
+    {"slug": "b", "lanes": 1, "auto-gates": ["Gi", "Gp", "Gc"]},
+    {"slug": "b", "lanes": 1, "auto-gates": []},
+    {"slug": "b", "lanes": 2, "refinement": False, "unit-tests": [True, False]},
+    {"slug": "b", "lanes": 2, "provider": ["p1", "p2"], "model": ["m1", "m2"]},
+    {"slug": "b", "lanes": 1, "$schema": "../../template/board.schema.json"},
+    {"slug": "b", "lanes": 1, "$comment": "a note for the next reader"},
+    {"slug": "b", "lanes": 1, "targets": ["/tmp/work", "~/x"]},
+    {"slug": "b", "lanes": 1, "max-runtime": "1h 30m", "max-reworks": 4},
+    # the shapes validate must REFUSE — the property is one-directional, so these only
+    # prove the corpus exercises both branches
+    {"slug": "b", "lanes": 1, "auto-gates": ["Gi", "Gi"]},
+    {"slug": "b", "lanes": 1, "name": "   "},
+    {"slug": "b", "lanes": 1, "targets": ["/a", "/a"]},
+]
+
+
+def test_validate_and_the_generated_schema_agree():
+    """THE PROPERTY: whatever validate accepts, the generated schema accepts.
+    `--check-schema` proves only that the file equals the generator, so the two could
+    disagree for ever — reproduced 2026-09-24: validate accepted {'name':'x'} (no
+    `lanes`) and {'$comment': …} where the schema refused them, and the schema accepted
+    a whitespace-only name and duplicate codes that validate refuses (review Important
+    2)."""
+    jsonschema = pytest.importorskip("jsonschema")
+    schema = board_schema.json_schema()
+    accepted = 0
+    for cfg in CORPUS:
+        if not board_schema.validate(cfg):
+            jsonschema.validate(cfg, schema)          # raises on a disagreement
+            accepted += 1
+    assert 0 < accepted < len(CORPUS), accepted       # both branches exercised
+
+
+def test_the_refusals_are_refused_on_both_sides():
+    """The four shapes the two authorities disagreed on, from validate's side."""
+    assert board_schema.validate({"slug": "b", "auto-gates": ["Gi", "Gi"]})
+    assert board_schema.validate({"slug": "b", "name": "   "})
+    assert board_schema.validate({"slug": "b", "targets": ["/a", "/a"]})
+    assert board_schema.validate({"slug": "b", "goal-cards": ["C", "C"]})
+
+
+def test_every_option_kind_has_a_schema_entry():
+    """A kind with no _KIND_SCHEMA entry is a KeyError inside --write-schema. The two
+    dead branches `_kind_error` carried (`path`, `unchecked`) are gone, so the kinds it
+    knows and the kinds the generator knows are one set (types S8)."""
+    kinds = {o[0] for o in board_schema.OPTIONS.values()}
+    assert kinds == set(board_schema._KIND_SCHEMA), kinds ^ set(board_schema._KIND_SCHEMA)
+
+
+def test_every_shipped_manifest_is_schema_valid():
+    """The corpus that ships, against the schema it points at (types S10): seven boards,
+    measured 2026-09-24."""
+    jsonschema = pytest.importorskip("jsonschema")
+    shipped = [os.path.join(REPO, "boards", s, "board.json")
+               for s in sorted(os.listdir(os.path.join(REPO, "boards")))]
+    shipped = [p for p in shipped if os.path.exists(p)]
+    assert len(shipped) >= 7, shipped
+    for path in shipped:
+        with open(path) as f:
+            jsonschema.validate(json.load(f), board_schema.json_schema())
+
+
+def test_check_schema_calls_a_stale_file_stale(tmp_path):
+    """The stale branch had no CLI test at all (review tests I11/I35)."""
+    stale = tmp_path / "board.schema.json"
+    stale.write_text("{}")
+    r = subprocess.run([sys.executable, SCRIPT, "--check-schema", str(stale)],
+                       capture_output=True, text=True)
+    assert r.returncode != 0
+    assert "stale" in r.stderr, r.stderr
+
+
+def test_write_schema_round_trips(tmp_path):
+    target = tmp_path / "board.schema.json"
+    r = subprocess.run([sys.executable, SCRIPT, "--write-schema", str(target)],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert json.loads(target.read_text()) == board_schema.json_schema()
+    r = subprocess.run([sys.executable, SCRIPT, "--check-schema", str(target)],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+
+
+def test_write_schema_reports_an_unwritable_target(tmp_path):
+    """errors S16: an unwritable target was an OSError traceback out of the CLI while
+    every other branch answers with a line."""
+    target = tmp_path / "no-such-dir" / "board.schema.json"
+    r = subprocess.run([sys.executable, SCRIPT, "--write-schema", str(target)],
+                       capture_output=True, text=True)
+    assert r.returncode != 0
+    assert "Traceback" not in r.stderr, r.stderr
+    assert "cannot write" in r.stderr, r.stderr
+
+
+def test_a_failing_index_read_is_reported_not_read_as_clean(tmp_path, monkeypatch):
+    """`git diff --cached`'s returncode was unchecked, so a failing index read was
+    reported as a CLEAN index — and these notices are what tells the operator their
+    pending entries are about to reach every reviewer's diff (review Important 17;
+    reproduced 2026-09-23 with a git shim)."""
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    shim = tmp_path / "bin"
+    shim.mkdir()
+    git = shim / "git"
+    git.write_text("#!/bin/sh\n"
+                   "case \"$*\" in\n"
+                   f"  *rev-parse*) echo '{workdir}' ;;\n"
+                   "  *diff*) echo 'fatal: index file smaller than expected' >&2; exit 128 ;;\n"
+                   "esac\n")
+    git.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{shim}:{os.environ['PATH']}")
+    notices = board_schema.workdir_notices({"default-workdir": str(workdir)})
+    assert any("cannot read the index" in n and "unknown, not clean" in n
+               for n in notices), notices

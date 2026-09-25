@@ -1,10 +1,10 @@
-import card_render
 import json
 import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "template"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "driver"))
+import card_render
 import lanes
 import run
 
@@ -62,6 +62,15 @@ def _board_env(monkeypatch, tmp_path, calls, it=False, ut=True):
     monkeypatch.setattr(run, "record_timing", lambda st: None)
     monkeypatch.setattr(run, "halt_if_exhausted", lambda st: False)
     monkeypatch.setattr(run, "rework_rounds", lambda st: None)
+    # Hermetic: a review card here is `done` with no result, so the verdict fallback
+    # asks the runs CLI. Unstubbed, that call reached the REAL `hermes` (or found none),
+    # and since a refused call is now UNKNOWN — which holds the cards behind the review
+    # (review Important 15) — the outcome depended on the host.
+    monkeypatch.setattr(run.runs_util, "board_runs", lambda *a, **k: [])
+    # The verdict ledger too: unpatched it pointed at the REPO's boards/runs/, and a
+    # ledger() that now creates the directory it appends to (review Important 22) would
+    # write there — the old one lost those lines silently instead.
+    monkeypatch.setattr(run.STATE, "verdicts_path", str(tmp_path / "runs" / "verdicts.jsonl"))
     monkeypatch.setattr(run, "lane_options",
                         lambda lane: {"integration-tests": it, "unit-tests": ut, "auto-gates": [],
                                       "idea": "## Idea 1: is_even\n"})
@@ -132,6 +141,9 @@ def test_opening_a_lane_re_points_its_cards_at_the_lanes_model(monkeypatch, tmp_
     monkeypatch.setattr(run, "lane_options", lambda lane: {
         "integration-tests": False, "unit-tests": True, "auto-gates": [],
         "model": "muse-glimmer-30b", "provider": "llama-swap", "idea": "## Idea 1: is_even\n"})
+    # the lane's HEADER pair — what open_lane re-points with (review Important 8)
+    monkeypatch.setattr(run, "lane_model_opts",
+                        lambda lane: {"model": "muse-glimmer-30b", "provider": "llama-swap"})
     run.tick()
     sets = {c[1]: c[2:] for c in calls if c[0] == "set-model"}
     for cid in ("id-I", "id-P", "id-TW", "id-C"):
@@ -155,6 +167,8 @@ def test_a_lane_without_a_pin_re_points_its_review_too(monkeypatch, tmp_path):
     monkeypatch.setattr(run, "lane_options", lambda lane: {
         "integration-tests": False, "unit-tests": True, "auto-gates": [],
         "model": "muse-glimmer-30b", "provider": "llama-swap", "idea": "## Idea 1: is_even\n"})
+    monkeypatch.setattr(run, "lane_model_opts",
+                        lambda lane: {"model": "muse-glimmer-30b", "provider": "llama-swap"})
     run.tick()
     sets = {c[1]: c[2:] for c in calls if c[0] == "set-model"}
     assert sets["id-RVa"] == ("muse-glimmer-30b", "--provider", "llama-swap"), sets
@@ -894,3 +908,62 @@ def test_auto_gates_is_read_from_the_manifest_not_the_lane_options(monkeypatch):
     assert r.auto_gates() == ["Gi"]
     monkeypatch.setattr(r, "manifest", lambda: {})
     assert r.auto_gates() == []
+
+
+def test_opening_a_lane_never_pairs_its_model_with_the_boards_provider(monkeypatch, tmp_path):
+    """open_lane re-pointed with the RESOLVED options, which fill a missing provider
+    from the board: a lane naming only a local model on a board whose provider is a
+    cloud one was re-pointed at that cloud backend (review Important 8)."""
+    calls = []
+    _board_env(monkeypatch, tmp_path, calls, it=False)
+    monkeypatch.setattr(run, "manifest", lambda: {"model": "board-model",
+                                                  "provider": "cloud-provider"})
+    monkeypatch.setattr(run, "lane_options", lambda lane: {
+        "integration-tests": False, "unit-tests": True, "auto-gates": [],
+        "model": "qwen38-27b", "provider": "cloud-provider", "idea": "## Idea 1: is_even\n"})
+    monkeypatch.setattr(run, "lane_model_opts", lambda lane: {"model": "qwen38-27b"})
+    run.tick()
+    sets = {c[1]: c[2:] for c in calls if c[0] == "set-model"}
+    assert sets["id-C"] == ("qwen38-27b",), sets
+    run.STATE.opened.clear()
+
+
+def test_a_per_lane_model_array_does_not_re_point_a_card_that_already_carries_it(
+        monkeypatch, tmp_path):
+    """open_lane's guard compares the lane's pair against the BOARD's — and the board's
+    answer is the LANE's entry of a per-lane array. Read raw, the comparison handed a
+    LIST to `_model_pair` on both sides (`--model <list>`), which no scalar pair can
+    ever equal: every card of every lane was sent to `set-model` although filing (which
+    indexes the same array, `file_lanes.file_board`) had already put it on that lane's
+    model. `set-model <id> <list>` is exactly what `subprocess` refuses."""
+    calls = []
+    _board_env(monkeypatch, tmp_path, calls, it=False)
+    monkeypatch.setattr(run, "manifest", lambda: {"lanes": 2, "model": ["m1", "m2"],
+                                                  "provider": ["p1", "p2"]})
+    # the lane's header names the same pair the board's array gives it: already right
+    monkeypatch.setattr(run, "lane_model_opts",
+                        lambda lane: {"model": f"m{lane}", "provider": f"p{lane}"})
+    run.tick()
+    sets = {c[1]: c[2:] for c in calls if c[0] == "set-model"}
+    assert sets == {}, sets
+    run.STATE.opened.clear()
+
+
+def test_a_per_lane_model_array_still_re_points_a_lane_whose_header_differs(
+        monkeypatch, tmp_path):
+    """The other half of the same guard: a header that names its OWN model must still
+    be re-pointed — resolving the array must not turn the comparison into a skip that
+    never fires."""
+    calls = []
+    _board_env(monkeypatch, tmp_path, calls, it=False)
+    monkeypatch.setattr(run, "manifest", lambda: {"lanes": 2, "model": ["m1", "m2"],
+                                                  "provider": ["p1", "p2"]})
+    monkeypatch.setattr(run, "lane_model_opts",
+                        lambda lane: {"model": "header-model"})
+    run.tick()
+    sets = {c[1]: c[2:] for c in calls if c[0] == "set-model"}
+    for cid in ("id-I", "id-P", "id-TW", "id-C", "id-RVa"):
+        assert sets[cid] == ("header-model",), (cid, sets)
+    for a in [c for c in calls if c[0] == "set-model"]:
+        assert all(isinstance(t, str) for t in a[1:]), a
+    run.STATE.opened.clear()

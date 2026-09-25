@@ -56,7 +56,8 @@ same set:
       # no retry key: every card — first filing and revision alike — gets ONE attempt
       "goal-max-turns": 40,
       "timeout-min": 240,                        # the driver's own cap
-      "assignees": {"reviewer": "senior"},       # optional: role -> hermes profile
+      "assignees": {"coder": "senior"},          # optional: role -> hermes profile
+                                                 #   (roles: researcher, coder, human-gate)
       "model": "qwen38-27b",                     # optional: the WORK model, every card
       "provider": "llama-swap",                  # optional: its provider (needs the model)
       "model_override": "glm-5.3",               # optional: the model the REVIEWS run on
@@ -72,8 +73,10 @@ Omit it and the board builds in `boards/<slug>/work/`, which is what most boards
 want.
 
 An option that reaches Hermes keeps HERMES's spelling of its name — `max-runtime`
-because the flag is `--max-runtime`, `name` because it is `--name`, `goal` because
-it is `--goal`, `default-workdir` because it is `--default-workdir`. A name
+because the flag is `--max-runtime`, `name` because it is `--name`,
+`default-workdir` because it is `--default-workdir`. (`goal-cards` is the one
+template option that selects which cards get `--goal`; `goal` is only a retired
+spelling the schema names the replacement for.) A name
 invented for a parameter Hermes already named is a name nobody can grep for. The
 template's own options take the same hyphenated convention.
 
@@ -119,8 +122,9 @@ files — per card, not shared. Omitted means the defaults, 60m and 1.
 
 `max-reworks` is the OTHER budget: how many times a review may send work back — filing
 a revision round — before the lane asks a human. The house default is 3, so a board
-normally says nothing; name it in the manifest or in a lane's idea header to ask for
-FEWER (a lane whose rounds should be cheap). Neither the manifest nor an idea header can
+normally says nothing; name it in the manifest or in a lane's idea header to change
+it — fewer for a lane whose rounds should be cheap, more for one whose reviews keep
+finding real faults (two shipped boards set 4). Neither the manifest nor an idea header can
 raise `max-retries` to express it: that name is the engine's flag for how many times
 the dispatcher may ATTEMPT one card (a timeout, a crash), which is the mechanism the
 one-attempt rule removes.
@@ -137,10 +141,11 @@ how many times it may.
 installs into a Hermes profile, say. Cards may write there and reviewers count
 files there as the lane's; git never runs in a target root.
 
-`refinement`, `unit-tests`, `integration-tests` and `auto-gates` are the per-lane
-options: each takes one value for every lane, or a list with exactly one value per
-lane — `[false, true]` reads as "lane 1 without integration cards, lane 2 with". A
-per-idea header (`<!-- integration-tests: false -->`, `<!-- unit-tests: false -->`,
+`refinement`, `unit-tests`, `integration-tests`, `max-reworks`, `model` and
+`provider` are the per-lane options: each takes one value for every lane, or a list with
+exactly one value per lane — `[false, true]` reads as "lane 1 without integration cards,
+lane 2 with". `auto-gates` is a BOARD option and has no per-lane form. A per-idea header
+(`<!-- integration-tests: false -->`, `<!-- unit-tests: false -->`,
 `<!-- refinement: false -->`) still wins over both, in either direction: a board
 built without a level can turn it back on for one lane, and a board built with it can
 skip that lane's cell.
@@ -170,7 +175,7 @@ file as many lanes as you have ideas — an empty lane is 11 parked cards
 nobody reads.
 
 Each lane starts at the RESEARCHER, who turns the raw idea into
-runs/artifacts/lane-<k>/refined.md, and at the idea gate a human accepts that
+runs/<run-id>/artifacts/lane-<k>/refined.md, and at the idea gate a human accepts that
 refinement before the plan card is written against it.
 
 The driver NEVER commits. Work is staged; humans commit at gates.
@@ -221,7 +226,9 @@ fi
 # Defaults live here so --help and the code cannot drift apart.
 # Capture, THEN eval. `eval "$(...)"` reports the eval's status, not python's,
 # so a rejected manifest would fall through with every variable empty and fail
-# later with a nonsense message about a board named "".
+# later with a nonsense message about a board named "". The eval is safe BECAUSE
+# every value is printed through shlex.quote (reviewed 2026-09-24, code S20: a
+# `read`-based loop would keep the quotes as part of the values).
 CFG=$(python3 - "$REPO" "$BOARD_DIR" "$SLUG" "$TITLE" <<'PY'
 import json, os, shlex, sys
 repo, board_dir, slug, title = sys.argv[1:5]
@@ -266,6 +273,24 @@ PY
 ) || exit 1
 eval "$CFG"
 
+# The --slug path writes its OWN manifest further down, and nothing ever checked it:
+# that is how a boolean `auto-gates` shipped in every such board (2026-09-23 review,
+# Critical 1 / errors I11). Build it now — LANES and TITLE are known — and put it
+# through the same gate as a --board manifest BEFORE anything exists; the text that
+# passes is the text that gets written.
+# `"$schema"` is part of it because --help says every board.json carries it (every
+# shipped board does) and it is how an editor finds the generated schema: a manifest
+# this script writes must not be the one file that lacks it.
+NEW_MANIFEST=
+if [ ! -f "$BOARD_DIR/board.json" ]; then
+  NEW_MANIFEST=$(printf '{\n  "$schema": "../../template/board.schema.json",\n  "name": %s,\n  "lanes": %s,\n  "auto-gates": []\n}' \
+    "$(python3 -c 'import json, sys; print(json.dumps(sys.argv[1]))' "$TITLE")" "$LANES")
+  CHECK_DIR=$(mktemp -d)
+  printf '%s\n' "$NEW_MANIFEST" > "$CHECK_DIR/board.json"
+  python3 "$REPO/template/board_schema.py" "$CHECK_DIR/board.json" || { rm -rf "$CHECK_DIR"; exit 2; }
+  rm -rf "$CHECK_DIR"
+fi
+
 echo "== pre-flight =="
 # The profiles this board needs are DERIVED from its manifest, not listed here. A
 # hand-written list cannot know which roles a manifest remaps, and it cannot know
@@ -297,18 +322,22 @@ PY
 # the same root the core resolves, so a profile on disk counts even when the CLI is silent
 # (that case is a note), and the CLI still counts for a profile rooted elsewhere (a test
 # stub, or a home that is not this one). Refuse only when neither signal has it.
+# HERMES_HOME, like the skill and dispatcher checks below: a profile pre-flight rooted
+# at $HOME/.hermes alone checked a different tree from the one the engine uses (errors
+# S7 / code S7).
+HERMES_ROOT="${HERMES_HOME:-$HOME/.hermes}"
 PROFILE_LIST=$(hermes profile list 2>/dev/null) || PROFILE_LIST=""
 for p in $REQUIRED; do
   # The grep sits in an `if`, never in a command substitution: `grep -c` exits 1 on a zero
   # count and this script runs under `set -e`, which would abort it with no message at all.
-  if [ "$p" = default ] || [ -d "$HOME/.hermes/profiles/$p" ]; then
+  if [ "$p" = default ] || [ -d "$HERMES_ROOT/profiles/$p" ]; then
     if ! printf '%s\n' "$PROFILE_LIST" | grep -q "[[:space:]]$p[[:space:]]"; then
       echo "note: 'hermes profile list' did not name $p (it is on disk; the CLI's view may be stale)" >&2
     fi
   elif printf '%s\n' "$PROFILE_LIST" | grep -q "[[:space:]]$p[[:space:]]"; then
     :   # the CLI names it — accepted, e.g. a stub in a test or a profile under another home
   else
-    echo "profile $p not available — no $HOME/.hermes/profiles/$p, and 'hermes profile list' did not name it" >&2
+    echo "profile $p not available — no $HERMES_ROOT/profiles/$p, and 'hermes profile list' did not name it" >&2
     exit 1
   fi
 done
@@ -334,7 +363,6 @@ for profile, skills in lanes.required_skills(
     print(f"{profile} {','.join(skills)}")
 PYEOF
 ) || exit 1
-HERMES_ROOT="${HERMES_HOME:-$HOME/.hermes}"
 if [ -n "$SKILLS_WANTED" ]; then
   while read -r p skills; do
     ENABLED=$(hermes -p "$p" skills list --enabled-only </dev/null 2>/dev/null || true)
@@ -433,8 +461,14 @@ fi
 # NB: probe the registry, never `hermes kanban --board <slug> list` — that
 # initialises the board's DB on demand, so it would create the very board it
 # is checking for.
-if hermes kanban boards list 2>/dev/null | awk '{print $1}' | grep -qx "$SLUG" \
-   || hermes kanban boards list 2>/dev/null | awk '{print $2}' | grep -qx "$SLUG"; then
+# ONE read, and its failure is its own answer: piped straight into grep, a CLI that
+# failed read as "no such board" and the script went on to `boards create` (errors S8).
+REGISTRY=$(hermes kanban boards list 2>&1) || {
+  echo "cannot read the board registry ('hermes kanban boards list' failed):" >&2
+  printf '%s\n' "$REGISTRY" >&2
+  exit 4
+}
+if printf '%s\n' "$REGISTRY" | awk '{print $1; print $2}' | grep -qx "$SLUG"; then
   echo "board '$SLUG' already exists — refusing (remove it first:" >&2
   echo "  hermes kanban boards rm $SLUG)" >&2
   exit 4
@@ -444,8 +478,9 @@ echo "board '$SLUG' created (workdir $WORKDIR)"
 
 mkdir -p "$WORKDIR"
 if [ ! -f "$BOARD_DIR/board.json" ]; then
-  printf '{\n  "name": %s,\n  "lanes": %s,\n  "integration-tests": false,\n  "auto-gates": false\n}\n' \
-    "\"$TITLE\"" "$LANES" > "$BOARD_DIR/board.json"
+  # the manifest validated before the board existed — the same text, not a second printf
+  mkdir -p "$BOARD_DIR"
+  printf '%s\n' "$NEW_MANIFEST" > "$BOARD_DIR/board.json"
   echo "wrote $BOARD_DIR/board.json"
 fi
 
@@ -477,11 +512,7 @@ if reused:
 cfg = file_lanes._board_cfg(board_dir)
 run_dir = card_render.run_dir(repo, slug, key)
 os.makedirs(run_dir, exist_ok=True)
-current = os.path.join(os.path.dirname(run_dir), "current")
-tmp = current + ".tmp"
-with open(tmp, "w") as f:
-    f.write(key + "\n")
-os.replace(tmp, current)
+file_lanes.set_current_run(os.path.dirname(run_dir), key)   # the one writer of runs/current
 made = file_lanes.file_board(slug, repo, workdir, lanes_n, key,
                          max_runtime=cfg.get("max-runtime"),
                          max_retries=cfg.get("max-retries"),

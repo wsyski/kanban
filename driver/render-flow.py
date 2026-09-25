@@ -36,7 +36,7 @@ LANES = [(1, "lane 1 — integration-tests: false", False),
 IDEA, PLAN, REVIEW, BUILD = "#e1d5e7", "#dae8fc", "#ffe6cc", "#d5e8d4"
 FILL = {"I": IDEA, "Gi": BUILD, "P": PLAN, "RVp": REVIEW, "Gp": BUILD,
         "TW": BUILD, "C": BUILD, "RVa": REVIEW, "TI": BUILD, "RVc": REVIEW, "Gc": BUILD}
-GATES = {"Gi", "Gp", "Gc"}
+GATES = set(lanes.board_schema.GATE_CODES)   # the one declaration (review I12)
 SHORT = {"I": "refine idea", "Gi": "GATE — human accepts idea", "P": "plan",
          "RVp": "review", "Gp": "GATE — human commits plan", "TW": "unit tests",
          "C": "implement", "RVa": "review", "TI": "integration tests",
@@ -87,9 +87,13 @@ def drawio():
                 'source="Gc1" target="I2">\n'
                 '          <mxGeometry relative="1" as="geometry" />\n        </mxCell>')
     cells.append('        <mxCell id="rework" value="REWORK LOOPS&#10;'
-                 'RVp REJECT → P-rev → RVp-r (max 3)&#10;'
-                 'RVa/RVc REJECT → C-rev → RVa-r (max 2)&#10;'
-                 'Gi REWORK → I-rev → Gi-r (max 2)" '
+                 # every loop is bounded by the lane's max-reworks; the diagram is
+                 # generic, so it draws the house default (comments PRIOR-R6: the old
+                 # labels said 3/2/2, which no option ever produced)
+                 f'RVp REJECT → P-rev → RVp-r&#10;'
+                 f'RVa/RVc REJECT → C-rev → RVa-r&#10;'
+                 f'Gi REWORK → I-rev → Gi-r&#10;'
+                 f'(each: max-reworks, default {lanes.MAX_REWORKS})" '
                  'style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;dashed=1;" '
                  'vertex="1" parent="1">\n'
                  '          <mxGeometry x="820" y="60" width="280" height="90" as="geometry" />\n'
@@ -150,6 +154,11 @@ def readme_block(mmd):
             f"editable copy in `driver/flow.drawio`.*\n\n{END}")
 
 
+def _read(path):
+    with open(path, encoding="utf-8") as f:
+        return f.read()
+
+
 def splice(text, block):
     if BEGIN not in text or END not in text:
         raise SystemExit(f"{README}: generated markers not found")
@@ -165,14 +174,25 @@ def main():
     args = ap.parse_args()
     targets = {os.path.join(HERE, "flow.drawio"): drawio(),
                os.path.join(HERE, "flow.mmd"): mermaid()}
-    readme = open(README).read()
-    targets[README] = splice(readme, readme_block(mermaid()))
+    try:
+        with open(README, encoding="utf-8") as f:
+            targets[README] = splice(f.read(), readme_block(mermaid()))
+    except FileNotFoundError:
+        # None, not absent: `stale` is built FROM `targets`, so a README left out of the
+        # dict would never be examined and `--check` would report a clean tree. CI runs
+        # `--check`, and a missing README was a traceback there instead of this line
+        # (2026-09-23 review, Important 20).
+        targets[README] = None
     stale = [p for p, want in targets.items()
-             if not os.path.exists(p) or open(p).read() != want]
+             if want is None or not os.path.exists(p) or _read(p) != want]
     if args.check:
         for p in stale:
-            print(f"stale: {os.path.relpath(p, REPO)}")
+            print(f"stale: {os.path.relpath(p, REPO)}"
+                  + (" (missing — nothing to splice the diagram into)"
+                     if targets[p] is None else ""))
         return 1 if stale else 0
+    if targets[README] is None:
+        raise SystemExit(f"{README}: missing — nothing to splice the diagram into")
     for p, want in targets.items():
         with open(p, "w") as f:
             f.write(want)

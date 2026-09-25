@@ -87,8 +87,10 @@ def workdir_state(workdir, board_dir=None):
     for _root, dirs, names in os.walk(workdir):
         dirs[:] = [d for d in dirs if d != ".git"]
         files += len(names)
-    own = bool(board_dir) and os.path.abspath(workdir).startswith(
-        os.path.abspath(board_dir) + os.sep)
+    # realpath, not abspath: a workdir reached through a symlink into the board's own
+    # tree is the board's own, and abspath read it as someone else's (prior T-22)
+    own = bool(board_dir) and os.path.realpath(workdir).startswith(
+        os.path.realpath(board_dir) + os.sep)
     what = ("a PREVIOUS RUN's product on this board" if own
             else "an EXISTING PROJECT this board did not create")
     inside = subprocess.run(["git", "-C", workdir, "rev-parse", "--is-inside-work-tree"],

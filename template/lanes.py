@@ -14,6 +14,11 @@ a reviewed idea, never against whatever was typed into lane-<k>.md at 2am.
 The refined text is a FILE (`<REFINED>`), like every other hand-off here: a
 card comment would be a second, mutable copy of the contract.
 """
+import os
+import re
+
+import board_schema
+
 
 # code, card-body file, assignee, parent code (None = lane root), skill
 LANE_CARDS = [
@@ -80,8 +85,8 @@ LABELS = {
 REFINED_SECTIONS = ("Problem", "Scope", "Open questions", "Assumptions", "Findings",
                     "Verification recipe", "Prior art", "Success criteria")
 
-# codes dropped when a lane runs without integration tests: the integration
-# tester AND the final review, because RVc reviews nothing else.
+# codes dropped when a lane runs without integration tests: the integration-test
+# card (TI) AND the final review, because RVc reviews nothing else.
 IT_CODES = ("TI", "RVc")
 
 # Roles that never spawn a worker: a gate is completed by a person, or by the
@@ -90,11 +95,12 @@ IT_CODES = ("TI", "RVc")
 # gate, and the reason `required_profiles` must not demand one.
 NO_PROFILE_ROLES = frozenset({"human-gate"})
 
-# The review cards. `model_override` (the review model) is applied to these cards and
-# above the board's or the lane's `model` — see lanes.model_args for the precedence.
-# to nothing else. Keyed on the CARD CODE, not on a role: every work card is the coder's
-# now, so a role cannot tell a verdict card from an implementation one — keyed on
-# `coder` the review model would land on the implementation too. Not the goal judge,
+# The review cards. `model_override` (the review model) is applied to these cards, and
+# to nothing else, above the board's or the lane's `model` — see lanes.model_args for
+# the precedence. Keyed on the CARD CODE, not on a role: the reviews and the
+# implementation cards are all the coder's, so a role cannot tell a verdict card from
+# an implementation one — keyed on `coder` the review model would land on the
+# implementation too. Not the goal judge,
 # which is `auxiliary.goal_judge` on the worker's profile.
 JUDGE_CODES = frozenset({"RVp", "RVa", "RVc"})
 
@@ -152,8 +158,9 @@ def goal_args(code, cards=(), max_turns=None):
     c = code.lower()
     if c.startswith("g") or c.startswith("rv"):
         return []
-    if code not in (cards or ()):
-        return []
+    if not isinstance(cards, (list, tuple)) or code not in cards:
+        return []            # a bare string is not a list of card codes: 'C' in 'TC' is
+                             # substring containment (gate_is_auto's defect, Important 5)
     turns = max_turns or board_schema.OPTIONS["goal-max-turns"][1]
     return ["--goal", "--goal-max-turns", str(turns)]
 
@@ -259,8 +266,36 @@ def max_reworks(cfg=None):
     how many times it may do that before the lane asks a human.
     """
     set_to = (cfg or {}).get("max-reworks")
-    return int(set_to) if set_to else MAX_REWORKS        # see MAX_REWORKS below: the
-                                                        # option table holds it
+    if set_to is None:
+        return MAX_REWORKS                   # see MAX_REWORKS below: the option table holds it
+    # One reading for every shape. `0`/False read as "unset" (3 rounds) while "0" read
+    # as a cap of ZERO and True as 1 (types S5/S10). The option is a count >= 1 —
+    # validate() refuses anything else at the door, and the driver refuses an invalid
+    # manifest at startup — so a value that is not one is a bug to name, not to guess.
+    if isinstance(set_to, bool) or not isinstance(set_to, int) or set_to < 1:
+        raise ValueError(f"max-reworks wants a whole number of rounds >= 1, got {set_to!r}")
+    return set_to
+
+
+def lane_value(value, lane):
+    """One per-lane option value as THIS lane sees it: a LIST is indexed from lane 1,
+    anything else comes back unchanged.
+
+    The per-lane form is a list with one entry per lane — `board_default` reads it that
+    way and `board_schema` accepts it for `model`/`provider` — but a `create` call takes
+    ONE value, and a card belongs to one lane, so the array is indexed by the lane being
+    filed. A list with no entry for this lane is a configuration fault to NAME, not to
+    guess: a fallback would put the card on a model nobody chose, which is the failure
+    the option exists to prevent. (board_schema refuses the same shape at the door, so
+    this fires on a caller that skipped the door.)
+    """
+    if not isinstance(value, list):
+        return value
+    if not 1 <= lane <= len(value):
+        raise ValueError(
+            f"lane {lane} has no entry in this per-lane value ({len(value)} entries) — "
+            f"the array form takes one entry per lane, from lane 1")
+    return value[lane - 1]
 
 
 def _model_pair(model, provider):
@@ -284,11 +319,23 @@ def model_args(code, cfg, lane_cfg=None):
     indifferent to the work model: a board whose work runs locally can still buy a
     stronger verdict.
 
-    Below it, the work model: `model`/`provider`, per lane, resolved by
-    `resolve_lane_options` into `lane_cfg` (idea header over board default). `cfg`
-    alone is the FILING-time answer, because a board files its cards before any idea
-    exists — so filing passes the manifest, and `run.open_lane` re-points a lane's
-    parked cards with `hermes kanban set-model` when the header says otherwise.
+    Below it, the work model: `model`/`provider`, per lane. `lane_cfg` is the lane's
+    idea HEADER pair as that file spells it (`{"model": …}`, `{"provider": …}`, both or
+    neither) — what the one lane-scoped caller passes, `run.lane_model_opts` through
+    `run.card_model_args`, for the lane whose card this is. Deliberately NOT the RESOLVED
+    options: `resolve_lane_options` fills a missing provider from the board, and a model
+    belongs to one provider, so a lane naming a local model on a board whose provider is
+    a cloud one would ask that cloud backend for a model it does not serve (2026-09-23
+    review, Important 8).
+
+    `cfg` alone is the FILING-time answer, because a board files its cards before any
+    idea exists: filing passes the manifest, and `run.open_lane` re-points a lane's
+    parked cards with `hermes kanban set-model` when the header says otherwise. A board
+    may declare `model`/`provider` as a per-lane ARRAY, and each door indexes it by the
+    lane it is filing (`lane_value`: `file_lanes.file_board` at filing time, and
+    `run.lane_board_cfg` for the driver's lane-scoped calls) — a raw list must never
+    reach here, because `_model_pair` would put it in the flag pair and `subprocess`
+    refuses it.
 
     Nothing named anywhere → no flag at all, and the card runs its assignee
     profile's own model (the behaviour before 2026-09-13).
@@ -349,14 +396,11 @@ def lane_cards(lane, integration_tests=True, unit_tests=True, assignees=None,
     return cards
 
 
-import os
-import re
-
-import board_schema
-
-
 def base_code(code):
-    """A card's code without its lane and round: `P1` / `P1-rev-1` -> `P`, `RVa1-r2` -> `RVa`."""
+    """A card's code without its lane and round: the leading letters, one rule —
+    `P1`, `P1-rev-1` -> `P`; `RVa1-r2` -> `RVa`. Both round grammars (`-rev-<n>` for a
+    revision, `-r<n>` for a re-review) start after the lane digits, so neither needs a
+    case of its own."""
     return re.match(r"[A-Za-z]*", code).group()
 
 # The codes that DO the work, as opposed to a gate or a review. Read by the driver's
@@ -371,8 +415,9 @@ HEADER_KEYS = board_schema.HEADER_KEYS
 
 # The house rework budget — how many times a review may send work back before the lane
 # asks a human. Read FROM the option table so there is one declaration of it, and it
-# lives here rather than with the function above because this module's board_schema
-# imports come after the graph (a module-level read up there is a NameError).
+# sits here with this module's other readings of that table (`HEADER_KEYS` just above)
+# rather than beside the function that reads it: `board_schema` is imported at the top
+# of the file, so this is a plain module-level constant and no import-order trick.
 MAX_REWORKS = board_schema.OPTIONS["max-reworks"][1]
 
 _HEADER_RE = re.compile(r"^<!--\s*([A-Za-z][A-Za-z0-9-]*)\s*:\s*(.*?)\s*-->\s*$")
@@ -405,7 +450,7 @@ def parse_idea(text):
     return headers, "\n".join(body_lines).strip() + "\n"
 
 
-def _as_bool(value, fallback):
+def _as_bool(value):
     """Exactly `true` or `false`. One spelling, so a header always reads the
     same way in every idea file."""
     v = str(value).strip().lower()
@@ -426,7 +471,7 @@ def _as_value(kind, raw, fallback):
     if kind in ("bool", "gates"):
         # A HEADER is one lane's answer, so it is the boolean form: a lane cannot name
         # a different gate set than the board it belongs to.
-        return _as_bool(text, fallback if isinstance(fallback, bool) else False)
+        return _as_bool(text)
     if kind == "count":
         if not text.isdigit() or int(text) < 1:
             raise ValueError(f"expected a positive integer, got {raw!r}")
@@ -434,7 +479,7 @@ def _as_value(kind, raw, fallback):
     return text
 
 
-def _board_default(board_defaults, key, lane, fallback):
+def board_default(board_defaults, key, lane, fallback):
     """One board default for THIS lane.
 
     A scalar applies to every lane. A LIST is per-lane, indexed from lane 1, so
@@ -471,7 +516,7 @@ def resolve_lane_options(board_defaults, headers, lane=1):
     opts = {}
     for key in sorted(board_schema.PER_LANE):
         default = board_schema.OPTIONS[key][1]
-        value = _board_default(board_defaults, key, lane, default)
+        value = board_default(board_defaults, key, lane, default)
         if key in headers:
             value = _as_value(board_schema.OPTIONS[key][0], headers[key], value)
         opts[key] = value

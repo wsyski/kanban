@@ -18,6 +18,8 @@ which is why these tests pin the paths rather than the absence of files.
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "template"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "driver"))
 import card_render
@@ -109,16 +111,20 @@ def test_a_board_nobody_armed_is_not_a_vanished_run(monkeypatch, tmp_path):
 
 
 def test_a_new_run_opens_its_own_timing_segment(monkeypatch, tmp_path):
-    """record_timing writes its run-boundary marker once per PROCESS, and a serve-mode
+    """REWRITTEN 2026-09-24 — the old form pinned the removed symbol
+    `record_timing._started`; this pins the same property on `STATE.timing_started`, the
+    state that replaced it.
+
+    record_timing writes its run-boundary marker once per PROCESS, and a serve-mode
     driver answers many ideas. With the flag left standing, the second run's
     timing.jsonl opened with no boundary at all, so the report's "latest segment"
     split (which is how a file covering several processes is read) had nothing to
     split on."""
     monkeypatch.setattr(run, "RUNS_ROOT", str(tmp_path))
     monkeypatch.setattr(run, "CURRENT_RUN", str(tmp_path / "current"))
-    run.record_timing._started = True          # the first run already wrote its marker
+    monkeypatch.setattr(run.STATE, "timing_started", [True])   # the first run wrote its marker
     run.mint_run("r2", [(1, "## Idea\n\n### Done means\n- x\n", "c1")])
-    assert not hasattr(run.record_timing, "_started")
+    assert run.STATE.timing_started[0] is False
 
 
 def test_a_refile_does_not_carry_the_previous_runs_timing_cache(monkeypatch, tmp_path):
@@ -407,15 +413,50 @@ def test_gate_announcements_are_keyed_by_a_title_that_repeats(monkeypatch, tmp_p
     assert L.card_title("Gc", 1) == L.card_title("Gc", 1)
 
 
-def test_patches_land_in_the_runs_own_directory_without_a_second_timestamp():
-    """The run directory already names the run; a timestamp inside it invited reading
-    the inner name as a different run. And beside artifacts/, not inside — artifacts/
-    holds the lane hand-offs the document chain stats, and a patch is not one."""
-    import inspect
+def test_patches_land_in_the_runs_own_directory(monkeypatch, tmp_path):
+    """REPLACED 2026-09-24 — this test used to assert two strings in
+    inspect.getsource(r.preserve_artifacts), which passes whether the copier works,
+    copies nothing, or reads the wrong directory (2026-09-23 review, Critical 8). It
+    now DRIVES the function: one card, one attachment, one file where it belongs — in
+    runs/<run-id>/patches/, beside artifacts/ and with no second timestamp — and a
+    second call that must not overwrite what the first one kept.
+
+    The source is hermes_kanban_dir(), not a hardcoded ~/.hermes: on a host whose
+    HERMES_HOME is elsewhere the literal path copied nothing and the run still reported
+    complete (review Important 23)."""
     import run as r
-    src = inspect.getsource(r.preserve_artifacts)
-    assert 'os.path.join(STATE.run_dir, "patches")' in src
-    assert "strftime" not in src
+    monkeypatch.setattr(r.STATE, "run_dir", str(tmp_path / "run-20260924-000000"))
+    os.makedirs(r.STATE.run_dir)
+    monkeypatch.setattr(r, "BOARD", "b")
+    monkeypatch.setattr(r, "log", lambda m: None)
+    monkeypatch.setattr(r, "hermes_kanban_dir", lambda: str(tmp_path / "kanban"))
+    monkeypatch.setattr(r, "board", lambda: {"C1: implement - lane 1": {"id": "t_c"}})
+    attachments = tmp_path / "kanban" / "boards" / "b" / "attachments" / "t_c"
+    attachments.mkdir(parents=True)
+    (attachments / "t_c.patch").write_text("diff --git a/x b/x\n")
+    r.preserve_artifacts()
+    patches = os.path.join(r.STATE.run_dir, "patches")
+    assert sorted(os.listdir(patches)) == ["t_c.patch"]
+    assert open(os.path.join(patches, "t_c.patch")).read() == "diff --git a/x b/x\n"
+    # idempotent: a later, different copy of the same patch must not replace what was kept
+    (attachments / "t_c.patch").write_text("diff --git a/other b/other\n")
+    r.preserve_artifacts()
+    assert open(os.path.join(patches, "t_c.patch")).read() == "diff --git a/x b/x\n"
+
+
+def test_a_run_with_no_attachments_says_so(monkeypatch, tmp_path):
+    """The silent-empty case: a glob that matched nothing returned having logged
+    nothing, so a run whose patches were never collected read exactly like one that had
+    none (review Important 23)."""
+    import run as r
+    monkeypatch.setattr(r.STATE, "run_dir", str(tmp_path))
+    monkeypatch.setattr(r, "BOARD", "b")
+    monkeypatch.setattr(r, "hermes_kanban_dir", lambda: str(tmp_path / "kanban"))
+    monkeypatch.setattr(r, "board", lambda: {"C1: implement - lane 1": {"id": "t_c"}})
+    lines = []
+    monkeypatch.setattr(r, "log", lines.append)
+    r.preserve_artifacts()
+    assert any("no provenance patches" in m for m in lines), lines
 
 
 def test_the_timing_report_is_written_again_when_the_run_finishes(monkeypatch, tmp_path):
@@ -437,3 +478,315 @@ def test_the_timing_report_is_written_again_when_the_run_finishes(monkeypatch, t
     r.write_timing_report(1, final=True)          # the run's own end rewrites it
     assert 1 in r.STATE.timed
     r.STATE.timed.clear()
+
+
+def test_the_summary_is_never_visible_half_written(monkeypatch, tmp_path):
+    """os.replace is atomic: the file holds the old content or the new, never half.
+    Not cosmetic — run-audit.py json.loads this file, so one torn write made every
+    later audit of that run die (review Critical 4)."""
+    import run as r
+    monkeypatch.setattr(r.STATE, "run_dir", str(tmp_path))
+    monkeypatch.setattr(r, "log", lambda m: None)
+    monkeypatch.setattr(r, "board_lane_count", lambda state: 0)
+    monkeypatch.setattr(r, "commit_target", lambda: "main")
+    monkeypatch.setattr(r, "expected_workdir_facts", lambda: {})
+
+    def boom(obj, f, **kw):
+        f.write('{"wall_min": 13.1, "agent_w')
+        raise RuntimeError("killed mid-write")
+
+    monkeypatch.setattr(r.json, "dump", boom)
+    with pytest.raises(RuntimeError):
+        r.write_summary({})
+    assert not os.path.exists(os.path.join(str(tmp_path), "run-summary.json"))
+
+
+def test_the_summary_marks_minutes_it_could_not_read(monkeypatch, tmp_path):
+    """A refused runs CLI recorded agent_min 0.0 as fact in a file written once
+    (review Important 15)."""
+    import json as _json
+    import run as r
+    monkeypatch.setattr(r.STATE, "run_dir", str(tmp_path))
+    monkeypatch.setattr(r, "log", lambda m: None)
+    monkeypatch.setattr(r, "board_lane_count", lambda state: 0)
+    monkeypatch.setattr(r, "commit_target", lambda: "main")
+    monkeypatch.setattr(r, "expected_workdir_facts", lambda: {})
+    monkeypatch.setattr(r.runs_util, "board_runs", lambda b, cid: None)
+    r.write_summary({"C1: implement - lane 1": {"id": "t_c", "status": "done"}})
+    with open(os.path.join(str(tmp_path), "run-summary.json")) as f:
+        row = _json.load(f)["cards"]["C1: implement - lane 1"]
+    assert row["runs_unreadable"] is True and row["agent_min"] is None, row
+
+
+# ---- the per-card log, the once-per-condition lines, and the temp writers ---
+
+def test_a_transition_is_recorded_when_the_runs_cli_refuses(monkeypatch, tmp_path):
+    """Task 17 gave the card log `runs: null` for a refused runs CLI, and record_timing
+    skipped card_log entirely on the same condition: three ticks with board_runs -> None
+    put nothing in runs/cards/<id>.jsonl at all, so the card's only record of the
+    transition was the timing cache — and that cache advances on the refused tick anyway,
+    so the card was never logged, then or later."""
+    import json as _json
+    import run as r
+    monkeypatch.setattr(r.STATE, "run_dir", str(tmp_path))
+    monkeypatch.setattr(r.STATE, "cards_dir", str(tmp_path / "cards"))
+    monkeypatch.setattr(r.STATE, "timing_path", str(tmp_path / "timing.jsonl"))
+    monkeypatch.setattr(r.STATE, "timing_started", [True])
+    monkeypatch.setattr(r.STATE, "timing_prev", {})
+    monkeypatch.setattr(r, "BOARD", "b")
+    monkeypatch.setattr(r, "log", lambda m: None)
+    monkeypatch.setattr(r, "kb", lambda *a, **k: "")
+    monkeypatch.setattr(r.runs_util, "board_runs", lambda board, cid: None)
+    state = {"C1: implement - lane 1": {"id": "t_c", "status": "done"}}
+    for _ in range(3):
+        r.record_timing(state)
+    path = tmp_path / "cards" / "t_c.jsonl"
+    assert path.exists(), "the card's transition was recorded nowhere"
+    recs = [_json.loads(l) for l in path.read_text().splitlines() if l.strip()]
+    assert len(recs) == 1, recs
+    assert recs[0]["id"] == "t_c" and recs[0]["status"] == "done", recs
+    assert recs[0]["runs"] is None, recs
+    # the cache moved on, so the card is not logged again until its status moves
+    assert r.STATE.timing_prev["C1: implement - lane 1"]["status"] == "done"
+
+
+def test_a_held_code_gate_says_the_missing_patches_note_once_per_lane(monkeypatch, tmp_path):
+    """_gate_action calls preserve_artifacts on every tick a gate waits on a person, and
+    the note was unconditional: one identical line per tick per lane for as long as the
+    human takes, and it matches no error vocabulary, so nothing bounded it either."""
+    import lanes as L
+    import run as r
+    GC1, GC2 = L.card_title("Gc", 1), L.card_title("Gc", 2)
+    monkeypatch.setattr(r.STATE, "run_dir", str(tmp_path / "run-1"))
+    monkeypatch.setattr(r.STATE, "announced", set())
+    monkeypatch.setattr(r.STATE, "snap_dir", str(tmp_path))
+    monkeypatch.setattr(r, "BOARD", "b")
+    monkeypatch.setattr(r, "lane_options", lambda lane: {"auto-gates": [], "max-reworks": 2})
+    monkeypatch.setattr(r, "latest_verdict_card",
+                        lambda state, lane, prefix, final_code=None: ({"id": "t_rva"}, "PASS: ok"))
+    monkeypatch.setattr(r, "staged_files", lambda: [])
+    monkeypatch.setattr(r, "write_timing_report", lambda lane, final=False: None)
+    monkeypatch.setattr(r, "commit_target", lambda: "here")
+    monkeypatch.setattr(r, "apply_comment_verdict", lambda *a, **k: None)
+    monkeypatch.setattr(r, "hermes_kanban_dir", lambda: str(tmp_path / "kanban"))
+    monkeypatch.setattr(r, "board", lambda: {"C1: implement - lane 1": {"id": "t_c"}})
+    lines = []
+    monkeypatch.setattr(r, "log", lines.append)
+    state = {GC1: {"id": "t_gc1", "status": "blocked"},
+             GC2: {"id": "t_gc2", "status": "blocked"}}
+    for _ in range(3):                       # the gate holds: three ticks of lane 1
+        r._gate_action(state, GC1, "gc", 1)
+    assert len([m for m in lines if "no provenance patches" in m]) == 1, lines
+    r._gate_action(state, GC2, "gc", 2)      # lane 2's own code gate is its own line
+    assert len([m for m in lines if "no provenance patches" in m]) == 2, lines
+
+
+def test_a_sustained_index_read_failure_is_said_once_and_is_no_e2_chain(monkeypatch, tmp_path):
+    """The index read is retried every tick and the line matches the auditor's error
+    vocabulary, so a sustained failure wrote a WARNING per tick and each one became
+    ('ERROR', 'E2', 'log line: WARNING: cannot read the index …'). Said once per
+    condition, with the file's own `(non-fatal)` marker for a line the driver carries
+    on from — the marker E2 already reads."""
+    import importlib.util
+    import subprocess
+    import run as r
+    monkeypatch.setattr(r, "REPO", str(tmp_path))
+    monkeypatch.setattr(r, "RUNS_ROOT", str(tmp_path / "boards" / "b" / "runs"))
+    monkeypatch.setattr(r.STATE, "index_read_failed", set())
+    lines = []
+    monkeypatch.setattr(r, "log", lines.append)
+
+    class R:
+        returncode = 1
+        stdout = ""
+        stderr = "fatal: not a git repository"
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: R())
+    for _ in range(3):
+        r.unstage_run_paths()
+    found = [m for m in lines if "cannot read the index" in m]
+    assert len(found) == 1, found
+    # the same shape run-audit reads out of the per-run driver.log
+    log_text = "\n".join(f"[21:21:0{i}] {m}" for i, m in enumerate(lines))
+    spec = importlib.util.spec_from_file_location(
+        "run_audit_e2", os.path.join(os.path.dirname(__file__), "..", "driver", "run-audit.py"))
+    ra = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ra)
+    e2 = [f for f in ra.driver_findings(log_text, auto_gates=())[0]
+          if "cannot read the index" in f[2]]
+    assert e2 == [], e2
+
+
+def test_the_writers_do_not_follow_a_symlink_planted_at_the_temp_path(monkeypatch, tmp_path):
+    """Every atomic writer built its temp name from its target (`<target>.tmp`) and opened
+    it with a plain open("w"): a symlink planted at that name — by a worker in the work
+    directory, or a person — is followed and the file it points at truncated with
+    driver-chosen content. mkstemp opens with O_EXCL in the SAME directory, so the planted
+    name is never used and os.replace still swaps atomically."""
+    import json as _json
+    import run as r
+    victim = tmp_path / "victim.txt"
+    victim.write_text("keep me\n")
+    monkeypatch.setattr(r, "log", lambda m: None)
+    monkeypatch.setattr(r, "REPO", str(tmp_path))
+    monkeypatch.setattr(r, "BOARD", "b")
+    monkeypatch.setattr(r, "WORKDIR", str(tmp_path))
+    monkeypatch.setattr(r, "BOARD_DIR", str(tmp_path))
+    monkeypatch.setattr(r, "commit_target", lambda: "main")
+    monkeypatch.setattr(r, "expected_workdir_facts", lambda: {})
+    monkeypatch.setattr(r, "board_lane_count", lambda state: 0)
+    monkeypatch.setattr(r, "workdir_facts", lambda: {"repo": None, "workdir": str(tmp_path)})
+    monkeypatch.setattr(r.card_render, "workdir_state", lambda workdir, board: "empty")
+    monkeypatch.setattr(r.runs_util, "board_runs", lambda board, cid: None)
+    monkeypatch.setattr(r.STATE, "run_dir", str(tmp_path / "run-1"))
+    monkeypatch.setattr(r.STATE, "snap_dir", str(tmp_path / "snapshots"))
+    os.makedirs(r.STATE.run_dir)
+    os.makedirs(r.STATE.snap_dir)
+
+    (tmp_path / "snapshots" / "lane-1-workdir-at-open.md.tmp").symlink_to(victim)
+    r.write_workdir_state(1, "open")
+    snapshot = (tmp_path / "snapshots" / "lane-1-workdir-at-open.md").read_text()
+    assert "empty" in snapshot and "Work directory as lane 1" in snapshot
+
+    (tmp_path / "run-1" / "workdir.json.tmp").symlink_to(victim)
+    r.record_workdir_facts()
+    facts = _json.load(open(tmp_path / "run-1" / "workdir.json"))
+    assert facts["workdir"] == str(tmp_path), facts
+
+    (tmp_path / "run-1" / "run-summary.json.tmp").symlink_to(victim)
+    r.write_summary({"C1: implement - lane 1": {"id": "t_c", "status": "done"}})
+    summary = _json.load(open(tmp_path / "run-1" / "run-summary.json"))
+    assert "C1: implement - lane 1" in summary["cards"], summary
+
+    assert victim.read_text() == "keep me\n", "a planted temp symlink was followed"
+    # nothing strays: mkstemp's temp (one random segment) is gone after the swap, and
+    # the planted names are still exactly what they were — symlinks nobody wrote through
+    assert not list((tmp_path / "run-1").glob("*.json.*.tmp")), \
+        os.listdir(tmp_path / "run-1")
+    for planted in ("run-summary.json.tmp", "workdir.json.tmp"):
+        assert (tmp_path / "run-1" / planted).is_symlink(), planted
+
+
+def test_the_idea_snapshot_does_not_follow_a_planted_temp_symlink(monkeypatch, tmp_path):
+    """Same writer shape, one directory up: the idea snapshot is what every card of the
+    lane reads by path, and it is written into runs/<run-id>/snapshots/."""
+    import run as r
+    victim = tmp_path / "victim.txt"
+    victim.write_text("keep me\n")
+    monkeypatch.setattr(r, "log", lambda m: None)
+    monkeypatch.setattr(r, "REPO", str(tmp_path))
+    monkeypatch.setattr(r, "BOARD", "b")
+    monkeypatch.setattr(r, "WORKDIR", str(tmp_path))
+    monkeypatch.setattr(r, "BOARD_DIR", str(tmp_path))
+    monkeypatch.setattr(r, "manifest", lambda: {})
+    monkeypatch.setattr(r, "workdir_facts", lambda: {"repo": None, "workdir": str(tmp_path)})
+    monkeypatch.setattr(r.card_render, "workdir_state", lambda workdir, board: "empty")
+    monkeypatch.setattr(r.lanes, "lane_cards", lambda lane, **kw: [])
+    monkeypatch.setattr(r, "lane_paths_agree", lambda state, lane: True)
+    monkeypatch.setattr(r, "lane_opened_on_record", lambda lane: False)
+    monkeypatch.setattr(r, "lane_options", lambda lane: {
+        "integration-tests": True, "unit-tests": True, "refinement": True,
+        "idea": "## Idea 1: is_even\n"})
+    monkeypatch.setattr(r, "driver_comment", lambda cid, body: None)
+    monkeypatch.setattr(r, "record_lane_open", lambda lane: None)
+    monkeypatch.setattr(r.STATE, "opened", set())
+    monkeypatch.setattr(r.STATE, "run_dir", str(tmp_path / "run-1"))
+    monkeypatch.setattr(r.STATE, "snap_dir", str(tmp_path / "snapshots"))
+    (tmp_path / "snapshots").mkdir()
+    (tmp_path / "snapshots" / "lane-1.md.tmp").symlink_to(victim)
+
+    idea_title = __import__("lanes").card_title("I", 1)
+    assert r.open_lane({idea_title: {"id": "id-I1", "status": "ready"}}, 1) == "open"
+    assert (tmp_path / "snapshots" / "lane-1.md").read_text() == "## Idea 1: is_even\n"
+    assert not list((tmp_path / "snapshots").glob("lane-1.md.*.tmp")), \
+        os.listdir(tmp_path / "snapshots")
+    assert victim.read_text() == "keep me\n", "a planted temp symlink was followed"
+
+
+def test_a_failed_atomic_write_leaves_no_temp_behind(monkeypatch, tmp_path):
+    """The tear the old writers risked was `open(<target>.tmp)` + os.replace: a crash
+    between them left a stray file in the run's own directory, and one planted at that
+    name was something else's file. A mkstemp temp that cannot be swapped is removed."""
+    import run as r
+    monkeypatch.setattr(r, "log", lambda m: None)
+    monkeypatch.setattr(r, "BOARD", "b")
+    monkeypatch.setattr(r, "REPO", str(tmp_path))
+    monkeypatch.setattr(r, "commit_target", lambda: "main")
+    monkeypatch.setattr(r, "expected_workdir_facts", lambda: {})
+    monkeypatch.setattr(r, "board_lane_count", lambda state: 0)
+    monkeypatch.setattr(r.STATE, "run_dir", str(tmp_path / "run-1"))
+    os.makedirs(r.STATE.run_dir)
+
+    def boom(obj, f, **kw):
+        f.write('{"wall_min": 13.1, "agent_w')
+        raise RuntimeError("killed mid-write")
+
+    monkeypatch.setattr(r.json, "dump", boom)
+    with pytest.raises(RuntimeError):
+        r.write_summary({})
+    assert os.listdir(r.STATE.run_dir) == [], os.listdir(r.STATE.run_dir)
+
+
+def _prepare_summary_write(monkeypatch, tmp_path):
+    """The fakes write_summary needs to reach its one _write_atomic call."""
+    monkeypatch.setattr(run, "log", lambda m: None)
+    monkeypatch.setattr(run, "BOARD", "b")
+    monkeypatch.setattr(run, "REPO", str(tmp_path))
+    monkeypatch.setattr(run, "commit_target", lambda: "main")
+    monkeypatch.setattr(run, "expected_workdir_facts", lambda: {})
+    monkeypatch.setattr(run, "board_lane_count", lambda state: 0)
+    monkeypatch.setattr(run.STATE, "run_dir", str(tmp_path / "run-1"))
+    os.makedirs(run.STATE.run_dir)
+    return tmp_path / "run-1" / "run-summary.json"
+
+
+def test_an_atomic_write_never_toggles_the_process_umask(monkeypatch, tmp_path):
+    """`_write_atomic` used to set the process umask to 0 and restore it around EVERY
+    write, to learn `0666 & ~umask`. Nothing in run.py is threaded, but a FORK inside
+    that window inherited umask 0 — every file the child created lost its group and
+    other bits (2026-09-25 fix-pass verification). The umask is read ONCE now, at
+    import (`run._UMASK`), where the process is single-threaded."""
+    path = _prepare_summary_write(monkeypatch, tmp_path)
+
+    def boom(*_a, **_k):
+        raise AssertionError("a write toggled the process umask")
+
+    monkeypatch.setattr(run.os, "umask", boom)
+    run.write_summary({})
+    assert path.exists()
+
+
+def test_an_atomic_write_has_the_mode_open_would_have_given_it(monkeypatch, tmp_path):
+    """The mode rule the helper's own docstring states, enforced rather than asserted:
+    mkstemp's 0600 is NOT what `open(path, "w")` would have left. Every target is board
+    state a human reads and a group may share."""
+    path = _prepare_summary_write(monkeypatch, tmp_path)
+    run.write_summary({})
+    umask = os.umask(0)
+    os.umask(umask)
+    mode = path.stat().st_mode & 0o777
+    assert mode == 0o666 & ~umask, oct(mode)
+    assert run._WRITE_MODE == 0o666 & ~umask, oct(run._WRITE_MODE)
+    # the two atomic writers read the same rule once each; a drift is a test failure
+    assert file_lanes.WRITE_MODE == run._WRITE_MODE, \
+        (oct(file_lanes.WRITE_MODE), oct(run._WRITE_MODE))
+
+
+def test_no_prose_names_a_symbol_or_a_test_that_does_not_exist():
+    """Four sentences that were false about the code beside them, pinned so the false
+    form cannot come back: an E16 that "enforces" the deletion rule (E16 is an INFO note
+    over work/ litter and INFO never fails a run, so nothing enforces it), a _READ_ERROR
+    that does not exist (the record is STATE.read_error), a test name that does not exist,
+    and a `full.update(c)` a comment said was "discarded by the re-merge" when it
+    persisted in state[t]."""
+    import inspect
+    import run as r
+    src = inspect.getsource(r)
+    assert "_READ_ERROR" not in src
+    assert "test_nothing_in_the_template_deletes_work_or_runs" not in src
+    assert "enforced by run-audit" not in inspect.getsource(r._tick)
+    assert "tests/test_run_directories.py" in inspect.getsource(r._tick)
+    assert "was then discarded by the re-merge" not in src
+    assert "STATE.read_error" in inspect.getsource(r.card_record)
+    assert "test_the_driver_retired_every_clearing_function" in \
+        inspect.getsource(r.clean_work_noise)

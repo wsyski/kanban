@@ -7,13 +7,13 @@ the lane ROOT as about the prune: I is the root when the lane refines, P when it
 does not, and every root lookup has to be told which.
 """
 
-import card_render
 import json
 import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "template"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "driver"))
+import card_render
 
 import board_schema
 import lanes
