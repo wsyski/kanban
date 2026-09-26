@@ -408,6 +408,21 @@ def test_the_plan_review_checks_every_asserted_property_is_achievable():
     assert "achievable with the plan's named toolchain" in read("_plan-checklist.txt")
 
 
+def test_the_plan_must_write_a_tick_sentence_and_derive_its_values():
+    """The two rejection causes measured on is-even with `swift15-27b` (2026-09-26): a
+    [TW] tick resting on a RED no card could observe (TW runs BESIDE C), and an expected
+    value the plan's own toolchain does not produce (`is_even(0.5)` asserted True while
+    Python 3.14 evaluates `0.5 % 2 == 0.5`). Both are checklist item 4, so the two forms
+    a card CAN make are named there — and in the plan card's own contract, which is what
+    the planner reads while writing the steps."""
+    checklist = read("_plan-checklist.txt")
+    assert "TICK SENTENCE:" in checklist
+    assert "DERIVED VALUE:" in checklist
+    assert "re-derivation of the predicted FAIL from the two patches" in checklist
+    p = read("p-body.txt")
+    assert "item 4's two forms" in p and "DERIVE every expected value" in p
+
+
 def test_the_coders_test_fix_diff_holds_only_its_own_correction():
     """`git diff --cached` after staging diffs against HEAD: the TW card's whole file
     plus C's edit. Taken before staging, against the index still holding TW's version,

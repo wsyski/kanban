@@ -149,6 +149,57 @@ def test_a_document_written_after_the_card_started_is_caught(tmp_path):
     assert any(f.startswith("F2") and "PLAN" in f for f in out), out
 
 
+def test_a_round_that_rewrites_the_plan_is_not_a_stale_read(tmp_path):
+    """A rework round writes the SAME path again — `P1-rev-1` names <PLAN> exactly as
+    `P1` did — so after one, the file holds the NEWEST write while an earlier review
+    was handed the copy that was there when it started. Measured on is-even
+    `run-20260926-143114`: `P1-rev-1` started 14:48:31 and rewrote `plan.md` at
+    14:49:38, and the round-1 `RVp1` — started 14:44:09, one second after that plan
+    first landed — was charged E3/F2 for it, which leaves a finished, correct run
+    permanently non-clean. The write is the later round's, never the reader's read."""
+    recs = chain(tmp_path)                    # plan.md written at 240, RVp1 starts 400
+    plan = str(tmp_path / "plan.md")
+    touch(plan, 660)                          # the revision round rewrites it
+    recs += [
+        {"ts": at(600), "event": "start", "lane": 1, "code": "P1-rev-1",
+         "card_id": "t_p2", "title": "P1-rev-1: plan revision round 1 - lane 1",
+         "status": "ready",
+         "inputs": {"REFINED": str(tmp_path / "refined.md"), "PLAN": plan},
+         "unresolved": []},
+        {"ts": at(700), "event": "done", "lane": 1, "code": "P1-rev-1",
+         "card_id": "t_p2", "title": "P1-rev-1: plan revision round 1 - lane 1",
+         "status": "done", "attached": ["plan.md"], "staged": [],
+         "result": "REVISED: plan.md"},
+    ]
+    (tmp_path / "chain.jsonl").write_text("\n".join(json.dumps(r) for r in recs) + "\n")
+    out = findings_for(tmp_path)
+    assert not [f for f in out if f.startswith("F2")], out
+    # ... and the report does not mark that card's input either: the mtime beside it
+    # is the later round's write, and a `!` there reads as a defect in the card.
+    rows = dc.analyze(dc.load(str(tmp_path)), str(tmp_path))[0]
+    rvp = [r for r in rows if r["code"] == "RVp1"][0]
+    plan_doc = [d for d in rvp["inputs"] if d["role"] == "PLAN"][0]
+    assert plan_doc["state"] == "rewritten-later", plan_doc
+
+
+def test_a_stale_read_is_still_caught_when_a_later_round_exists(tmp_path):
+    """The suppression is not "a later round exists": the file's mtime has to be that
+    round's OWN write. Here the plan landed 100 s after RVp1 was dispatched — the
+    tick-order race F2 exists for — and a round started after RVp1, but the mtime is
+    still `P1`'s write, so it is charged to `P1` and F2 fires."""
+    recs = chain(tmp_path, plan_at=500)       # plan lands after RVp1 started
+    plan = str(tmp_path / "plan.md")
+    recs.append(
+        {"ts": at(600), "event": "start", "lane": 1, "code": "P1-rev-1",
+         "card_id": "t_p2", "title": "P1-rev-1: plan revision round 1 - lane 1",
+         "status": "ready",
+         "inputs": {"REFINED": str(tmp_path / "refined.md"), "PLAN": plan},
+         "unresolved": []})
+    (tmp_path / "chain.jsonl").write_text("\n".join(json.dumps(r) for r in recs) + "\n")
+    out = findings_for(tmp_path)
+    assert any(f.startswith("F2") and "PLAN" in f for f in out), out
+
+
 def test_a_missing_document_is_caught(tmp_path):
     chain(tmp_path)
     os.remove(tmp_path / "refined.md")

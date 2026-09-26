@@ -39,6 +39,11 @@ import runs_util  # noqa: E402  — resolve_run_dir, one copy for both readers
 PRODUCED_BY = {"REFINED": "I", "PLAN": "P"}
 TOLERANCE_S = 2.0
 
+# Doc states the report does NOT mark with `!`. `ok`, and a path a LATER round in the
+# same lane rewrote: the mtime printed beside that card is the later round's write,
+# not a defect in the card's own read (see analyze()).
+UNFLAGGED_DOC_STATES = ("ok", "rewritten-later")
+
 
 def load(runs_dir):
     """Every chain record, or None when this run has no chain.jsonl.
@@ -181,12 +186,15 @@ def analyze(recs, runs_dir=None):
     # `min(start)` baseline read the run's own snapshot as F3 three times.
     run_start = run_beginning(recs, runs_dir)
     rows, findings = [], []
-    # The producer of each lane document, for the continuity check.
+    # Every producer of each lane document, by START time. A REWORK round writes the
+    # same path again — `P1-rev-1` names <PLAN> exactly as `P1` did — so the file's
+    # mtime is the NEWEST write, not the copy a given reader was handed. Kept as a
+    # list because the F2 check below has to ask which round a write belongs to.
     producers = {}
     for r in starts:
         for role, code in PRODUCED_BY.items():
             if r["code"].startswith(code) and _inputs(r).get(role):
-                producers.setdefault((r["lane"], role), r)
+                producers.setdefault((r["lane"], role), []).append(parse_ts(r["ts"]))
 
     for r in sorted(starts, key=lambda r: (r["lane"], r["ts"])):
         started = parse_ts(r["ts"])
@@ -217,9 +225,23 @@ def analyze(recs, runs_dir=None):
                 findings.append(f"F3 {code} lane {lane}: {role} written {mt:%H:%M:%S} "
                                 f"BEFORE the run started {run_start:%H:%M:%S} — a leftover")
             elif not is_output and mt > started + datetime.timedelta(seconds=TOLERANCE_S):
-                state = "written-later"
-                findings.append(f"F2 {code} lane {lane}: {role} written "
-                                f"{mt:%H:%M:%S} after the card started {started:%H:%M:%S}")
+                # Charge the write to a LATER round in this lane when one exists whose
+                # own start it postdates: `P1-rev-1` started 14:48:31 and rewrote
+                # `plan.md` at 14:49:38, and RVp1's round-1 review — handed the plan a
+                # second before it started — was flagged F2 for that write (measured on
+                # is-even run-20260926-143114, `swift15-27b`). What a shared path holds
+                # is not what the reader was given, so nothing can be concluded here;
+                # the round that rewrote it is judged on its own record. A hand-off that
+                # landed after its reader was dispatched, with no later round to blame,
+                # still reads F2 — that is the case this check exists for.
+                tol = datetime.timedelta(seconds=TOLERANCE_S)
+                if any(p > started and mt >= p - tol
+                       for p in producers.get((lane, role), [])):
+                    state = "rewritten-later"
+                else:
+                    state = "written-later"
+                    findings.append(f"F2 {code} lane {lane}: {role} written "
+                                    f"{mt:%H:%M:%S} after the card started {started:%H:%M:%S}")
             docs.append({"role": role, "path": path, "mtime": f"{mt:%H:%M:%S}", "state": state})
         for ph in _as_list(r.get("unresolved")):
             findings.append(f"F4 {code} lane {lane}: filed body still names {ph}")
@@ -355,7 +377,8 @@ def main(argv=None):
                 cur = row["lane"]
                 print(f"lane {cur}")
             ins = ", ".join(f'{d["role"]}={os.path.basename(d["path"])}'
-                            f'({d.get("mtime", "missing")}{"!" if d["state"] != "ok" else ""})'
+                            f'({d.get("mtime", "missing")}'
+                            f'{"!" if d["state"] not in UNFLAGGED_DOC_STATES else ""})'
                             for d in row["inputs"]) or "-"
             # No done record = still in flight. A bare "-" there read as "this
             # card produced nothing" while it was busy producing it.
