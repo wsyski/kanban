@@ -115,6 +115,10 @@ class RunState:
         self.log_offsets = {}   # card id -> worker-log size at its last attempt (ledger-rejoined)
         self.requeued = {}   # card id -> when it was re-queued for provider starvation; the
                              # stamp is what stops the forgiven event halting the next tick
+        self.pinned = {}     # card id -> the (--model/--provider) pair the driver last
+                             # pointed it at. The release-time re-pin compares against this,
+                             # so a board option edited while the lane waits reaches the next
+                             # CARD, and a per-card `set-model` by hand is not undone by it
         self.read_error = {}   # card id -> why its latest `show` failed; a good read drops it
         self.unreadable_ticks = {}
         # card id -> the tick serial it was last counted unreadable in, so two scans in
@@ -453,6 +457,37 @@ def card_model_args(code, lane):
     filing applies, and never a list in the flag pair.
     """
     return lanes.model_args(code, lane_board_cfg(lane), lane_model_opts(lane))
+
+
+def repin_before_release(card, lane, why):
+    """Point a card at the model the board and its lane resolve to NOW, before it starts.
+
+    The pin is a filing-time answer that `open_lane` fixes up once, so a board option
+    edited while the lane waits reached the next RUN and not the next CARD: a card is
+    claimed on the model it holds, and a route the operator has since replaced is the
+    route the next attempt gets (measured 2026-09-26: OpenCode Go timed out mid-lane and
+    the parked review could not be moved to the local rig without `set-model` by hand).
+    Both halves are live reads — `lane_board_cfg` -> `manifest()`, `lane_model_opts` -> the
+    lane file — so this is the same call `open_lane` makes, moved to the moment the card
+    actually starts.
+
+    Only a card THIS process pinned is re-pointed (`STATE.pinned`, written by `open_lane`):
+    a run rejoined mid-lane keeps its cards' pins, and a `set-model` a person made is not
+    undone by a release. A gate is skipped — it runs no worker, so a flag buys nothing.
+    """
+    if card.get("assignee") == "human-gate" or card["id"] not in STATE.pinned:
+        return
+    code = lanes.base_code(card["title"].split(":")[0])
+    want = tuple(card_model_args(code, lane))
+    if STATE.pinned[card["id"]] == want:
+        return
+    model = want[want.index("--model") + 1] if "--model" in want else "none"
+    extra = (["--provider", want[want.index("--provider") + 1]]
+             if "--provider" in want else [])
+    kb("set-model", card["id"], model, *extra)
+    STATE.pinned[card["id"]] = want
+    log(f"{code}{lane}: re-pointed at {model}" + (f" via {extra[1]}" if extra else "")
+        + f" before it starts ({why})")
 
 
 # Every CLI call is bounded: a hung `hermes` or `git` would stall the driver silently
@@ -876,6 +911,9 @@ def file_revision(state, lane, round_no, findings, base="P", reviewer_prefix="RV
                         _skill_args(base) + _goal_args(rev_assignee, base)
                         + card_model_args(base, lane))
     rev_id = json.loads(kb(*args))["id"]
+    # Recorded, not just filed: a board option edited between this round's filing
+    # and its release still has to reach the card (repin_before_release).
+    STATE.pinned[rev_id] = tuple(card_model_args(base, lane))
 
     rrbody = render(rr_body_file)
     if kind == "plan":
@@ -897,6 +935,7 @@ def file_revision(state, lane, round_no, findings, base="P", reviewer_prefix="RV
                            card_model_args(rr_code, lane),
                            parent=rev_id)
     rr_id = json.loads(kb(*rr_args))["id"]
+    STATE.pinned[rr_id] = tuple(card_model_args(rr_code, lane))
     kb("link", rr_id, gate_id)
     # This gate now also guards the DOWNSTREAM card against starting while
     # rework is in flight; the positional-parents check in tick() enforces it.
@@ -1747,6 +1786,7 @@ def open_lane(state, lane):
         if not card or card["status"] in ("done", "archived"):
             continue
         want = card_model_args(c["code"], lane)
+        STATE.pinned[card["id"]] = tuple(want)
         if want == lanes.model_args(c["code"], lane_cfg):
             continue
         model = want[want.index("--model") + 1] if "--model" in want else "none"
@@ -2581,6 +2621,7 @@ def _tick():
                 log(f"WARNING: could not comment on {code} ({e})")
             log(f"re-promoted {code} once — it blocked itself: "
                 f"{block_reason_text(card)[:90]}")
+        repin_before_release(card, lane, "promotion")
         mark_attempt(card)
         kb("unblock", card["id"])
         record_chain_start(card, lane)
@@ -2688,6 +2729,9 @@ def file_code_revision(state, lane, round_no, findings, owner="C", max_rounds=2,
                         _skill_args(owner) + _goal_args(role, owner)
                         + card_model_args(owner, lane))
     rev_id = json.loads(kb(*args))["id"]
+    # Recorded, not just filed: a board option edited between this round's filing
+    # and its release still has to reach the card (repin_before_release).
+    STATE.pinned[rev_id] = tuple(card_model_args(owner, lane))
     rrbody = render("rva-body.txt")
     rrbody += (f"\nRE-REVIEW ROUND {round_no + 1} of {max_rounds + 1}. The previous review's "
                f"REJECT left findings on the parent revision card. Re-derive every check in this "
@@ -2708,6 +2752,7 @@ def file_code_revision(state, lane, round_no, findings, owner="C", max_rounds=2,
                            card_model_args("RVa", lane),
                            parent=rev_id)
     rr_id = json.loads(kb(*rr_args))["id"]
+    STATE.pinned[rr_id] = tuple(card_model_args("RVa", lane))
     kb("link", rr_id, gate_id)
     log(f"filed code rework round {round_no}: {rev_title} + {rr_title}")
     record_rework(lane, "Gc", round_no, [rev_title, rr_title], findings, state)
@@ -2761,10 +2806,16 @@ def halt_guidance():
     return (f"\n\nWHAT TO DO: the board is halted — the driver has exited and nothing "
             f"on this board moves by itself. 1) Read the reason above (full log: "
             f"boards/{BOARD}/runs/<run>/driver.log; DESIGN.md, \"Stops\"). 2) Fix the "
-            f"cause. 3) Restart the driver: driver/start-board.sh --slug {BOARD} — or, "
-            f"if this run cannot continue, reset it: {RESET_STEPS.format(b=BOARD)}. "
-            f"Do NOT drag this card to Done, block it or archive it: that releases the "
-            f"lane without the work, or stops it again.")
+            f"cause. 3) If the halted card is still blocked, that block is the DRIVER's "
+            f"own (its reason starts HALTED:) and the driver never releases it — release "
+            f"it yourself, with the driver still down: hermes kanban --board {BOARD} "
+            f"unblock <id>. A card left short of done with the failure the halt names "
+            f"stops the next run the same way, so let it reach done first — a done card "
+            f"keeps its history without re-halting — and only then 4) start the driver: "
+            f"driver/start-board.sh --slug {BOARD} — or, if this run cannot continue, "
+            f"reset it: {RESET_STEPS.format(b=BOARD)}. Do NOT drag this card to Done, "
+            f"block it or archive it: that releases the lane without the work, or stops "
+            f"it again.")
 
 
 # The documented way back from a board whose run cannot be driven (README "Resetting").
@@ -2938,7 +2989,10 @@ def halt_if_exhausted(st):
         return STATE.halted["reason"]
     # Built before open_lanes prunes: a pruned parent reads as not done, which only
     # defers card_stall's dependency count to the next tick.
-    graph = {t: parents for t, parents, _k, _l in lane_graph(st)}
+    graph, lanes_of = {}, {}
+    for t, parents, _k, lane_no in lane_graph(st):
+        graph[t] = parents
+        lanes_of[t] = lane_no
     # Exhaustion evidence lives in the card's EVENT history, not its list row:
     # `list --json` carries no runs, and the breaker appends gave_up/timed_out
     # events without a `blocked` event. A non-terminal card (not done/archived)
@@ -2997,7 +3051,7 @@ def halt_if_exhausted(st):
             if (hits >= 3 and c["id"] not in STATE.requeued
                     and ("protocol violation" in str(p.get("reason") or "")
                          or p.get("trigger") == "crashed")):
-                requeue_provider_starved(c, hits)
+                requeue_provider_starved(c, hits, lanes_of.get(title, 1))
                 continue
             reason_txt = str(p.get("reason") or "")
             break
@@ -3152,7 +3206,7 @@ def mark_attempt(card):
             "card_id": card["id"], "log_offset": offset})
 
 
-def requeue_provider_starved(card, hits):
+def requeue_provider_starved(card, hits, lane):
     """Re-queue a card whose attempt died of a transport storm — once.
 
     The one-attempt rule is about CONTENT failures: a worker that tried and could
@@ -3171,6 +3225,7 @@ def requeue_provider_starved(card, hits):
     except Exception as e:                      # never take the driver down here
         log(f"WARNING: could not comment on {code} ({e})")
     mark_attempt(card)
+    repin_before_release(card, lane, "re-queue after a transport storm")
     try:
         kb("unblock", card["id"])
     except Exception as e:      # kb's refusal or `hermes` missing: recorded, never fatal

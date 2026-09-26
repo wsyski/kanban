@@ -419,6 +419,27 @@ def test_prose_about_status_codes_is_not_a_provider_storm(tmp_path, monkeypatch)
         assert runs_util.UPSTREAM_ERROR.search(line), line
 
 
+def test_a_provider_that_died_mid_stream_is_a_storm():
+    """A provider that never answered names no status code: it prints the streaming
+    lines and the "didn't answer" sentence. Those ARE the transport's own words, and
+    all a worker's log holds when the provider dies — yet every one of them scored 0
+    here, so a card killed by the provider read as a card killed by its own task, its
+    halt carried no provider label and the re-queue never fired
+    (roman-evaluator-liferay-client-ext RVp1, 2026-09-26: three attempts against
+    OpenCode Go, then `gave_up` and a halted board for one upstream outage)."""
+    for line in ("⚠️  Attempt 1/3 failed: Streaming response failed: [server_error] upstream service timeout",
+                 "❌ API failed after 3 retries — Streaming response failed: [server_error] upstream service timeout",
+                 "💀 Final error: Streaming response failed: [server_error] upstream service timeout",
+                 "OpenCode Go didn't answer after 3 attempts — it looks temporarily unavailable."):
+        assert runs_util.UPSTREAM_ERROR.search(line), line
+    # Still the transport's forms and nothing else: the sentence about the failure is
+    # not the failure, so a card reasoning about one does not count as a storm.
+    for line in ("the retry answered on the second attempt",
+                 "upstream service timeouts are handled by the client",
+                 "log a warning when a provider does not answer after 3 attempts"):
+        assert not runs_util.UPSTREAM_ERROR.search(line), line
+
+
 def test_an_earlier_attempt_in_the_same_card_log_is_not_this_runs_storm(tmp_path, monkeypatch):
     """The log is append-only per card, so a file touched by this run still holds the
     attempts before it — here flushed after their own session id, as -Q writes them.

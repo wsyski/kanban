@@ -303,6 +303,11 @@ def test_a_re_review_keeps_the_judges_pins(monkeypatch, tmp_path):
     for prefix in ("P1-rev-1", "C1-rev-1"):
         rev = next(c for c in created if c[1].startswith(prefix))
         assert "--model" not in rev, rev[1]
+    # And each is RECORDED as this process's pin, so an option edited between this
+    # filing and the card's release still reaches it (repin_before_release): a card
+    # the driver filed mid-run is otherwise one it cannot re-point.
+    assert {f"t_{calls.index(c) + 1}" for c in created} <= set(run.STATE.pinned)
+    run.STATE.pinned.clear()
 
 
 def test_a_re_review_of_a_board_without_a_pin_sends_no_model(monkeypatch, tmp_path):
@@ -472,3 +477,46 @@ def test_the_pre_flight_refuses_a_remap_to_a_profile_that_is_not_there(tmp_path)
                             ["coder", "researcher"])
     assert code == 1, (code, out)
     assert "profile senior not available" in out, out
+
+
+def test_a_released_card_is_pointed_at_the_board_it_reads_now(monkeypatch):
+    """A board option edited while a lane waits has to reach the next CARD, not only the
+    next run: a card is claimed on the model it holds, so a route the operator has since
+    replaced would otherwise take the lane's next attempt too (measured 2026-09-26 —
+    OpenCode Go timed out mid-lane and the parked review needed `set-model` by hand).
+    Only a pin THIS process wrote is re-pointed: a run rejoined mid-lane keeps its pins,
+    and a `set-model` a person made is not undone by a release.
+    """
+    calls = []
+    monkeypatch.setattr(run, "kb", lambda *a: calls.append(a))
+    monkeypatch.setattr(run, "log", lambda *a: None)
+    monkeypatch.setattr(run, "card_model_args",
+                        lambda code, lane: ["--model", "swift15-27b", "--provider", "llama-swap"])
+    card = {"id": "rv1", "title": "RVp1: plan review - lane 1", "assignee": "coder"}
+    try:
+        # Never pinned by this process: a rejoined run, or a person's own `set-model`.
+        run.repin_before_release(card, 1, "promotion")
+        assert calls == []
+
+        # Pinned at lane open on the route that has since died -> re-pointed, once.
+        run.STATE.pinned["rv1"] = ("--model", "glm-5.3-flash", "--provider", "opencode-go")
+        run.repin_before_release(card, 1, "promotion")
+        assert calls == [("set-model", "rv1", "swift15-27b", "--provider", "llama-swap")]
+        assert run.STATE.pinned["rv1"] == ("--model", "swift15-27b", "--provider", "llama-swap")
+        run.repin_before_release(card, 1, "promotion")     # already current
+        assert len(calls) == 1
+
+        # A gate runs no worker, so a flag on it buys nothing.
+        run.STATE.pinned["gp1"] = ("--model", "glm-5.3-flash")
+        run.repin_before_release({"id": "gp1", "title": "Gp1: plan gate - lane 1",
+                                  "assignee": "human-gate"}, 1, "promotion")
+        assert len(calls) == 1
+
+        # A board that names nothing any more clears the pin rather than leaving it.
+        monkeypatch.setattr(run, "card_model_args", lambda code, lane: [])
+        run.repin_before_release(card, 1, "promotion")
+        assert calls[-1] == ("set-model", "rv1", "none")
+        assert run.STATE.pinned["rv1"] == ()
+    finally:
+        run.STATE.pinned.pop("rv1", None)
+        run.STATE.pinned.pop("gp1", None)

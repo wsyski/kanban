@@ -152,6 +152,20 @@ carry it, author cards run the work model, and the shipped boards pin `glm-5.3-f
 `opencode-go` so the model that reviews is not the model that wrote the work. Neither is
 required: omit both and no flag is filed, every card running its profile's own model.
 
+**Both are re-read when a card starts.** The pin a card carries is otherwise the answer
+from FILING time, fixed up once by `run.open_lane` — so editing a board's `model` or its
+`model_override` while a lane waits reached the next RUN and not the next card, and a dead
+route (OpenCode Go timing out mid-lane, 2026-09-26) took the lane's next attempt with it.
+`run.repin_before_release` resolves the pair again immediately before every release the
+DRIVER makes — promotion, and the provider re-queue — and `set-model`s the card only when
+the answer changed, so both halves stay live reads (`manifest()` for the board, the lane
+file for a header). What it compares against is a pin the driver itself wrote, at lane open
+and when it files a rework round. Two cards are deliberately left alone: one this process
+never pinned (a run rejoined mid-lane, or a card a person re-pointed by hand — an
+operator's `set-model` is an instruction, not staleness) and a gate, which runs no worker.
+So moving a lane's review to another model is a `board.json` edit and nothing else, and a
+provider outage that trips the re-queue re-runs its card on whatever the board now names.
+
 Measured 2026-09-13 and 2026-09-15 (`boards/is-even` README has the full record): four
 cards on local models (`ornith-35b`, then `qwen38-27b`) filed and dispatched correctly,
 each worker really carried its `-m … --provider llama-swap`, and each wrote a correct
@@ -509,7 +523,22 @@ later failure and label every later halt.
   `reset_attempt_budgets` clears only the engine's failure counter; the events remain.
   A gate wait halts again after another `GATE_WAIT_S`, and a tick exception halts again
   only if it repeats. So a restart recovers a driver that stopped without a halt, and
-  only `driver/reset.sh` clears a halt (README's Resetting sequence).
+  `driver/reset.sh` (README's Resetting sequence) is the answer when the RUN cannot
+  continue — but a halt that rests on a card's own record can also be cleared in place,
+  which keeps the run's work (next bullet).
+- **A halt can be cleared without losing the run.** `halt_if_exhausted` raises on what a
+  CARD's record says, and a done card keeps its history without re-halting (the sweep's
+  own rule), so a halt whose cause is one card — an upstream storm, a crash, a protocol
+  violation — is cleared in place: with the driver still down, fix the cause, release
+  that card's block, let it reach done, then start the driver. Release it by hand
+  (`hermes kanban --board <slug> unblock <id>`) because a driver `HALTED:` block is
+  `should_repromote`'s `stop` and nothing else will; the engine dispatches a ready card
+  whether or not the driver serves, which is what lets the card run to done while the
+  board's promotion stays out of it. `reset.sh` remains the heavier tool: it archives
+  the cards and files the lane afresh, discarding the run's work. Measured 2026-09-26 on
+  roman-evaluator-liferay-client-ext — RVp1 died of an upstream outage mid-review, and
+  releasing the card kept P1's 40-minute plan, where a reset would have refiled from the
+  idea.
 - **`reset.sh` stops the driver first.** The pid comes from `runs/driver.lock`, and the
   script acts on it only when it is a live process running this repo's `driver/run.py`.
   If that process does not stop, the script stops too. Stopping the driver matters

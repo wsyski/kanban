@@ -132,7 +132,17 @@ def cli_error(stderr, limit=300):
 # and the goal loop's error sentence. A status code inside a sentence — `assert
 # response status 404`, `HTTP 404 from the stub` — is a test's or a tool's: the
 # work, not the provider.
+#
+# A provider that DIES MID-STREAM names no status code at all: it prints
+# `⚠️  Attempt 2/3 failed: Streaming response failed: [server_error] upstream service
+# timeout` and `OpenCode Go didn't answer after 3 attempts — it looks temporarily
+# unavailable.` Both were invisible here — 0 hits on a card that died of the provider,
+# so its halt carried no provider label and the re-queue never fired
+# (roman-evaluator-liferay-client-ext RVp1, 2026-09-26: three attempts, then `gave_up`
+# and a halted board for one upstream outage). These are Hermes's own transport
+# sentences, and they are what a worker's last lines are when the provider is gone.
 UPSTREAM_ERROR = re.compile(r"(\[HTTP\s*[45]\d\d\]|^\W*(?:Error:\s*)?HTTP\s*[45]\d\d:|"
+                            r"Streaming response failed|didn't answer after \d+ attempts|"
                             r"goal judge: API call failed)")
 
 

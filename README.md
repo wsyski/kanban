@@ -468,6 +468,13 @@ with the CLI:
   Naming a work model without a pin puts the reviews back on the author's model — a
   legitimate board (one model for everything) and a bad one to reach by accident, so
   `board_schema` prints a note at the manifest door and the driver logs one per lane.
+- **Changing a model mid-run.** Edit `board.json` — the driver re-reads the board and the
+  lane file (its two live sources) each time it releases a card, so the change reaches the
+  NEXT card, a round's cards included, with nothing else to do. A card already released
+  keeps its pin: if the driver's own block or a crash stopped it, and you unblock it by
+  hand, release is yours and not the driver's, so re-point that one yourself —
+  `hermes kanban --board <slug> set-model <card-id> <model> [--provider <p>]`. Same rule
+  from the other side: the driver never undoes a `set-model` you made.
 - **Refinement is optional.** `refinement: false` drops `I` and `Gi` from a lane: the
   plan card becomes its root and plans from the raw idea, whose `### Done means` section
   the code gate judges against. The human's first veto moves to the plan gate.

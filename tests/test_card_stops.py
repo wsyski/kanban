@@ -171,6 +171,22 @@ def test_a_flake_below_the_threshold_still_halts(monkeypatch):
     assert not run.STATE.requeued
 
 
+def test_the_halt_guidance_walks_the_recovery_it_took_a_halt_to_learn():
+    """Restarting the driver does not resume a halted lane: the halted card is blocked
+    by the DRIVER's own mark (HALTED:), which the driver never releases, and a card
+    left short of done with the failure the halt names stops the next run the same way.
+    Both were learned the hard way on 2026-09-26 — roman-evaluator-liferay-client-ext
+    RVp1, one upstream outage — and the guidance on the card is where a person meets
+    them, so it has to say what the board actually does."""
+    body = run.halt_guidance()
+    assert "WHAT TO DO" in body
+    assert "HALTED:" in body                      # whose block it is
+    assert "unblock <id>" in body                 # and that a person must release it
+    assert "done" in body                         # before the card is terminal...
+    assert body.index("unblock <id>") < body.index("start-board.sh --slug")
+    assert "Done" in body                         # the do-not list survives the edit
+
+
 def test_a_timeout_is_never_re_queued(monkeypatch):
     """The re-queue is for attempts that never got to run. A ceiling is the board's
     own rule (a timed-out card is not retried), so the storm count must not
