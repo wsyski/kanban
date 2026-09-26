@@ -4,7 +4,10 @@ Current run configuration, read off `board.json`: every card the driver files us
 work model `swift15-27b` on `llama-swap`, and no `model_override`/`provider_override`
 is pinned, so the review cards run that same local model. Gates `Gi`, `Gp`, and `Gc`
 are automatic, `sequential` is off, the per-card ceiling is `20m`, the work directory
-is `boards/is-even/scratch/` (cleared before each run), and `"goal-cards": ["C"]` puts
+is `boards/is-even/work/` (cleared before each run) — an UNtracked path on purpose:
+`boards/*/work/` is gitignored, because a board's output belongs to the target
+project rather than to this repository, so the cards stage nothing and report
+`GIT ABSENT — nothing staged` — and `"goal-cards": ["C"]` puts
 the goal judge on the implementation card only. Local-model measurements below describe
 earlier runs, not the current model selection.
 

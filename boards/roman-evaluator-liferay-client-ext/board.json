@@ -13,9 +13,9 @@
   "goal-cards": [
     "C"
   ],
-  "max-runtime": "60m",
-  "max-reworks": 2,
-  "model": "qwen38-27b",
+  "max-runtime": "300m",
+  "max-reworks": 8,
+  "model": "swift15-27b",
   "provider": "llama-swap",
   "model_override": "glm-5.3-flash",
   "provider_override": "opencode-go"

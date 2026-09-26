@@ -204,16 +204,24 @@ def test_no_board_commits_its_run_state():
     assert forbidden <= removed, forbidden - removed
 
 
-def test_a_boards_product_is_not_gitignored():
-    """The deliverable must be committable: `boards/<slug>/work/` is where the
-    lane's artifact lives and the gate commit is what puts it in history.
-    `git check-ignore --no-index` reads the ignore rules regardless of what is on
-    disk, so a re-added `boards/*/work/` line fails here (2026-09-12)."""
+def test_a_boards_product_is_not_tracked_here():
+    """A board's output belongs to the TARGET project, not to this one: the
+    deliverable lives in the project that has that repository (blade-workspace,
+    say), so `boards/<slug>/work/` is ignored here and nothing under it stages —
+    the cards report `GIT ABSENT — nothing staged` instead of filling this repo's
+    index with another project's artifact. `git check-ignore --no-index` reads the
+    ignore rules regardless of what is on disk.
+
+    This reverses the 2026-09-12 decision (which ignored `boards/*/scratch/` and
+    required the product to be committable here): it was taken when a board's work
+    dir doubled as its own repo, and it cost every card that met a tracked tree —
+    rewriting `AD` index entries, `git log`/`git show` archaeology, `-f` staging —
+    which is what the 2026-09-26 run finally pinned down."""
     for b in boards():
         probe = f"boards/{b}/work/probe.py"
         rc = subprocess.run(["git", "check-ignore", "--no-index", "-q", probe],
                             cwd=REPO).returncode
-        assert rc != 0, f"{probe} is gitignored — its deliverable could never be committed"
+        assert rc == 0, f"{probe} is NOT ignored — board output would land in this repo's index"
 
 
 def test_every_shipped_board_renders_every_card_it_files(tmp_path):

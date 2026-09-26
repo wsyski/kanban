@@ -476,6 +476,38 @@ def test_the_contract_hands_off_by_file_and_an_empty_diff_hands_off_nothing():
     assert "never put prose inside a `.diff` file" in text
 
 
+def test_the_contract_keeps_workers_off_command_shapes_the_unattended_guard_denies():
+    """A worker's terminal has nobody to approve a prompt, so the guard DENIES the shapes
+    that need a human — inline scripts (`python3 -c`, `bash -c`, any `-e`) and a script piped
+    into an interpreter. `is-even` run 4 (2026-09-26): RVa1's worker lost its probe script to
+    that deny, then ran the script it had never managed to write, and burned the step. The
+    deny text itself says "Find an alternative approach", so the shared rule names the shapes
+    and the sanctioned one: write the file, run it by path."""
+    text = read("_worker-contract.txt")
+    assert "BLOCKED:" in text
+    assert "python3 -c" in text and "bash -c" in text
+    assert "with the file tool and run it by its path" in text
+    assert "barred from the commands you write down for a LATER card" in text
+
+
+def test_a_small_divergence_from_the_recipe_is_not_a_rejection():
+    """The deny bites twice: a card cannot RUN an inline-script shape, and it cannot write
+    one into a recipe or a Run command either. `is-even` run 5 (2026-09-26): I1 wrote the
+    spec's Verification recipe as `/usr/bin/python3 -c "import is_even"` — a denied shape that
+    prints nothing — so P1 printed the four values from a superset line and RVp1 rejected the
+    plan for not being the recipe. The recipe is the criterion, not a literal: item 3 accepts
+    the divergence in form, and still refuses a different criterion or a denied shape."""
+    checklist = read("_plan-checklist.txt")
+    assert "not a literal to copy" in checklist
+    assert "is accepted and is not a finding" in checklist
+    assert "establishes a different criterion" in checklist
+    assert "python3 -c" in checklist
+    researcher = read("i-body.txt")
+    assert "Every command you write here must still be one an unattended card can run" in researcher
+    assert "without that being a divergence" in researcher
+    assert "python3 -c" in researcher
+
+
 def test_every_gate_body_tells_a_person_how_to_answer_from_the_card():
     """The drawer shows the body: a person who clicks the gate must learn the comment
     protocol and the gestures that stop the board, without opening the README."""
@@ -519,3 +551,30 @@ def test_no_card_body_knows_whether_the_lane_forks_or_chains():
     change, and the goal judge reads that text too."""
     for name, text in all_texts():
         assert "sequential" not in text.lower(), name
+
+
+def test_git_is_optional_and_discovered_before_any_staging_rule_applies():
+    """A work directory need not be a repository, and a repository may ignore it: a
+    contract that assumes an index there sends the worker hunting for one and burns the
+    card's ceiling on provenance. So git is discovered first, the staging rules are
+    conditional on that discovery, and the git-less case is a stated fact, not a finding."""
+    contract = read("_worker-contract.txt")
+    assert "rev-parse --git-dir" in contract, "the contract must name the repository probe"
+    assert "check-ignore -q --no-index" in contract, "the ignore rule must be probed past the index"
+    assert "GIT ABSENT" in contract, "the git-less result must carry a named marker"
+    assert "never assume" in contract.lower() and "optional" in contract.lower()
+    for name in ("c-body.txt", "tw-body.txt", "ti-body.txt"):
+        body = read(name)
+        assert "Where git is discovered, stage" in body, name
+        assert "GIT ABSENT — nothing staged" in body, name
+    assert "check-ignore -q --no-index" in read("rva-body.txt"), "the review discovers git too"
+    assert "where git is discovered" in read("_plan-checklist.txt")
+    assert "history is not part" in contract and "git blame" in contract, \
+        "a tracked tree offers history; the contract must keep cards out of it"
+    assert "git show <commit>:<path>" in contract
+    assert "git diff --no-index -- /dev/null" in contract, \
+        "the hand-off must exist without an index"
+    for name in ("c-body.txt", "tw-body.txt", "ti-body.txt"):
+        assert "git diff --no-index -- /dev/null" in read(name), name
+    assert "contents against contents" in read("rva-body.txt"), \
+        "the review compares contents whether or not there is an index"

@@ -9,7 +9,7 @@ WHAT YOU DO (from this card, in the dashboard or the CLI):
    PASS   (or PASS: <your words>) — accept; the plan card starts.
    REWORK: <what is wrong, with your answers> — the researcher revises and you get a re-gate card (up to the board's rework cap, then the lane escalates). The reason is required: the revision is built from it.
    The driver applies it within a minute and completes this card with your words.
-4. Optional, before PASS: edit <REFINED> yourself (you are the idea's author; the researcher only sharpened it), or inspect and commit what is staged (git diff --cached --stat). Committing is never required.
+4. Optional, before PASS: edit <REFINED> yourself (you are the idea's author; the researcher only sharpened it), or inspect and commit what is staged (git diff --cached --stat). Committing is never required. Where the work directory is not git-controlled there is no index: nothing is staged, and the lane reads its files by path.
 
 DO NOT — each of these stops the board or skips your decision:
 - block this card: a gate blocked by hand can halt the board;

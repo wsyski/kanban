@@ -6,7 +6,7 @@ WHAT YOU DO (from this card, in the dashboard or the CLI):
 1. Wait for the driver's comment starting "GATE READY" on this card. Until it appears the review has not passed, and a verdict you write is not applied (the driver answers "NOT APPLIED" and says why).
 2. Read the plan at <PLAN> and the newest review verdict (RVa, RVc, or their latest re-review round), with the run evidence in the driver log.
 3. Check by hand every success criterion <REFINED> marks `manual at Gc`; no card could automate those.
-4. Inspect the staged index (git diff --cached --stat) and commit and push it if you want this work in history, with an explicit pathspec. Committing is never required, before or after PASS.
+4. Inspect the staged index (git diff --cached --stat) and commit and push it if you want this work in history, with an explicit pathspec. Committing is never required, before or after PASS. Where the work directory is not git-controlled — no repository, or one that ignores it — there is no index to inspect: nothing is staged, and the lane's files are read on disk by path.
 5. Answer with a COMMENT on this card whose first word is the verdict:
    PASS   (or PASS: <your words>) — accept; the driver completes this card and the next lane starts.
    REWORK: <what is wrong> — the coder revises and the review re-runs (up to the board's rework cap). To send it to a test card instead, start the reason with OWNER: TW or OWNER: TI. This card stays held and gets a new GATE READY when the review passes; answer that one. The reason is required.

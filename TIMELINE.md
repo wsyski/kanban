@@ -3,11 +3,12 @@
 A dated record, in order: what ran, what the numbers were, what each run surfaced and what
 changed because of it. This is a log, not a description of the template —
 [README.md](README.md) and [DESIGN.md](DESIGN.md) are the current state, and where they
-disagree with this file, they win. Sections 1–6 are the 2026-09-13 session; §7–§10 are
-2026-09-15 (two patches retired and the one-run mint, the first lane against an external
-repository, the gate-text fix, and the two attachment habits the card bodies now forbid);
-§11 is 2026-09-18 (two audit rules); §12 is 2026-09-19 (the layering, a green CI, and
-both local models).
+disagree with this file, they win. Sections 1–5 are the 2026-09-13 session; §6 is the local
+rig and §13 carries its measurements — the current local-model data, replacing the earlier
+probes; §7–§10 are 2026-09-15 (two patches retired and the one-run mint, the first lane
+against an external repository, the gate-text fix, and the two attachment habits the card
+bodies now forbid); §11 is 2026-09-18 (two audit rules); §12 is 2026-09-19 (the layering, a
+green CI, and the attach hand-off).
 
 Every number here comes from the run directories under `boards/<slug>/runs/`, which are
 never deleted. Re-derive any of it with:
@@ -147,30 +148,17 @@ A run is done only when the last command exits 0 (no errors **and** no warnings)
 driver log ends with `ALL GATES COMPLETE`. Board contents are disposable; the run
 directories are the record.
 
-## 6. The local-model probe — `is-even` on `llama-swap`
+## 6. The local rig — `is-even` on `llama-swap`
 
-Same day, later: the cheap board renamed `minimal-development` → `is-even` and pointed at
-the local rig to exercise the new board option (`model`/`provider` — the WORK model, on
-every card the board files; see [DESIGN.md](DESIGN.md), *Two models, one precedence*). Stopped
-by hand at 23:50, not timed out; its run directory is
-`boards/is-even/runs/run-20260913-233501/`.
+The cheap board is the rig's worked example of the board's `model`/`provider` options — the
+WORK model, on every card the board files; see [DESIGN.md](DESIGN.md), *Two models, one
+precedence*. It keeps the local pair on purpose and its README says how to drop back to a
+cloud-only run; filing, dispatch, per-card model pins and the goal judge were all verified
+working on it.
 
-| what | result |
-|---|---|
-| board.json | `"model": "ornith-35b"`, `"provider": "llama-swap"`, `"max-runtime": "20m"`, pin kept (`glm-5.3-flash`/`opencode-go`), `"goal": true` |
-| filing | correct: every work card + gate `ornith-35b`/`llama-swap`, all three reviews `glm-5.3-flash`/`opencode-go` |
-| dispatch | correct: `hermes -p researcher --cli --accept-hooks -m ornith-35b --provider llama-swap …` |
-| `I1` | wrote a correct `artifacts/lane-1/refined.md` (3036 B) at 23:37; never completed the card |
-| the model | hallucinated the attachment (411 B of mangled text: `## Proa␦em`, `returns \`nrue\``), four malformed tool calls, one illegal nested CLI call, one blocked `execute_code`, the same `read_file` eight times in one millisecond, then a single ~6-minute generation |
-| outcome | worker at 4 % CPU, `llama-server` at 89.6 %, no further API call; the 20-minute ceiling was the next thing due |
-
-**Verdict: the knobs are fine, the model is not.** A 35B-A3B reasoning model on 24 GB
-cannot hold a lane worker's tool contract on the refinement card — the heaviest card in
-the graph. Filings, dispatch, per-card model pins and the goal judge were all verified
-working in the same run. **The board keeps the local pair on purpose** — it is the worked
-example of `model`/`provider`, with `"max-runtime": "20m"`, and its README says how to drop
-back to a cloud-only run. Re-run it when the 44 GB card lands, or on a lighter card than
-`I1`.
+Its numbers move with the rig, so they live in one place: **§13 carries the current
+measurements** for `swift15-27b` and `qwen38-27b`. Earlier local-probe numbers are superseded
+and are not repeated here.
 
 ## 7. Two patches retired, and the one-run mint — 2026-09-15
 
@@ -302,7 +290,7 @@ hours earlier. A run's own end state is in `runs/<run-id>/driver.log`.
 
 A second human-gated run the same day, on the cloud route (`model`/`provider` deleted,
 `"auto-gates": false` kept, armed with `driver/arm.sh` after the first attempt was killed
-for a stalled local model).
+for a stalled worker).
 
 | | |
 |---|---|
@@ -338,12 +326,9 @@ inside a `.diff` file. `DESIGN.md`'s enforcement row carries the same exception,
 pins it (red without the rule). The six E16 notes the 12:30 run's pytest caches had been
 generating are gone with the caches: `work/` holds the idea's two files and nothing else.
 
-**The local rig, on the same card.** `I1` on `qwen38-27b`/`llama-swap` wrote `refined.md`
-(5331 B) at 18:30 and then produced no tool call for the rest of the attempt — no provider
-error, one generation in flight — the 2026-09-14 shape again, so the run was killed at
-13 minutes rather than left to the 20-minute ceiling; the cloud route did the same card in
-2 min 33 s. The board's shipped parameters (`auto-gates: true`, the local-rig pair) are
-restored, so the harness flips are not left behind on the cheap board.
+**The board's shipped parameters.** `auto-gates: true` and the local-rig pair are restored after
+the arm experiment, so the harness flips are not left behind on the cheap board. The rig's own
+numbers are in §13.
 
 
 ## 11. Two audit rules — `is-even`, 2026-09-18
@@ -360,7 +345,7 @@ Two rules it pinned are still what the audit does:
   `ALL GATES COMPLETE`, and `run-audit.py` exits 0 on this run with the driver alive; the
   mid-flight E1 line is about the RUN's banner, not about the process.
 
-## 12. Layering, a green CI, and both local models — 2026-09-19
+## 12. Layering, a green CI, and the attach hand-off — 2026-09-19
 
 **The tree has three layers.** `template/` is what the driver imports (`lanes.py`,
 `board_schema.py`, `card_render.py`, `driver_lock.py`, `card-bodies/`, `roles/`); `driver/` is the
@@ -401,21 +386,16 @@ both ways on one complete board (one run `NO CHANGE`, the next `PASS` with notes
 the verdict's, not a broken driver. Emptying `work/` for
 a from-scratch run is a human's own action, never a card's, `reset.sh`'s or a driver's.
 
-**Both rig models — `qwen38-27b` and `nex-n25-mini`.** Both complete a lane, and the attach hand-off
-that killed every local run in §6 now passes: the driver attaches (`attached refined.md to I1`), so a
-local worker never copies base64 out of its own output. `qwen38-27b` whole lane in 22.3 min of agent
-time (its audit carries only the mid-run-commit errors above); `nex-n25-mini` whole lane **including a
-rework round**, audit **0 errors**. `journalctl -u llama-swap` shows no llama.cpp fault in either
-(llama-swap's stdout is a socket and `llama-swap.log` is written only at shutdown, so the journal is
-where the rig's log is).
+**The attach hand-off.** The driver attaches a card's hand-off files itself (`attached refined.md
+to I1`), so a worker never copies base64 out of its own output — the habit that failed the
+2026-09-13 probe. The card bodies and the rig's measurements are §6 and §13.
 
-**The same battery with `work/` cleared before every stage — the state that gives the cards real
-work.** `qwen38-27b`: audit **0**. `nex-n25-mini` finished the lane in wall 25.7 / agent 19.1 min and
-its audit carried exactly one error — `E3: F2 RVp1 lane 1: PLAN written 23:42:54 after the card
-started 23:42:29`. That is a race in the driver, not in the model: the tick unblocked children and
-only then attached hand-offs, so the plan landed 26 s after its review had been dispatched.
-`attach_hand_offs` now runs before the promotion loop, and the lane was re-run to confirm `E3` is
-gone.
+**A race the audit caught.** With `work/` cleared before every stage — the state that gives the
+cards real work — one run's audit carried exactly one error, `E3: F2 RVp1 lane 1: PLAN written
+23:42:54 after the card started 23:42:29`. That is a race in the driver, not in the model: the
+tick unblocked children and only then attached hand-offs, so the plan landed 26 s after its
+review had been dispatched. `attach_hand_offs` now runs before the promotion loop, and the lane
+was re-run to confirm `E3` is gone.
 
 **One more ordering fix, from the same window.** With the gate released in that window, a `REJECT`
 left `Gc1` briefly `ready` against the code its own review had just rejected: `held_by_verdict` —
@@ -427,3 +407,25 @@ A send-back is the trigger rather than "anything that is not `PASS`", so a gate 
 unparsed prose cannot deadlock the cards behind it — that distinction is why two `test_open_lane`
 cases stayed green. Reading the graph rather than `lanes.LANE_CARDS` is what keeps `Gc` correct on
 a board with `integration-tests: false`, where it is relinked to `RVa`. Suite **713**.
+
+## 13. The local rig measured — `swift15-27b` and `qwen38-27b`, 2026-09-26
+
+The numbers here are the rig's current data, and they replace every earlier local-model
+measurement in this file. Conditions, identical for both models: board `is-even`, one lane,
+`llama-swap` on `127.0.0.1:8081` with the model **warm** (llama-swap keeps one model resident —
+loading the other evicts it, and a cold first request pays a 25–60 s load), the work directory
+untracked (`boards/*/work/` is gitignored, so no card stages and each reports
+`GIT ABSENT — nothing staged`), and the server's own `--reasoning-format deepseek
+--reasoning-effort medium --reasoning-budget 12288`. Hermes sends no per-card effort: `llama-swap`
+is an unregistered provider (`get_provider_profile('llama-swap')` is `None`), so only the
+template's default applies.
+
+| what | result |
+|---|---|
+| `swift15-27b`, final contracts | `run-20260926-205432` — wall 39.4 min, agent 30.2 min, overhead 9.2, overlap 4.4; **I1 2.80, P1 9.92, RVp1 3.48, TW1 4.43, C1 4.98, RVa1 9.00** min; `RVp1 PASS` on the **first iteration**, `RVa1 PASS`, all gates complete, audit **0 errors / 0 warnings**, doc chain 0 findings |
+| `swift15-27b`, earlier contracts | `run-20260926-170632` — wall 28.6 min, agent 21.2 min; I1 1.93, P1 5.33, RVp1 3.97, TW1 1.68, C1 2.35, RVa1 6.62 min; same verdicts, audit 0 / 0 |
+| `qwen38-27b`, `I1` (the card both models finish) | 5.08, 7.47, 5.73, 5.17, 6.43 min across five runs — **≈2.6–3.9× swift's 1.93–2.80** |
+| `qwen38-27b`, `P1` (the plan card) | finished **once in 10.70 min** warm with the effort capped (`run-20260926-185916`), and met the ceiling four times — 1202 s, 1201 s, 1201 s, 1201 s against a 20 m limit — each time mid-plan with no `plan.md`. This model needs the 30 m ceiling here |
+| the ceiling | 20 m fits `swift15-27b` on every card (`P1`: 5.33 and 9.92 min); `qwen38-27b` overshoots it on `P1` by seconds. The board ships `"max-runtime": "30m"` |
+| the effort probe | same prompt, warm: bare **379** completion tokens / 22.5 s; `reasoning_effort=medium` **847** / 47.0 s; `chat_template_kwargs.reasoning_budget_tokens=1024` **316** / 19.7 s. The server honours the parameter, so a cap belongs in `/opt/llm/llama-swap/config.yaml`, not on a card |
+| what failed was the contract | the two card defects a local worker could not hold: an index the work directory could not have (it is gitignored — now `GIT IS OPTIONAL`, with `GIT ABSENT — nothing staged` the expected result) and a spec recipe written in a command shape the unattended terminal denies (`python3 -c`; a worker writes the script and runs it by path). Each cost a run; with both fixed, the lane above is clean |
