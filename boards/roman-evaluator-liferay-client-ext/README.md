@@ -29,10 +29,10 @@ all come from Liferay, and so do React and Clay at runtime. Only the roman parse
 component wiring, the externals list in the copied webpack config and their tests are
 written by hand.
 
-Liferay decisions on this board are grounded in the hub's manual `liferay` skill
-(`/home/wos/.agents/manual-skills/liferay/SKILL.md`). The idea tells every card to read
-it by path and to cite sources rather than answer from memory: the GA129 portal
-checkout, the local docs corpus (`~/.liferay-docs`) and the blade samples.
+Liferay decisions on this board are grounded in the hub's `liferay-expert` skill
+(automatic in the researcher and coder profiles). The idea tells every card to load it
+first and to cite sources rather than answer from memory: the GA129 portal checkout, the local docs corpus
+(`~/.liferay-docs`) and the blade samples.
 
 **Toolchain: the workstation's own.** Java 17, `gradle`, `node` and `yarn` (classic) are
 used as installed on the workstation. The workspace has no Gradle wrapper, and the build

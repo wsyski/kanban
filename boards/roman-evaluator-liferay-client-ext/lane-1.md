@@ -18,10 +18,8 @@ GA129:
   `/home/wos/Documents/Obsidian/Axiell/wiki/entities/Arena-Liferay-Portal.md` and
   `.../wiki/analyses/project-summary-arena-liferay-portal.md`. Both are read-only for
   every card.
-- Most code is upstream Liferay. Arena changes are narrow and tagged `PLCB-*`: treat
-  behaviour as upstream unless
-  `git -C <portal> log --oneline --grep PLCB -- <path>` shows an Arena change.
-  Client extensions (`modules/apps/client-extension/`) are upstream code here.
+- Client extensions (`modules/apps/client-extension/`) are upstream code here; the
+  `liferay-expert` skill says how to check for Arena (`PLCB-*`) changes.
 - Runtime bundle: `/opt/projects/liferay/portal/arena-7.4.3.129-ga129/bundles`,
   with Tomcat in `tomcat-9.0.90/`, client extensions loaded from `osgi/client-extensions/`,
   logs in `tomcat-9.0.90/logs/catalina.out` and `logs/liferay.*.log`, and the OSGi shell
@@ -30,21 +28,12 @@ GA129:
   read the checkout; they do not build it (Ant/Gradle there is the portal's own build) and
   do not write to it.
 
-### Use the `liferay` skill
+### Liferay grounding
 
-Every card that researches, plans, writes or reviews a Liferay-specific part of this
-idea — the workspace, `client-extension.yaml`, the build, the deploy path, anything the
-portal reads — first reads the hub's `liferay` skill and follows it:
-
-    /home/wos/.agents/manual-skills/liferay/SKILL.md
-
-It is a manual skill, so it is not in any skill index and no card force-loads it: read
-it by that path (in Hermes, `skill_view liferay` shows the same file). It routes Liferay
-questions to local sources — the GA129 portal checkout, the scraped docs in
-`~/.liferay-docs` when present, and `/home/playground/liferay/liferay-blade-samples` —
-and requires citing what was read (`file:line` or the doc's `url:`). A card answers a
-Liferay question from those sources, not from memory. The skill is read-only for every
-card: never edit, copy or patch it.
+Every card doing Liferay-specific work (workspace, `client-extension.yaml`, build, deploy,
+anything the portal reads) loads the `liferay-expert` skill first and follows it, including
+its `references/`. Cite `file:line` or the doc's `url:`; never answer from memory. The
+skill is read-only.
 
 ### Reference trees and what to take from each
 
@@ -105,7 +94,7 @@ The researcher confirms these facts against the sources, not re-derives them.
 
 Reuse as much as possible from Liferay and write only what Liferay does not provide. At
 every layer, the first question a card asks is "what does Liferay already ship for
-this?", answered from the `liferay` skill's sources, before writing anything:
+this?", answered from the `liferay-expert` skill's sources, before writing anything:
 
 - **Build and packaging:** the Liferay workspace plugin, its client-extension build
   (which runs the extension's `package.json` `build` script) and its `deploy` task. No
@@ -324,7 +313,7 @@ Nothing is deleted to "start clean". Clearing the directory is a human decision
 only copy of the last run's work.
 
 If a card finds itself with a decision to make, the answer is the smallest thing that
-satisfies the lines above, checked against the `liferay` skill's sources.
+satisfies the lines above, checked against the `liferay-expert` skill's sources.
 
 ### Done means
 
