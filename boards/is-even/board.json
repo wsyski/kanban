@@ -1,23 +1,22 @@
 {
   "$schema": "../../template/board.schema.json",
   "slug": "is-even",
-  "name": "Is Even",
+  "name": "Is even smoke test",
   "lanes": 1,
   "unit-tests": true,
   "integration-tests": false,
+  "default-workdir": "/opt/projects/kanban/main/kanban/boards/is-even/scratch",
   "auto-gates": [
     "Gi",
     "Gp",
     "Gc"
   ],
-  "sequential": true,
+  "sequential": false,
   "goal-cards": [
     "C"
   ],
-  "max-runtime": "25m",
+  "max-runtime": "20m",
   "max-reworks": 2,
-  "model": "nex-n25-mini",
-  "provider": "llama-swap",
-  "model_override": "glm-5.3-flash",
-  "provider_override": "opencode-go"
+  "model": "swift15-27b",
+  "provider": "llama-swap"
 }

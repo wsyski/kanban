@@ -1,20 +1,32 @@
 # roman-evaluator-liferay-client-ext — a Liferay custom element client extension
 
-One lane: a roman-number evaluator widget for Liferay Portal CE 7.4 GA129, written in
-React from Liferay's Clay components (`@clayui/*`), styled by the Clay CSS the portal's
-theme already provides (Bootstrap is an optional fallback only), built as a `customElement` client extension inside
-a minimal Liferay workspace in `work/`. The parsing module and the component are
-unit-tested; the build produces the extension archive the portal loads.
+One lane: a roman-number evaluator widget for Liferay Portal CE 7.4 GA129, built from
+Liferay's Clay components (`@clayui/*`) on **the React and the Clay components the portal
+already loads**, styled by the Clay CSS the portal's theme already provides (Bootstrap is
+an optional fallback only). It is a `customElement` client extension built with webpack
+as the portal's `liferay-sample-custom-element-5` is, inside a minimal Liferay workspace
+in `work/`. The parsing module, the component and the custom element are unit-tested
+with Vitest; the build produces the extension archive the portal loads.
+
+**React and Clay come from Liferay, never bundled.** The page already has React (16.x on
+GA129) and the Clay components for the portal's own UI, and shares them with client
+extensions through its import map. The widget imports `react`, `react-dom` and
+`@clayui/*` by bare specifier and declares them webpack externals, exactly as sample 5
+does, so the page never loads a second React or a second Clay. The code is written to
+the portal's React: React 16 API (`ReactDOM.render`), `React.createElement`, no JSX.
 
 The target is the **Arena Liferay Portal**, Axiell's fork of Liferay Portal CE 7.4 GA129
 (source `/opt/projects/liferay/portal/arena-7.4.3.129-ga129/portal`, bundle `../bundles`;
-Axiell vault entity `Arena-Liferay-Portal`). Its demo workspaces in `portal/workspaces/`,
-chiefly `liferay-sample-workspace` with its React custom element samples, are the
-reference the cards copy the workspace shape from.
+Axiell vault entity `Arena-Liferay-Portal`). The cards take the extension's shape from
+the portal's `workspaces/liferay-sample-workspace`, chiefly `liferay-sample-custom-element-5`, and the
+workspace root (`settings.gradle`, plugin 12.1.0) from
+`/home/playground/liferay/workspaces/blade-workspace` — never its `gradle.properties`,
+which holds repository credentials.
 
 The idea's rule is **reuse Liferay first**: the workspace build and deploy, the sample
 extension structure, Clay components, the theme's CSS and the portal's widget handling
-all come from Liferay. Only the roman parser, the component wiring and their tests are
+all come from Liferay, and so do React and Clay at runtime. Only the roman parser, the
+component wiring, the externals list in the copied webpack config and their tests are
 written by hand.
 
 Liferay decisions on this board are grounded in the hub's manual `liferay` skill
@@ -22,8 +34,12 @@ Liferay decisions on this board are grounded in the hub's manual `liferay` skill
 it by path and to cite sources rather than answer from memory: the GA129 portal
 checkout, the local docs corpus (`~/.liferay-docs`) and the blade samples.
 
-Toolchain the idea implies: Java 17, Node.js with yarn (classic), network access for the
-first Gradle and yarn run. The researcher records what is present; a missing runtime
+**Toolchain: the workstation's own.** Java 17, `gradle`, `node` and `yarn` (classic) are
+used as installed on the workstation. The workspace has no Gradle wrapper, and the build
+downloads no JDK, Gradle distribution or Node (the Liferay Node plugin's download is
+switched off in `work/build.gradle`). Only Gradle plugins and npm/yarn packages are
+fetched, so the first run needs network access. The researcher records `java -version`,
+`gradle --version`, `node --version` and `yarn --version`; a missing or too-old tool
 stops the lane at the researcher card with an install recommendation. Nothing is
 installed.
 
@@ -48,18 +64,20 @@ so the dispatcher claims and spawns the card before the driver can read it as th
 
 ## After the run: deploy and check
 
-From the board's work directory:
+From the board's work directory, with the workstation's `gradle`:
 
     cd boards/roman-evaluator-liferay-client-ext/work
-    ./gradlew :client-extensions:roman-evaluator:deploy
+    gradle :client-extensions:roman-evaluator:deploy
     ls /opt/projects/liferay/portal/arena-7.4.3.129-ga129/bundles/osgi/client-extensions/
 
 Start the portal the usual way for that bundle, then:
 
-1. The Tomcat log shows the `roman-evaluator` client extension registered.
+1. The Tomcat log shows the `roman-evaluator` client extension registered, with no
+   deploy error.
 2. In the page editor, **Roman Evaluator** is listed under Client Extensions. Add it to a
-   page (twice, to check that instances are independent).
-3. `XIV` → one row `XIV = 14`; `IIII` → an alert and no row; Reset clears everything.
+   page twice.
+3. In one instance: `XIV` → one row `XIV = 14` there only; `IIII` → an alert and no row;
+   Reset clears that instance only. The browser console shows no error from the widget.
 4. The widget looks like the portal's own forms (theme/Clay styling) and the rest of the
    page looks unchanged.
 

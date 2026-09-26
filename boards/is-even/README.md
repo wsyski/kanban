@@ -1,12 +1,12 @@
 # is-even — the cheap board
 
 Current run configuration, read off `board.json`: every card the driver files uses the
-work model `deepseek-v4.1-flash` on `opencode-go`, and the three review cards are
-re-pointed by `model_override`/`provider_override` to `glm-5.3-flash` on the same
-provider. Gates `Gi`, `Gp`, and `Gc` are automatic; `sequential` is enabled, the
-per-card ceiling is `25m`, and `"goal-cards": ["C"]` puts the goal judge on the
-implementation card only. Local-model measurements below describe previous runs, not
-the current model selection.
+work model `swift15-27b` on `llama-swap`, and no `model_override`/`provider_override`
+is pinned, so the review cards run that same local model. Gates `Gi`, `Gp`, and `Gc`
+are automatic, `sequential` is off, the per-card ceiling is `20m`, the work directory
+is `boards/is-even/scratch/` (cleared before each run), and `"goal-cards": ["C"]` puts
+the goal judge on the implementation card only. Local-model measurements below describe
+earlier runs, not the current model selection.
 
 The smallest idea that still travels the whole lane. It exercises the machinery — arm
 an idea, watch the researcher refine it, see the three gates, the staged work and a

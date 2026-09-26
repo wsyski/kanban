@@ -20,6 +20,7 @@ __pycache__/
 # staged, never committed — hand-offs travel by path, not through git, and a
 # staged one reaches every later card's `git diff --cached` (run-audit E14).
 boards/*/runs/
+boards/*/scratch/
 
 # IDE
 .idea/
