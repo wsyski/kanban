@@ -119,6 +119,20 @@ Gi(n)      ──REWORK───────→ I(n)-rev-N          → Gi(n)-r(
 - **Plan revisions** carry turn-diet guidance: targeted patches to the existing file,
   re-verify only the fixed lines. Framed as "re-verify everything", a plan fix dies at
   the turn ceiling.
+- **A verdict is two halves, and the freeze is computed from them.** The review answers with
+  the findings AND a `VERIFIED:` ledger of the checklist items it accepts. What a revision
+  must leave byte-identical is `frozen_items()` = the ticked items minus the items the
+  findings name: where the two disagree the finding wins, because a tick records that the
+  reviewer LOOKED and a finding is the instruction. `rework_tail` appends
+  `FROZEN — leave byte-identical: items …` (or `Nothing is FROZEN this round`) and logs the
+  overlap. Measured 2026-09-27: a live verdict ticked items 1, 3 and 4 and named 1, 4, 5 and
+  7 — the computed set was 2, 6, 8. Every earlier version of a hand-off is attached to its
+  card, so a re-review diffs round N against round N-1 and reports
+  `churn {changed, shape, remaining, added, removed}`: `shape: surgical` with
+  `remaining: []` is the round closing its own findings without a rewrite; a regenerated
+  document reports as churn. The readers are `verified_items()`/`cited_items()`/
+  `frozen_items()` — anything that judges a verdict calls them instead of keeping its own
+  copy, which drifts and fails a correct verdict silently (`tests/test_rework_loop.py`).
 - **Escalation:** when the rounds are exhausted the driver comments `ESCALATION` on
   the card, records it in `verdicts.jsonl`, and halts the board ([stall classes](#stall-classes)).
 
@@ -426,6 +440,7 @@ comment to one per key, across restarts too. The driver then exits.
 | stall | detected by | driver action | message |
 |---|---|---|---|
 | a card attempt failed (`gave_up`: retries spent, a crash, a failed spawn) | `halt_if_exhausted` → `_exhaustion_event` | comments `BOARD HALTED:` on the card and halts. The reason says "provider-starved" when the attempt's log holds ≥3 upstream lines | the event's error |
+| a **reclaim** of a dead worker (`pid N not alive`, `exited with code`, `killed by signal` in the event's error) | `halt_if_exhausted` → `worker_moved_on` | halts only when NO `spawned`/`heartbeat`/`completed` event is newer than the reclaim — the dispatcher owns the retry, so a reclaim with movement since is liveness, not content. Content failures (protocol violation, a spent retry budget) still halt | the event's error |
 | a provider-starved attempt: `gave_up` with ≥3 `runs_util.UPSTREAM_ERROR` lines since the attempt's offset, and an exit that never called `kanban_complete`/`kanban_block` (reason `protocol violation`, or `trigger_outcome` `crashed`) | `halt_if_exhausted`, `provider_hits` | **re-queues once** (`requeue_provider_starved`): marks the attempt, unblocks, and records `requeue` with its time. An exhaustion event at or before that time is ignored, and any later failure halts | comment `RE-QUEUED (once): …`, log `re-queued <code> once` |
 | timeout (`timed_out`) | `halt_if_exhausted` → `stop_a_timeout` | blocks the card with `TIMEOUT: … hard failure`, because the dispatcher would put it back at `ready`, then halts. Never re-queued | `BOARD HALTED:` on the card |
 | rate-limit wall: `RATE_LIMIT_LIMIT` (3) closed runs in a row ending `rate_limited` | `card_stall` | `driver_block` `HALTED: …` (promoting a `todo` card first, so the block is accepted), then escalates | "provider quota wall" |
@@ -458,6 +473,13 @@ Where a row's reasoning is not obvious from the table:
   go on after the driver exits.
 - **Why timeouts are never re-queued.** A runtime ceiling is the board's own rule. A
   provider flake is not.
+- **Why a dead-worker reclaim does not halt a board that has moved on.** Measured
+  2026-09-27: a restart halted the roman board five minutes in — `RVp1-r4: pid 329824 not
+  alive`, a pid from the attempt *before* the restart — while the dispatcher's retry for
+  that card completed PASS in the same minute. The reclaim says the worker's process is
+  gone, not that the work failed, and the retry is the dispatcher's to finish; halting on it
+  kills a run that is working. Halt only on stillness (`test_card_stops.py` pins both
+  directions, plus the timestamp comparison).
 - **Why a repeated tick exception halts.** roman-evaluator-java once logged one
   `ValueError` 26 times.
 - **Why a waiting gate halts.** A minimal-development run sat on

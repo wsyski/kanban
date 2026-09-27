@@ -42,6 +42,19 @@ and the role souls. `driver/` holds the kanban driver's own: `run.py` and its to
 and `.sh` entry points. `tests/` is one suite over both, run by `./test.sh`, and
 `tests/test_layer_boundary.py` is what keeps the layers apart.
 
+`tests/integration/` is the one surface the suite's walls do not cover. It is LLM-gated
+(skipped unless `KANBAN_LLM_TESTS=1`), it drives ONE real card end-to-end through a live
+model on a throwaway replay board filed outside this repo, and it runs on the **local
+model, never a cloud one** — production's own model resolution is computed and logged
+first, then overridden, so a rename that breaks resolution is still caught. Four cases:
+a fixture plan with planted defects comes back `REJECT` naming them, a revision round
+closes its findings without rewriting (measured `churn`), a live plan gets a verdict in
+shape where it lives and is left byte-identical, and the same card reviewed twice must
+not come back word-for-word the same. A case costs minutes to ~20 minutes, so it stays
+out of `./test.sh`; what it proves once is pinned as recorded fixtures
+(`tests/integration/fixtures/recorded/`) and asserted for free by
+`tests/test_recorded_replay.py` and `tests/test_replay_harness.py`.
+
 What the template consists of:
 
 | file | role |
@@ -350,7 +363,16 @@ code, idea) allows `max-reworks` rounds — default 3; the shipped boards vary:
 and the two external-repo boards (`blade-workspace`, `arena-federated-search`) 4 — then
 escalates and halts the board. There is no rework loop on `I`
 by default: the idea gate is the loop, and you are it — edit `refined.md` at `Gi`
-rather than sending the card back. Mechanics in [DESIGN.md](DESIGN.md#rework-loops).
+rather than sending the card back.
+
+A REJECT carries two halves — the findings, and a `VERIFIED:` ledger of the checklist
+items the review ACCEPTS. What the revision must leave byte-identical is computed from
+both: **the ticked items minus the ones the findings name**, so a verdict cannot freeze
+ground it is asking to be changed (a live one ticked items 1, 3 and 4 and named 1, 4, 5
+and 7; the rework card was told `FROZEN — leave byte-identical: items 2, 6, 8`). The
+round is then judged on the diff it hands back — its own findings closed, `surgical`
+rather than a regeneration — not on its word for it.
+Mechanics in [DESIGN.md](DESIGN.md#rework-loops).
 
 **Gates** cost 0 agent minutes because the driver completes them itself — on an
 auto-gated board as "auto-gate: … NOTHING COMMITTED", otherwise as "HUMAN COMMIT
@@ -432,7 +454,13 @@ with the CLI:
   exceptions, each announced by a comment on the card: a **provider-starved** attempt is
   re-queued **once** (never a timeout), and a card its **own worker blocked** is
   re-promoted **once**; the next failure or block halts. A spent goal-loop turn budget,
-  a block with no reason, or a block the driver set, halts at once. Evidence thresholds
+  a block with no reason, or a block the driver set, halts at once. A **reclaim** is not a
+  failure of the work: the dispatcher writes `pid N not alive` for a worker whose process
+  is gone and then retries the card itself, so the driver halts only when NOTHING has
+  moved since the reclaim — a spawn, heartbeat or completion newer than it means a live
+  retry. (Measured 2026-09-27: restarting a board halted it five minutes in on a stale pid
+  from the attempt *before* the restart, while that very card reached PASS in the same
+  minute.) Evidence thresholds
   and messages: [block origins](DESIGN.md#block-origins) and [stall classes](DESIGN.md#stall-classes).
 - **Every other stall halts the board, naming its cause** — rework rounds exhausted, a
   card the engine escalated to Triage or keeps retrying without counting a failure, a
