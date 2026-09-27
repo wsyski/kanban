@@ -11,7 +11,7 @@ per board under `boards/<slug>/`, driven by `driver/run.py` over `hermes kanban`
   ONE suite over both layers — `./test.sh` — and the boundary is enforced by
   `tests/test_layer_boundary.py`: a module that grows a dependency across it fails
   there rather than in a run.
-- Usage and operational rules: [README.md](README.md). Design, known traps, timing internals: [DESIGN.md](DESIGN.md). The dated record of a session's runs and their numbers: [TIMELINE.md](TIMELINE.md).
+- Usage and operational rules: [README.md](README.md) — including `tests/integration/`, the LLM-gated surface that drives one real card through a local model and is skipped without `KANBAN_LLM_TESTS=1`. Design, known traps, timing internals: [DESIGN.md](DESIGN.md). The dated record of a session's runs and their numbers: [TIMELINE.md](TIMELINE.md). Code-review reports and SDD run output: `docs/reviews/`, `docs/superpowers/`.
 - Profile personas: `template/roles/`.
 
 ## Commands
