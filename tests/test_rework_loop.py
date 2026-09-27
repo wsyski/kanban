@@ -743,3 +743,60 @@ def test_rework_keys_are_scoped_to_the_run(monkeypatch):
     monkeypatch.setattr(run.STATE, "run_dir", "/x/boards/b/runs/run-20260924-110000")
     assert run.rework_key("rev", "P", 1, 1) != first
     assert "run-20260924-110000" in run.rework_key("rev", "P", 1, 1)
+
+
+# --- the frozen ledger: the reviewer ticks, the revision leaves ticks alone -----
+
+def test_a_rework_round_carries_the_frozen_note_and_the_tick_list():
+    """The verdict's VERIFIED list reaches the revision card BOTH ways: as the frozen
+    instruction, and as the reviewer's own text — `rejection_findings` takes everything
+    after the REJECT token, so a tick list written there travels with the findings."""
+    verdict = "REJECT: 1) item 3, plan.md:57, fix x\nVERIFIED: 1 — read header; 2 — ran the build"
+    tail = run.rework_tail(2, 8, run.rejection_findings(verdict),
+                           "The plan review sent this back.", "Re-stage.")
+    assert "REVISION ROUND 2 of 8" in tail
+    assert "FROZEN" in tail and "byte-identical" in tail
+    assert "VERIFIED: 1 — read header; 2 — ran the build" in tail
+    assert "plan.md:57" in tail
+
+
+def test_the_frozen_note_is_in_every_rework_tail():
+    """One tail, both loops: a rule added to the plan loop's copy and missing from the
+    code loop's is drift no other test can see."""
+    code = run.rework_tail(1, 3, "REJECT: (c) red test", "The implementation review returned the work.",
+                           "Re-stage your files.")
+    assert "FROZEN" in code and "VERIFIED" in run.FROZEN_NOTE
+    assert "(c) red test" in code
+
+
+def test_rework_churn_counts_hunk_lines_only():
+    diff = "--- a/plan.md\n+++ b/plan.md\n@@ -1,3 +1,4 @@\n+one\n+two\n-three\n context\n"
+    assert run.rework_churn(diff) == (2, 1)
+
+
+def test_the_churn_line_calls_a_whole_file_rewrite_a_regeneration(tmp_path):
+    """The measured shape of the plan loop's round 1: a 1124-line plan came back as
+    +1125/-1 to fix seven findings, and it read exactly like a surgical round."""
+    (tmp_path / "patch.diff").write_text("--- a/plan.md\n+++ b/plan.md\n" + "+x\n" * 1125 + "-y\n")
+    line = run.rework_churn_line(str(tmp_path), "P1-rev-1: plan revision round 1 - lane 1")
+    assert "REGENERATION" in line and "+1125/-1" in line
+
+
+def test_the_churn_line_is_surgical_for_a_real_fix(tmp_path):
+    """The measured shape of round 2 (+246/-120 on that same plan)."""
+    (tmp_path / "patch.diff").write_text("--- a/plan.md\n+++ b/plan.md\n" + "+x\n" * 246 + "-y\n" * 120)
+    line = run.rework_churn_line(str(tmp_path), "P1-rev-2: plan revision round 2 - lane 1")
+    assert "surgical" in line and "+246/-120" in line
+
+
+def test_the_churn_line_reads_the_code_loops_patch_too(tmp_path):
+    (tmp_path / "patch-code.diff").write_text("--- a/x.py\n+++ b/x.py\n+new\n")
+    line = run.rework_churn_line(str(tmp_path), "C1-rev-1: code revision round 1 - lane 1")
+    assert "+1/-0" in line
+
+
+def test_an_unmeasured_round_says_so(tmp_path):
+    """A revision that staged no patch reads as unmeasured, never as zero churn: zero
+    would claim the frozen regions were untouched when nothing was read."""
+    line = run.rework_churn_line(str(tmp_path), "P1-rev-3: plan revision round 3 - lane 1")
+    assert "unmeasured" in line

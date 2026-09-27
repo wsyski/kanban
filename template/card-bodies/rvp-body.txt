@@ -8,9 +8,11 @@ TASK: the parent card wrote a plan at <PLAN> (a run hand-off the driver attaches
 
 SCOPE OF A FINDING: REJECT only on a checklist item — cite its number, quote the plan line that breaks it, give the fix. Anything else you notice (style, a simpler design, a risk) is a NOTE inside a PASS, never a reason to reject. Environment facts are the researcher's (Findings); you do not re-run them. Item 8 is the one command you run. A plan whose smallest correct change is NO change is a PASS — a lane may legitimately only verify what is already there.
 
+TICK WHAT YOU ACCEPT: the verdict carries a second list beside the findings — `VERIFIED: <item number> — <the evidence you used>; ...`, one entry per checklist item you actually checked and found correct, item number first. On a PASS it is every item you checked; on a REJECT it is every item except the ones your findings name, and a missing list reads as "checked nothing", which is an incomplete review. Ticked items are FROZEN: the revision is told to leave their regions byte-identical and change only what your findings name, and the next review can diff the new version against the one attached here. So tick only what you derived yourself — a tick is settled ground for the rest of the loop.
+
 VERDICT — the result field's first word is the verdict:
-- PASS: `hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "PASS: checklist 1-8 hold. NOTES: <notes, or none>"`
-- REJECT: `hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "REJECT: <numbered findings — item, plan line, fix>"` — the driver files a plan revision (up to the board's rework cap, then a human).
+- PASS: `hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "PASS: checklist 1-8 hold. VERIFIED: 1 — <evidence>; ...; 8 — <evidence>. NOTES: <notes, or none>"`
+- REJECT: `hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "REJECT: <numbered findings — item, plan line, fix> VERIFIED: <the items you checked and found correct, with the evidence you used>"` — the driver files a plan revision (up to the board's rework cap, then a human).
 Write the full review to `<RUNS>/scratch/<YOUR-CARD-ID>/review.md` — the driver attaches it when your card is done, and you never attach anything yourself. If you cannot complete every check, the verdict is `REJECT: incomplete review — <what is unchecked>`, never a PASS with caveats.
 
 <RESULT_FIELD>

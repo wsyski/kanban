@@ -578,3 +578,15 @@ def test_git_is_optional_and_discovered_before_any_staging_rule_applies():
         assert "git diff --no-index -- /dev/null" in read(name), name
     assert "contents against contents" in read("rva-body.txt"), \
         "the review compares contents whether or not there is an index"
+
+
+def test_every_review_body_requires_the_verified_ledger():
+    """The reviewer ticks what it accepted and freezes it; the revision is told to leave
+    those regions alone. Without the tick in the body the revision has nothing to respect
+    and the loop re-litigates settled ground — readings climbed 7 then 9 findings across
+    two rounds while five of the first round's seven were fixed."""
+    for body in ("rvp-body.txt", "rva-body.txt", "rvc-body.txt"):
+        t = read(body)
+        assert "VERIFIED:" in t, body
+        assert "FROZEN" in t, body
+        assert "TICK WHAT YOU ACCEPT" in t, body

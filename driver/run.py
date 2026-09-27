@@ -843,6 +843,64 @@ def record_rework(lane, gate_code, round_no, cards, findings, state):
     ledger(rec)
 
 
+FROZEN_NOTE = (
+    "The verdict also lists what it VERIFIED, and those regions are FROZEN: leave them "
+    "byte-identical and change only what the findings name. The driver attaches every "
+    "earlier version of a hand-off to its card, so the re-review can diff what you hand "
+    "off against the round you were sent — a round that rewrites the document instead of "
+    "fixing the findings is churn, and it is measured."
+)
+
+
+def rework_tail(round_no, max_rounds, findings, lead, closing):
+    """The block every rework round's card carries: round, sender, findings, freeze, ask.
+
+    Written once because `file_revision` and `file_code_revision` had a copy each, and the
+    two differed only in their closing sentence. A rule added to one — the freeze this
+    exists for — silently missing from the other is drift no test can see: the cards would
+    simply differ by accident.
+    """
+    return (f"\nREVISION ROUND {round_no} of {max_rounds} (max {max_rounds}, then human "
+            f"escalation).\n\n{lead} Address EXACTLY:\n{findings}\n"
+            f"Fix only these. {FROZEN_NOTE} {closing}\n")
+
+
+def rework_churn(diff_text):
+    """(added, removed) from a revision's own patch file — hunk lines only."""
+    added = removed = 0
+    for ln in (diff_text or "").splitlines():
+        if ln.startswith("+++") or ln.startswith("---"):
+            continue
+        if ln.startswith("+"):
+            added += 1
+        elif ln.startswith("-"):
+            removed += 1
+    return added, removed
+
+
+def rework_churn_line(scratch_dir, title):
+    """One line per rework round: what it changed, and whether it fixed or rewrote.
+
+    A round that regenerates the document it was sent reads exactly like one that fixed
+    the findings — the plan loop's round 1 came back as +1125/-1 on a 1124-line plan — and
+    that difference is the only evidence that the frozen regions were respected. Both
+    hand-off names are read because the plan loop and the code loop write different patch
+    files.
+    """
+    code = title.split(":")[0]
+    for name in ("patch.diff", "patch-code.diff"):
+        p = os.path.join(scratch_dir, name)
+        if os.path.isfile(p):
+            try:
+                with open(p, encoding="utf-8", errors="replace") as fh:
+                    added, removed = rework_churn(fh.read())
+            except OSError as e:
+                return f"rework churn ({code}): {name} unreadable ({e})"
+            shape = "REGENERATION" if added >= 100 and removed <= 1 else "surgical"
+            return f"rework churn ({code}): +{added}/-{removed} lines — {shape}"
+    return f"rework churn ({code}): no patch attached — churn unmeasured"
+
+
 def rework_key(kind, code, lane, round_no):
     """The engine idempotency key for one rework card — scoped to THIS RUN.
 
@@ -901,10 +959,9 @@ def file_revision(state, lane, round_no, findings, base="P", reviewer_prefix="RV
     runtime, render = _round_settings(lane)
 
     rbody = render(rev_body_file)
-    rbody += (f"\nREVISION ROUND {round_no} of {max_rounds} (max {max_rounds}, then human "
-              f"escalation).\n\n{sender} sent this back. Address EXACTLY:\n{findings}\n"
-              f"Fix only these, re-stage, re-write the hand-off file in your scratch "
-              f"directory, complete with a change summary.\n")
+    rbody += rework_tail(round_no, max_rounds, findings, f"{sender} sent this back.",
+                         "Re-stage, re-write the hand-off file in your scratch "
+                         "directory, complete with a change summary.")
     rbody += _full_verdict_pointer(verdict_card_id)
     args = _create_args(rev_title, rbody, rev_assignee,
                         rework_key("rev", base, lane, round_no), runtime,
@@ -2225,6 +2282,8 @@ def attach_hand_offs(state):
                     continue
                 kb("attach", card["id"], os.path.join(d, name))
                 log(f"attached {name} to {card['title'].split(':')[0]} (driver)")
+            if "-rev-" in card["title"]:
+                log(rework_churn_line(d, card["title"]))
         except RuntimeError as e:
             log(f"WARNING: attaching {card['title'].split(':')[0]}'s hand-off failed ({e})")
             continue
@@ -2718,11 +2777,10 @@ def file_code_revision(state, lane, round_no, findings, owner="C", max_rounds=2,
     gate_id = card_id(state, lanes.card_title("Gc", lane))
     runtime, render = _round_settings(lane)
     rbody = render(body_file)
-    rbody += (f"\nREVISION ROUND {round_no} of {max_rounds} (max {max_rounds}, then human "
-              f"escalation).\n\n{sender} returned the work. Address EXACTLY:\n{findings}\n"
-              f"Fix only these, re-stage your files, re-write your patch file, and complete "
-              f"with a result that "
-              f"says what changed and names every test still failing.\n")
+    rbody += rework_tail(round_no, max_rounds, findings, f"{sender} returned the work.",
+                         "Re-stage your files, re-write your patch file, and complete "
+                         "with a result that says what changed and names every test "
+                         "still failing.")
     rbody += _full_verdict_pointer(verdict_card_id)
     args = _create_args(rev_title, rbody, role,
                         rework_key("rev", owner, lane, round_no), runtime,
