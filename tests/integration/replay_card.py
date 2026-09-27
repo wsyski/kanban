@@ -16,6 +16,18 @@ the card is filed with no parents, so no gate, lane or earlier round can influen
   tests/integration/replay_card.py --board <source-slug> --card RVp1 --plan <file> \\
       --model swift15-27b --provider llama-swap --timeout 900
 
+Two modes, and the difference decides what the verdict is ABOUT:
+
+  * STAGED (any `--plan`/`--refined`/`--idea`/`--findings`): the documents are copied into
+    the replay root and every path the body names resolves there. Self-contained — the card
+    depends on nothing but the text it is handed — which is what a fixture wants.
+  * IN PLACE (the default with no frozen input): the body names the SOURCE run's real
+    paths, so the card reads the live plan where the plan itself says it lives, and the
+    reviewer's scratch lands in the real run's `scratch/`. This is the honest way to review
+    a live artifact: staged, the plan legitimately names the source board's paths while the
+    body named the replay's, and a reviewer duly reported that mismatch as a finding about
+    the plan (measured 2026-09-27 — two live runs, three findings, all of them the harness).
+
 Writes a JSON report (the assertions, the verdict, the wall time, the model the worker
 actually ran) and keeps the board's card body for inspection; `--keep` leaves the whole
 replay board in place.
@@ -41,6 +53,8 @@ sys.path.insert(0, os.path.join(REPO, "driver"))
 import board_schema                                    # noqa: E402
 import card_render                                     # noqa: E402
 import lanes                                           # noqa: E402
+import run as driver                                   # noqa: E402  (the ledger's readers
+# and rework_tail live there: a second copy here would drift from what production files)
 
 # Which body file a card code reads, and who it is assigned to — from the one table the
 # board itself files cards from, so a replay can never drift from the real assignment.
@@ -103,13 +117,19 @@ def source_layout(args):
     return board_dir, manifest, workdir, run_dir          # workdir = the SOURCE tree
 
 
-def stage_frozen(args, manifest, workdir, run_dir, replay_dir, run_id, lane=1):
+def stage_frozen(args, manifest, workdir, run_dir, replay_dir, run_id, lane=1,
+                 in_place=False):
     """Lay the replay run out exactly as a real lane's is laid out.
 
     Every path a body names resolves inside this directory tree, which is the whole
     trick: the card is handed the same absolute paths a production card gets, and a
     copy of the frozen documents sits at each of them.
+
+    IN PLACE copies nothing: the run IS the source run, and `render_the_card` names it.
     """
+    if in_place:
+        real = os.path.join(run_dir, "artifacts", f"lane-{lane}", "plan.md")
+        return run_dir, {"artifacts/lane-%d/plan.md" % lane: {"path": real, "from": real}}
     run = os.path.join(replay_dir, "runs", run_id)
     for sub in (f"snapshots", os.path.join("artifacts", f"lane-{lane}"),
                 os.path.join("scratch", "unused")):
@@ -126,16 +146,30 @@ def stage_frozen(args, manifest, workdir, run_dir, replay_dir, run_id, lane=1):
 
     frozen_dir = os.path.join(replay_dir, "frozen")
     os.makedirs(frozen_dir, exist_ok=True)
+    # A staged document must name what the BODY names. A fixture that says `Spec: <REFINED>`
+    # handed to a body whose <REFINED> resolved to the staged path reads to a reviewer as a
+    # plan defect — a placeholder where a path belongs — and it reported exactly that
+    # (measured 2026-09-27). Production plans carry resolved paths because their authors
+    # read them from the body, so resolving them here is the faithful thing.
+    replay_board = os.path.basename(os.path.normpath(replay_dir))   # stage_frozen gets the
+    values = card_render.render_body_values(repo=REPO, board=replay_board,  # dir, not the slug
+                                            workdir=workdir, lane=lane, targets=(),
+                                            run_id=run_id, run_root=run)
     staged = {}
     for name, explicit in (("artifacts/lane-%d/plan.md" % lane, args.plan),
                            ("artifacts/lane-%d/refined.md" % lane, args.refined),
                            ("snapshots/lane-%d.md" % lane, args.idea)):
         dest, src = take(name, explicit, os.path.join(run_dir, *name.split("/")))
         staged[name] = {"path": dest, "from": src}
+        if dest and os.path.isfile(dest):
+            text = open(dest).read()
+            for ph, val in values.items():
+                text = text.replace(ph, val)
+            open(dest, "w").write(text)
         if dest and name.endswith("plan.md"):
             pristine = os.path.join(frozen_dir, name.replace("/", "_"))
-            shutil.copyfile(dest, pristine)
-            staged[name]["pristine"] = pristine
+            shutil.copyfile(dest, pristine)      # AFTER resolution: the baseline the churn
+            staged[name]["pristine"] = pristine  # measurement must be the one handed over
     # The reading of the work directory a lane opens with, and the tree itself: a review
     # that re-derives a build needs them, a plan review only needs the file to exist.
     take("snapshots/lane-%d-workdir-at-open.md" % lane, None,
@@ -147,7 +181,7 @@ def stage_frozen(args, manifest, workdir, run_dir, replay_dir, run_id, lane=1):
     return run, staged
 
 
-def render_the_card(args, replay_board, workdir, run_id, run_root, lane=1):
+def render_the_card(args, board, workdir, run_id, run_root, lane=1):
     """The card's body text — the one input this whole harness is about.
 
     `run_root` is what puts every run-scoped path in the body UNDER the replay root.
@@ -155,12 +189,15 @@ def render_the_card(args, replay_board, workdir, run_id, run_root, lane=1):
     root told the worker to read `<repo>/boards/<replay>/runs/...` — paths that do not
     exist, and inside the engine repo the harness exists to stay out of (measured
     2026-09-27: the worker went looking for the plan there).
+
+    IN PLACE passes the SOURCE board and run with no `run_root`, so `<PLAN>`, `<REFINED>`
+    and `<RUNS>` resolve to the real paths — the ones the plan's own text names.
     """
     row = CARD_ROWS.get(args.card)
     if not row:
         raise SystemExit(f"unknown card code {args.card!r}; known: {', '.join(CARD_ROWS)}")
     body_file, assignee = row[1], row[2]
-    text = card_render.render_body(body_file, repo=REPO, board=replay_board,
+    text = card_render.render_body(body_file, repo=REPO, board=board,
                                    workdir=workdir, lane=lane, targets=(),
                                    run_id=run_id, run_root=run_root)
     return text, assignee, body_file
@@ -171,20 +208,11 @@ REVIEW_CARDS = {"RVp", "RVa", "RVc"}
 CHECK_ITEMS = {"RVp": [str(i) for i in range(1, 9)], "RVa": list("abcdef"), "RVc": list("abcde")}
 
 
-def _ticked_items(tick_text, numeric):
-    """The item numbers a VERIFIED list names — from the HEAD of each entry only.
-
-    A tick entry is `<item> — <evidence>`, and the evidence itself is full of numbers
-    (line counts, file:line, totals). Reading every digit would fail a correct list on
-    the evidence it cites, so only each entry's leading token counts.
-    """
-    pattern = r"\s*\(?([0-9]{1,2})\)?\s*[-—:]" if numeric else r"\s*\(?([a-f])\)?\s*[-—:]"
-    out = set()
-    for entry in re.split(r"[;\n]", tick_text or ""):
-        m = re.match(pattern, entry, re.I)
-        if m:
-            out.add(m.group(1).lower())
-    return out
+# The ledger's readers are the DRIVER's (`verified_items`, `cited_items`, `frozen_items`):
+# the harness judging a verdict by its own parser is how the two would come to disagree
+# about what a verdict said — and a `1 (structure) — …` entry form, which the driver's
+# reader accepts, was invisible to a stricter copy of it that lived here (measured
+# 2026-09-27: a good six-item ledger read as one item).
 
 
 def revision_churn(args, run, card_id, body_path):
@@ -219,6 +247,16 @@ def revision_churn(args, run, card_id, body_path):
     out["shape"] = "REGENERATION" if added >= 100 and removed <= 1 else "surgical"
     out["remaining"] = [s for s in args.expect_gone if s in new_text]
     return out
+
+
+def _file_hash(path):
+    """A short content hash, None when the file cannot be read."""
+    import hashlib
+    try:
+        with open(path, "rb") as fh:
+            return hashlib.sha256(fh.read()).hexdigest()[:16]
+    except OSError:
+        return None
 
 
 def _normalised_hash(text):
@@ -259,13 +297,9 @@ def assertions(result, card_code):
     """
     text = (result or "").strip()
     items = CHECK_ITEMS.get(card_code, [])
-    numeric = bool(items) and items[0].isdigit()
-    m = re.search(r"VERIFIED:?", text)
-    tick_text = text[m.end():] if m else ""
-    findings = text[:m.start()] if m else text
-    ticked = _ticked_items(tick_text, numeric)
-    cited = set(re.findall(r"item\s*\(?([0-9a-f])\)?", findings, re.I))
-    cited |= set(re.findall(r"(?:^|\n)\s*\(?([0-9a-f])\)?[.)]", findings))
+    ticked = driver.verified_items(text)
+    cited = driver.cited_items(text)
+    frozen = driver.frozen_items(text)
     if card_code not in REVIEW_CARDS:
         # A worker card's result opens with CHANGED:/NO CHANGE: (the result-field
         # contract), never a verdict: only a review card has one to give.
@@ -284,10 +318,12 @@ def assertions(result, card_code):
             or bool(re.search(r"\b(check|item)\s*\(?[0-9a-f]\)?", text, re.I)),
         "tick_list_present": "VERIFIED:" in text,
         "tick_items_in_range": bool(ticked) and bool(items) and ticked <= {i.lower() for i in items},
-        # A tick that also appears in the findings would freeze ground the same verdict
-        # rejects: the round would be told to leave alone what it was told to fix.
-        "tick_disjoint_from_findings": not (ticked & {c.lower() for c in cited}),
+        # The engine drops a tick whose item a finding names (driver.frozen_items), so this
+        # one is a MODEL quality metric: a verdict that both ticks and rejects an item is
+        # reported, never silently trusted. It is not asserted — real verdicts do it.
+        "tick_disjoint_from_findings": not (ticked & cited),
     }
+    checks["frozen_items"] = ",".join(sorted(frozen, key=driver.item_sort_key))
     if text.upper().startswith("REJECT"):
         checks["reject_has_findings"] = len(text) > 200
     return checks
@@ -303,6 +339,8 @@ def main():
     ap.add_argument("--idea", help="frozen idea snapshot")
     ap.add_argument("--work-from", help="work tree to copy in (default: the board's own work/)")
     ap.add_argument("--no-work", action="store_true", help="leave the work directory empty")
+    ap.add_argument("--in-place", action="store_true",
+                    help="name the SOURCE run's real paths (default when nothing is frozen)")
     ap.add_argument("--model", help="override the model (default: whatever board.json says)")
     ap.add_argument("--provider", help="override the provider")
     ap.add_argument("--timeout", type=int, default=900, help="seconds to wait for the card")
@@ -326,7 +364,15 @@ def main():
     board_dir, manifest, src_workdir, run_dir = source_layout(args)
     replay_dir = os.path.join(ROOT, "boards", replay_board)
     os.makedirs(replay_dir, exist_ok=True)
-    workdir = os.path.join(replay_dir, "work")     # the replay's own tree, never the source's
+    # IN PLACE is the default when nothing is frozen: a live plan names the run it came
+    # from, so the body must name those same paths. Staged, the plan names the source
+    # board's paths while the body named the replay's, and reviewers reported the
+    # mismatch as findings about the plan (measured 2026-09-27, two runs).
+    in_place = args.in_place or not (args.plan or args.refined or args.idea or args.findings)
+    src_run_id = os.path.basename(os.path.normpath(run_dir))
+    # in place the card works in the SOURCE tree: the plan builds there, and a reviewer
+    # re-deriving a build must look at the tree the plan names, not an empty copy.
+    workdir = src_workdir if in_place else os.path.join(replay_dir, "work")
     # The board is REAL: its manifest is the source board's, so model, provider, assignee
     # and prompt resolution behave exactly as production does. That is the point of
     # replaying on a board rather than in a bare prompt.
@@ -335,17 +381,17 @@ def main():
     with open(os.path.join(replay_dir, "board.json"), "w") as fh:
         json.dump(live, fh, indent=2, sort_keys=True)
 
-    run, staged = stage_frozen(args, manifest, workdir, run_dir, replay_dir, run_id, lane)
-    body, assignee, body_file = render_the_card(args, replay_board, workdir, run_id,
-                                                run, lane)
+    run, staged = stage_frozen(args, manifest, workdir, run_dir, replay_dir, run_id, lane,
+                               in_place)
+    body, assignee, body_file = render_the_card(
+        args, args.board if in_place else replay_board, workdir,
+        src_run_id if in_place else run_id, None if in_place else run, lane)
     if args.findings:
         # A revision card is its base card's body PLUS the round block the driver appends,
         # so the harness calls the driver's own function rather than restating its text:
         # a copy would drift from what production files, and the whole point is to test
         # what production files.
-        sys.path.insert(0, os.path.join(REPO, "driver"))
         os.environ["HERMES_KANBAN_BOARD"] = args.board
-        import run as driver                                     # noqa: E402
         findings = open(args.findings).read().strip()
         lead = {"P": "The plan review sent this back.",
                 "C": "The implementation review returned the work."}.get(
@@ -366,16 +412,24 @@ def main():
     if rc != 0 and "already exists" not in out:
         raise SystemExit(f"boards create failed ({rc}):\n{out}")
 
+    # A review may not modify what it judges. In place the plan IS the live artifact, so
+    # hash it either side of the run and report it: a replay that quietly rewrote a live
+    # run's plan would be worse than a failed test.
+    plan_path = os.path.join(run, "artifacts", f"lane-{lane}", "plan.md")
+    plan_sha = [_file_hash(plan_path), None] if in_place else [None, None]
+
     t0 = time.time()
     argv = ["create", f"{args.card}: replay {os.path.basename(replay_board)}",
             "--body", body, "--assignee", assignee,          # the TEXT, as the driver passes it
             "--workspace", f"dir:{workdir}", "--json"]
-    pinned = model_flags(manifest, args.card, os.path.join(run, "snapshots", "lane-1.md"))
-    if args.model or args.provider:                 # an explicit override, for a cheap probe
+    prod = model_flags(manifest, args.card, os.path.join(run, "snapshots", "lane-1.md"))
+    log(f"production would file: {prod or '(none — the profile default)'}")
+    pinned = prod
+    if args.model or args.provider:                 # an explicit override: the test pins
         pinned = (["--model", args.model] if args.model else []) + \
                  (["--provider", args.provider] if args.provider else [])
+        log(f"overridden to: {pinned}")
     argv += pinned
-    log(f"model flags (as production files them): {pinned or '(none — profile default)'}")
     rc, out = kanban(replay_board, *argv)
     if rc != 0:
         raise SystemExit(f"create failed ({rc}):\n{out}")
@@ -409,6 +463,9 @@ def main():
             break
 
     checks = assertions(result, args.card)
+    plan_sha[1] = _file_hash(plan_path) if in_place else None
+    if in_place:
+        checks["plan_untouched"] = plan_sha[0] == plan_sha[1]
     churn = None
     if args.findings:
         churn = revision_churn(args, run, card_id, body_path)
@@ -418,6 +475,7 @@ def main():
               "previous_reviews": len(prior),
               "distinct_from_previous": _normalised_hash(result) not in prior,
               "status": status, "waited_s": waited, "model_flags": pinned,
+              "in_place": in_place, "plan_sha": plan_sha,
               "source_run": run_dir, "frozen": {k: v["from"] for k, v in staged.items()},
               "body": body_path, "checks": checks, "churn": churn,
               "all_checks_pass": all(checks.values()),
@@ -435,7 +493,16 @@ def main():
         shutil.rmtree(replay_dir, ignore_errors=True)      # under ROOT, never in the repo
         # the STORE board goes through the CLI: removing its directory behind the CLI's
         # back left boards listed as "(empty)" forever (measured 2026-09-27)
-        sh(("hermes", "kanban", "boards", "rm", replay_board, "--delete"))
+        # Unpacked: `sh(("hermes", ...))` hands subprocess a TUPLE, which raises TypeError —
+        # and it raised AFTER the report was written, so every run left its store board
+        # behind and no test ever saw it (measured 2026-09-27: three lingering boards).
+        rc, out = sh("hermes", "kanban", "boards", "rm", replay_board, "--delete")
+        log(f"teardown: board {replay_board} rm rc={rc} {out.strip()[-60:]}")
+        if in_place:
+            # The synthetic card's scratch lives in the SOURCE run — production geometry,
+            # which is the point of the mode — and a replay must not leave its card id in
+            # a live run's tree.
+            shutil.rmtree(os.path.join(run, "scratch", card_id), ignore_errors=True)
     return 0 if report["all_checks_pass"] else 1
 
 

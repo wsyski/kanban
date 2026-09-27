@@ -3,8 +3,10 @@
 Not a unit test. It takes the artifact a real reviewer is handed — the plan the source
 board's newest run holds right now — renders the review card's body around it, files ONE
 card with no parents on a board whose `board.json` is that board's own, and runs it on the
-model production resolves for that card (a review card takes the board's review override).
-Nothing else of the source run is consulted: the card depends on nothing but its text.
+LOCAL model (`swift15-27b`; the board's own resolution still runs and is reported, but an
+integration run never reaches a cloud provider). The live case reads the plan in place, so
+the card depends on nothing but the paths that plan itself names; a fixture case stages a
+copy instead and depends on nothing but the text it is handed.
 
 What it asserts is the SHAPE the engine parses and the ledger's own consistency — never a
 verdict, because whether the current plan passes is the board's business and not this
@@ -13,9 +15,10 @@ test's. That is what makes it runnable at any moment, on any plan, correct or no
   KANBAN_LLM_TESTS=1 KANBAN_REPLAY_BOARD=<slug> ./test.sh tests/integration
 
 Env: KANBAN_REPLAY_FIXTURE=1 swaps in the planted-defect fixture (cheap, and the only mode
-that may assert a verdict); KANBAN_REPLAY_MODEL/_PROVIDER pin the model instead of taking
-production's; KANBAN_REPLAY_CARD picks the card (default RVp); KANBAN_REPLAY_TIMEOUT bounds
-the wait (default 1800s).
+that may assert a verdict); KANBAN_REPLAY_REVISION=1 replays a rework round;
+KANBAN_REPLAY_REPEAT=1 runs the same card twice; KANBAN_REPLAY_MODEL/_PROVIDER move the pin
+off swift15-27b/llama-swap; KANBAN_REPLAY_CARD picks the card (default RVp);
+KANBAN_REPLAY_TIMEOUT bounds the wait (default 1800s).
 """
 import json
 import os
@@ -41,9 +44,12 @@ def run_one_card(tmp_path, extra):
            "--card", os.environ.get("KANBAN_REPLAY_CARD", "RVp"),
            "--timeout", os.environ.get("KANBAN_REPLAY_TIMEOUT", "1800"),
            "--no-work", "--json", str(report_path)] + extra
-    if os.environ.get("KANBAN_REPLAY_MODEL"):
-        cmd += ["--model", os.environ["KANBAN_REPLAY_MODEL"],
-                "--provider", os.environ.get("KANBAN_REPLAY_PROVIDER", "llama-swap")]
+    # ALWAYS the local model (user rule, 2026-09-27): an integration run must never reach a
+    # cloud provider. The board's own resolution still runs — the harness reports what
+    # production WOULD file and only then overrides it — so a rename that breaks resolution
+    # is still caught.
+    cmd += ["--model", os.environ.get("KANBAN_REPLAY_MODEL", "swift15-27b"),
+            "--provider", os.environ.get("KANBAN_REPLAY_PROVIDER", "llama-swap")]
     # The harness' children must not inherit the test's own markers: a worker spawned
     # under pytest hits the CLI's live-system guard instead of loading its provider.
     env = {k: v for k, v in os.environ.items()
@@ -63,8 +69,9 @@ def assert_the_verdict_shape(rep):
         "told which ground is settled: " + head)
     assert rep["checks"]["tick_items_in_range"], (
         "a tick must name a checklist item of this card: " + head)
-    assert rep["checks"]["tick_disjoint_from_findings"], (
-        "a tick that is also a finding freezes ground the same verdict rejects: " + head)
+    # `tick_disjoint_from_findings` is REPORTED, not asserted: the engine drops a tick whose
+    # item a finding names (driver.frozen_items), so a verdict that both ticks and rejects an
+    # item is safe to hand on — and real verdicts do exactly that (measured 2026-09-27).
 
 
 @pytest.mark.skipif(os.environ.get("KANBAN_REPLAY_REVISION") != "1",
@@ -120,9 +127,22 @@ def test_each_review_comes_back_different(tmp_path):
 
 
 def test_the_current_revised_plan_gets_a_verdict_in_shape(tmp_path):
-    """The live artifact on production's model, no fixture: the integration case."""
-    rep = run_one_card(tmp_path, [])
+    """The live artifact, reviewed where it lives — no fixture, no frozen copy.
+
+    IN PLACE (the default with nothing frozen) is what makes this a review of the PLAN
+    rather than of the harness: the body names the source run's real paths, the ones the
+    plan's own text names. Staged, a live plan legitimately names the source board's paths
+    while the body named the replay's, and two live runs duly reported that mismatch as
+    plan defects — three findings, every one of them the harness's own geometry.
+
+    The plan is the live artifact, so the review must also leave it alone: `plan_untouched`
+    is the hash either side of the run.
+    """
+    rep = run_one_card(tmp_path, ["--in-place"])
     assert_the_verdict_shape(rep)
+    assert rep["in_place"], "a live plan must be reviewed in place, not against a copy"
+    assert rep["checks"]["plan_untouched"], (
+        f"the review modified the live plan it was handed: {rep['plan_sha']}")
     assert os.path.basename(rep["frozen"]["artifacts/lane-1/plan.md"] or "").startswith("plan")
 
 
