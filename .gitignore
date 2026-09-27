@@ -23,6 +23,12 @@ __pycache__/
 # staged one reaches every later card's `git diff --cached` (run-audit E14).
 boards/*/runs/
 boards/*/work/
+#
+# `tests/integration/verdicts/` is the same kind of thing: what the live replays
+# actually answered, accumulated so a repeat run can prove it is not repeating itself.
+# Per-run state, never committed — the deliberately pinned artifacts live next door in
+# `tests/integration/fixtures/recorded/`, which IS tracked.
+tests/integration/verdicts/
 
 # IDE
 .idea/
