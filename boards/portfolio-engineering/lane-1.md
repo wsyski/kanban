@@ -78,14 +78,14 @@ later, and delivered correctly.
 complete-looking digests.** The research block is resolved **by model name, never
 verified live**, and its absence is reported nowhere:
 
-    llm.py:23           MODEL = os.environ.get("LLAMA_MODEL", "ornith-35b")
+    llm.py:23           MODEL = os.environ.get("LLAMA_MODEL", "swift15-27b")
     llm.py:119-127      health() is `MODEL in served_ids` — membership, not liveness
     analyst.py:119-121  skip on unhealthy → research = ([], None)
-    analyst.py:183      note attribution hardcodes "written by ornith-35b"
+    analyst.py:183      note attribution hardcodes "written by swift15-27b"
     analyst.py:187-206  digest_section / research_section_md return [] when both empty
     degiro_summary.py:750-751  drops the block
 
-`localhost:8081` serves `nex-n25-mini` and `qwen38-27b`; `ornith-35b` and
+`localhost:8081` serves `nex-n25-mini` and `qwen38-27b`; `swift15-27b` and
 `muse-glimmer-30b` are gone from the roster (both still declared in `config.yaml`), so
 the pass has been skipped, unannounced, for days. Measured against the retained
 summaries: **13 degraded files** lack the exact `## 🔬 Research Follow-up (LLM analyst)`
@@ -153,7 +153,7 @@ that stopped existing. A content-level degradation is invisible to it entirely.
   first candidate that answers with non-empty content, and never alongside another local
   consumer.
 - **Attribution must quote the model actually used.** `analyst.py:183` hardcodes
-  `written by ornith-35b` into the vault, so a capability probe makes that line lie in the
+  `written by swift15-27b` into the vault, so a capability probe makes that line lie in the
   opposite direction. `llm.py:72` already logs `resp['model']` but does not return it —
   surface it, and let both the note attribution and the new status line quote that.
 - **A report is only useful if it is retained — and the sinks have different clocks.** Name

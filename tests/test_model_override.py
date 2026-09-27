@@ -19,7 +19,7 @@ import file_lanes
 import lanes
 import run
 
-PINNED = {"model_override": "glm-5.3-flash", "provider_override": "opencode-go"}
+PINNED = {"model_override": "deepseek-v4.1-flash", "provider_override": "opencode-go"}
 REVIEW_CODES = ("RVp", "RVa", "RVc")
 
 
@@ -74,7 +74,7 @@ def test_required_profiles_follows_a_remap():
 def test_the_review_cards_take_the_model_the_manifest_pins():
     for code in REVIEW_CODES:
         assert lanes.model_args(code, dict(PINNED)) == [
-            "--model", "glm-5.3-flash", "--provider", "opencode-go"], code
+            "--model", "deepseek-v4.1-flash", "--provider", "opencode-go"], code
 
 
 def test_only_the_judging_cards_carry_the_judges_model():
@@ -128,7 +128,7 @@ def test_the_review_pin_beats_the_lane_and_the_board_model():
     strong the board's own model is."""
     both = {**WORK, **PINNED}
     assert lanes.model_args("RVa", both, dict(LANE)) == [
-        "--model", "glm-5.3-flash", "--provider", "opencode-go"]
+        "--model", "deepseek-v4.1-flash", "--provider", "opencode-go"]
     # ...and with no pin, the lane's model reaches the reviews too — which is the
     # case board_schema.review_model_notices reports at the door.
     assert lanes.model_args("RVa", dict(WORK), dict(LANE)) == \
@@ -169,7 +169,7 @@ def test_a_board_model_with_no_pin_is_reported_and_not_refused():
     verdict no longer comes from a different model."""
     assert board_schema.review_model_notices({"model": "qwen38-27b"}, where="b")
     assert board_schema.review_model_notices(
-        {"model": "qwen38-27b", "model_override": "glm-5.3-flash"}, where="b") == []
+        {"model": "qwen38-27b", "model_override": "deepseek-v4.1-flash"}, where="b") == []
     assert board_schema.review_model_notices({}, where="b") == []
     assert board_schema.validate({"lanes": 1, "model": "qwen38-27b"}, where="b") == []
 
@@ -193,7 +193,7 @@ def test_the_per_lane_array_form_of_the_pin_is_refused():
 
 def test_a_header_may_not_carry_the_pin():
     problems = board_schema.validate(
-        {"model_override": "glm-5.3-flash"}, where="lane-1.md",
+        {"model_override": "deepseek-v4.1-flash"}, where="lane-1.md",
         only=board_schema.PER_LANE)
     assert any("board-level option" in p for p in problems), problems
 
@@ -234,7 +234,7 @@ def test_filing_puts_the_pin_on_the_review_cards_only(monkeypatch, tmp_path):
     reviews = [a for a in fake.created() if a[1].startswith("RV")]
     assert len(reviews) == 3, [a[1] for a in reviews]        # RVp, RVa, RVc
     for a in reviews:
-        assert _arg(a, "--model") == "glm-5.3-flash", a[1]
+        assert _arg(a, "--model") == "deepseek-v4.1-flash", a[1]
         assert _arg(a, "--provider") == "opencode-go", a[1]
     for a in fake.created():
         if not a[1].startswith("RV"):
@@ -251,7 +251,7 @@ def test_filing_puts_the_work_model_on_every_card_and_the_pin_on_the_reviews(mon
     file_lanes.file_board("b", _repo(), str(tmp_path), 1, "k")
     for a in fake.created():
         if a[1].startswith("RV"):
-            assert _arg(a, "--model") == "glm-5.3-flash", a[1]
+            assert _arg(a, "--model") == "deepseek-v4.1-flash", a[1]
         else:
             assert _arg(a, "--model") == "qwen38-27b", a[1]
             assert _arg(a, "--provider") == "llama-swap", a[1]
@@ -298,7 +298,7 @@ def test_a_re_review_keeps_the_judges_pins(monkeypatch, tmp_path):
     created = [c for c in calls if c[0] == "create"]
     for prefix in ("RVp1-r2", "RVa1-r2"):
         rr = next(c for c in created if c[1].startswith(prefix))
-        assert _arg(rr, "--model") == "glm-5.3-flash", rr[1]
+        assert _arg(rr, "--model") == "deepseek-v4.1-flash", rr[1]
         assert _arg(rr, "--provider") == "opencode-go", rr[1]
     for prefix in ("P1-rev-1", "C1-rev-1"):
         rev = next(c for c in created if c[1].startswith(prefix))
@@ -338,7 +338,7 @@ def test_a_revision_card_inherits_the_lanes_model(monkeypatch, tmp_path):
         assert _arg(rev, "--model") == "qwen38-27b", rev[1]
     for prefix in ("RVp1-r2", "RVa1-r2"):
         rr = next(c for c in created if c[1].startswith(prefix))
-        assert _arg(rr, "--model") == "glm-5.3-flash", rr[1]
+        assert _arg(rr, "--model") == "deepseek-v4.1-flash", rr[1]
 
 
 def test_a_revision_card_filed_with_no_lane_on_disk_takes_the_board_model(monkeypatch, tmp_path):
@@ -499,7 +499,7 @@ def test_a_released_card_is_pointed_at_the_board_it_reads_now(monkeypatch):
         assert calls == []
 
         # Pinned at lane open on the route that has since died -> re-pointed, once.
-        run.STATE.pinned["rv1"] = ("--model", "glm-5.3-flash", "--provider", "opencode-go")
+        run.STATE.pinned["rv1"] = ("--model", "deepseek-v4.1-flash", "--provider", "opencode-go")
         run.repin_before_release(card, 1, "promotion")
         assert calls == [("set-model", "rv1", "swift15-27b", "--provider", "llama-swap")]
         assert run.STATE.pinned["rv1"] == ("--model", "swift15-27b", "--provider", "llama-swap")
@@ -507,7 +507,7 @@ def test_a_released_card_is_pointed_at_the_board_it_reads_now(monkeypatch):
         assert len(calls) == 1
 
         # A gate runs no worker, so a flag on it buys nothing.
-        run.STATE.pinned["gp1"] = ("--model", "glm-5.3-flash")
+        run.STATE.pinned["gp1"] = ("--model", "deepseek-v4.1-flash")
         run.repin_before_release({"id": "gp1", "title": "Gp1: plan gate - lane 1",
                                   "assignee": "human-gate"}, 1, "promotion")
         assert len(calls) == 1

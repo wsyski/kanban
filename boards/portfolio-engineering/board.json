@@ -15,6 +15,6 @@
   ],
   "goal-max-turns": 80,
   "max-reworks": 2,
-  "model_override": "glm-5.3-flash",
+  "model_override": "deepseek-v4.1-flash",
   "provider_override": "opencode-go"
 }

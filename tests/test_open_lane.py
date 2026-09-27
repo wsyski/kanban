@@ -137,7 +137,7 @@ def test_opening_a_lane_re_points_its_cards_at_the_lanes_model(monkeypatch, tmp_
     _board_env(monkeypatch, tmp_path, calls, it=False)
     monkeypatch.setattr(run, "manifest", lambda: {
         "model": "qwen38-27b", "provider": "llama-swap",
-        "model_override": "glm-5.3-flash", "provider_override": "opencode-go"})
+        "model_override": "deepseek-v4.1-flash", "provider_override": "opencode-go"})
     monkeypatch.setattr(run, "lane_options", lambda lane: {
         "integration-tests": False, "unit-tests": True, "auto-gates": [],
         "model": "muse-glimmer-30b", "provider": "llama-swap", "idea": "## Idea 1: is_even\n"})

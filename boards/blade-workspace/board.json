@@ -18,7 +18,7 @@
   "max-reworks": 4,
   "model": "deepseek-v4.1-flash",
   "provider": "opencode-go",
-  "model_override": "glm-5.3-flash",
+  "model_override": "deepseek-v4.1-flash",
   "provider_override": "opencode-go",
   "refinement": true
 }

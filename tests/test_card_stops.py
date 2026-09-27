@@ -1194,13 +1194,13 @@ def test_a_timeout_names_the_sibling_that_shared_the_model(monkeypatch):
     `--parallel 1` slot while the work itself took minutes. The halt named only the card
     that tripped, which reads as a slow model rather than a busy one."""
     monkeypatch.setattr(run, "manifest",
-                        lambda: {"model": "ornith-35b", "provider": "llama-swap",
-                                 "model_override": "glm-5.3-flash",
+                        lambda: {"model": "swift15-27b", "provider": "llama-swap",
+                                 "model_override": "deepseek-v4.1-flash",
                                  "provider_override": "opencode-go"})
     monkeypatch.setattr(run, "lane_model_opts", lambda lane: {})
     st = _fork_state()
     note = run.concurrency_note(st, st["TW1: unit tests - lane 1"])
-    assert "on ornith-35b" in note and "C1" in note
+    assert "on swift15-27b" in note and "C1" in note
     assert "RVa1" not in note, "the review runs on the pinned review model, not this one"
     assert "one request at a time" in note
 

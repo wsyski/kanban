@@ -39,7 +39,7 @@ researcher's to find — a worker's `python3` may not.
   hard failure: the driver halts the board, and only a review that REJECTS sends work
   back.
 - `"max-reworks": 2` — rounds should be cheap here.
-- `"model_override": "glm-5.3-flash"`, `"provider_override": "opencode-go"` — as on
+- `"model_override": "deepseek-v4.1-flash"`, `"provider_override": "opencode-go"` — as on
   every shipped board, the review cards (`RVp`, `RVa` and their rounds) run on a
   different model from the coder's default, so the review model is independent of the author. This is the cheap place to see the pin working.
 - `"model": "deepseek-v4.1-flash"`, `"provider": "opencode-go"` — the WORK model: every card the
@@ -49,7 +49,7 @@ researcher's to find — a worker's `python3` may not.
   the worked example of the option, and the four local runs above measure it. For a cloud-only run
   with the profiles' own models, delete both keys: nothing is then filed. Note the ceiling above:
   the local runs needed more than `"10m"`.
-- **Four local-model runs, one cause: the hand-off, not the work.** `ornith-35b` (2026-09-13)
+- **Four local-model runs, one cause: the hand-off, not the work.** `swift15-27b` (2026-09-13)
   and `qwen38-27b` (2026-09-15, three attempts) each filed and dispatched correctly — the worker
   really ran `hermes -p researcher --cli … -m <model> --provider llama-swap` — and each wrote a
   correct `artifacts/lane-1/refined.md` (3036-6383 B, every section) in 1.5-6 minutes. All four
@@ -84,7 +84,7 @@ researcher's to find — a worker's `python3` may not.
   `qwen38-27b` (`--parallel 1`) the lane reached the fork at 08:49 with both cards live, their
   requests serialised in the one slot (completions grew 1m05 → 1m25 → 3m22 as they queued), and
   **both timed out at 1202s** — a hard failure that halts the board. A card's ceiling is wall time,
-  so two cards on one slot need roughly twice it. `ornith-35b` runs `--parallel 2` (262144 context
+  so two cards on one slot need roughly twice it. `swift15-27b` runs `--parallel 2` (262144 context
   per session) and is the local model this lane shape fits. The alternative on a single-slot model
   is `"unit-tests": false`, which drops `TW` and leaves one worker card live at a time.
 - **Proven 2026-09-16** (run `run-20260916-104755`, `qwen38-27b` on an EMPTY work tree):
@@ -112,14 +112,14 @@ researcher's to find — a worker's `python3` may not.
     rig's log actually lives.
 - **The goal judge is not the review pin.** `model_override`/`provider_override` moves the
   three review cards only; the goal judge is the auxiliary task `auxiliary.goal_judge`,
-  pinned machine-wide in `/etc/hermes/config.yaml` to `z-ai/glm-5.3-flash` on `openrouter`,
+  pinned machine-wide in `/etc/hermes/config.yaml` to `z-ai/deepseek-v4.1-flash` on `openrouter`,
   so a locally-run worker still gets its claim judged by a strong model. Without that pin the
   judge follows the worker's own model, i.e. it goes local too.
   No `"assignees"` map: the graph names its profiles directly.
 - `"goal-cards": ["C"]` — the goal judge runs on the implementation card
   only. Drop `goal-cards` to put it back on every worker card, which is what makes this board the
   judge's canary after a `hermes update`. Worker cards under the judge, and because the judge is pinned
-  machine-wide to `z-ai/glm-5.3-flash` on `openrouter` (see the bullet above) it stays
+  machine-wide to `z-ai/deepseek-v4.1-flash` on `openrouter` (see the bullet above) it stays
   strong when the work runs locally. This is the goal-judge probe
   ([DESIGN.md, *The goal judge*](../../DESIGN.md#the-goal-judge), probe bullet); set it
   `false` to run the same board without a judge and without the auxiliary model.

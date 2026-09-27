@@ -77,8 +77,8 @@ manifest with `"model": ["m1","m2"], "provider": ["p1","p2"]`, 2 lanes, stub `he
 exit 0, `filed 22 cards in 2 lane(s)`, and per card —
 
 ```
-lane 1: 8 cards m1/p1   + the 3 review cards glm-5.3-flash/opencode-go (model_override still wins)
-lane 2: 8 cards m2/p2   + the 3 review cards glm-5.3-flash/opencode-go
+lane 1: 8 cards m1/p1   + the 3 review cards deepseek-v4.1-flash/opencode-go (model_override still wins)
+lane 2: 8 cards m2/p2   + the 3 review cards deepseek-v4.1-flash/opencode-go
 ```
 
 No list reached `subprocess` (the old `TypeError: expected str … not list` is gone).

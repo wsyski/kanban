@@ -148,7 +148,7 @@ lane's parked cards by `run.open_lane` when the idea names its own pair (a board
 IT-complete, before any idea exists). `model_override`/`provider_override` — the engine's
 own task-property names — is the REVIEW pin, board-level only, and it wins wherever it is
 set: the review cards (`lanes.JUDGE_CODES` = RVp, RVa, RVc, and their rework rounds)
-carry it, author cards run the work model, and the shipped boards pin `glm-5.3-flash` on
+carry it, author cards run the work model, and the shipped boards pin `deepseek-v4.1-flash` on
 `opencode-go` so the model that reviews is not the model that wrote the work. Neither is
 required: omit both and no flag is filed, every card running its profile's own model.
 
@@ -167,7 +167,7 @@ So moving a lane's review to another model is a `board.json` edit and nothing el
 provider outage that trips the re-queue re-runs its card on whatever the board now names.
 
 Measured 2026-09-13 and 2026-09-15 (`boards/is-even` README has the full record): four
-cards on local models (`ornith-35b`, then `qwen38-27b`) filed and dispatched correctly,
+cards on local models (`swift15-27b`, then `qwen38-27b`) filed and dispatched correctly,
 each worker really carried its `-m … --provider llama-swap`, and each wrote a correct
 `refined.md` in minutes. All four then died handing that file to the card, in the
 inline-base64 copy the old contract forced — not on the work, and not on tool-call
@@ -179,7 +179,7 @@ driver attaching both hand-offs, which is further than any local run had reached
 **A local model must serve the lane's fork.** `TW ∥ C` puts two cards in flight at once, so
 a llama.cpp slot with `--parallel 1` serialises them and both ceilings run in wall time —
 measured the same day, both fork cards timed out at 1202s of a 20m limit on `qwen38-27b`,
-which halts the board. Name a model with two or more parallel slots (`ornith-35b` here), or
+which halts the board. Name a model with two or more parallel slots (`swift15-27b` here), or
 drop the fork with `unit-tests: false`. The per-card ceiling is also wall time against a
 COLD model: the first card on a slot pays the load (~48 s on the 24 GB rig). `board_schema` refuses a provider without a model beside it in the same scope, as the
 engine does, and reports (never refuses) a board that names a work model and no pin —
@@ -306,7 +306,7 @@ polling would hide the stall.
   It runs on the worker's profile model only where nothing pins it: a managed pin decides
   for every profile and a per-profile `auxiliary.goal_judge` cannot override it — the
   managed layer here (`/etc/hermes/config.yaml`) sets `provider: openrouter`, `model:
-  z-ai/glm-5.3-flash` (not opencode-go: the judge runs outside a turn, carries no
+  z-ai/deepseek-v4.1-flash` (not opencode-go: the judge runs outside a turn, carries no
   `x-opencode-session`, and OpenCode Go answers `400 MissingSessionID`), so that is what
   judges, whatever the profile or the board's `model` say.
   The *review model* is `model_override`/`provider_override`, set on the review cards

@@ -170,7 +170,7 @@ index 10ccbe6..f56ec61 100755
      kb("link", rr_id, gate_id)
 @@ -2791,7 +2808,7 @@ def halt_if_exhausted(st):
  def card_model(code, lane):
-     """The model a card of this code runs on ('ornith-35b'), or '' when the board names
+     """The model a card of this code runs on ('swift15-27b'), or '' when the board names
      none and the card runs its profile's own."""
 -    args = lanes.model_args(code, manifest(), lane_model_opts(lane))
 +    args = card_model_args(code, lane)

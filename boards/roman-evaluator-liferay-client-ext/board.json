@@ -17,6 +17,6 @@
   "max-reworks": 8,
   "model": "swift15-27b",
   "provider": "llama-swap",
-  "model_override": "glm-5.3-flash",
+  "model_override": "deepseek-v4.1-flash",
   "provider_override": "opencode-go"
 }

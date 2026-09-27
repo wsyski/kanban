@@ -60,7 +60,7 @@ index 38c5cc4..8cedc4b 100644
    INFO     a note about the tree — metrics, and what a lane left behind. The board
             deletes nothing (`work/` and `runs/` included), so litter is REPORTED and
             left exactly where it is; a note never fails a run
- 
+
  Usage:
    driver/run-audit.py --runs boards/<slug>/runs [--board boards/<slug>] [--json]
  """
@@ -72,7 +72,7 @@ index 38c5cc4..8cedc4b 100644
  import re
  import subprocess
  import sys
- 
+
  HERE = os.path.dirname(os.path.abspath(__file__))
  REPO = os.path.dirname(HERE)
  sys.path.insert(0, HERE)
@@ -81,8 +81,8 @@ index 38c5cc4..8cedc4b 100644
  # A possessive is prose in a verdict too ("item 4's warning does not apply"), so the
  # same guard applies to the result field: only the word standing on its own counts.
  WARN_TEXT = re.compile(r"(?i)(?<!no )(?<!'s )(?<!\b0 )(?<!\bzero )warnings?\b")
- 
- 
+
+
  def _driver_alive(root):
      """(alive, pid) for the driver runs/driver.lock names — the board's own lock, the
      one start-board.sh and acquire_lock check. It tells "audited too early" from a
@@ -123,8 +123,8 @@ index 38c5cc4..8cedc4b 100644
      except (OSError, ValueError, OverflowError):
          return False, pid
      return True, pid
- 
- 
+
+
 @@ -188,41 +208,50 @@ def summary_findings(summary, ceiling):
          if "waiting" in text:
              out.append(("ERROR", "E4", f"{name} recorded as waiting: {text[:60]}"))
@@ -157,8 +157,8 @@ index 38c5cc4..8cedc4b 100644
 +        out.append(("WARNING", "E10", f"{field}={agent!r} with {len(cards)} cards"))
      return out, {"cards": cards, "agent": agent, "wall": summary.get("wall_min"),
                   "overlap": summary.get("overlap_min")}
- 
- 
+
+
  def result_findings(rows):
      """Every worker card must report a result; the chain knows which are which."""
      out = []
@@ -172,11 +172,11 @@ index 38c5cc4..8cedc4b 100644
          if code in lanes.WORKER_CODES and not (row.get("result") or "").strip():
              out.append(("WARNING", "E7", f"{row['code']} finished with an empty result"))
      return out
- 
- 
+
+
  def card_log_findings(slug, started, offsets=None):
      """Scan the cards' own session logs for warnings, from this run only.
- 
+
      The board keeps one log per card across runs, so a log older than the run's
      first chain record belongs to somebody else's run. A newer one still holds the
 @@ -395,59 +424,107 @@ def board_findings(slug, runs_dir):
@@ -188,8 +188,8 @@ index 38c5cc4..8cedc4b 100644
      except Exception:
          pass
      return out
- 
- 
+
+
 +def _load_json(path, code, what):
 +    """(value, finding) for a manifest or a summary the audit depends on.
 +
@@ -231,7 +231,7 @@ index 38c5cc4..8cedc4b 100644
 +    cfg = cfg or {}
      slug = cfg.get("slug") or os.path.basename(board_dir)
      ceiling = ceiling_minutes(cfg.get("max-runtime"))
- 
+
      findings, stats = driver_findings(read(os.path.join(runs_dir, "driver.log")),
                                       cfg.get("auto-gates") or ())
 +    # BEFORE the mid-flight block: that block rewrites only E1 lines, so this finding
@@ -320,8 +320,8 @@ index 38c5cc4..8cedc4b 100644
 +                               "E4", "board.json")
 +    ceiling = ceiling_minutes((cfg or {}).get("max-runtime"))
      return report(findings, rows, stats, ceiling)
- 
- 
+
+
  if __name__ == "__main__":
      sys.exit(main())
 diff --git a/driver/run.py b/driver/run.py
@@ -331,16 +331,16 @@ index 527604e..9920719 100755
 @@ -1,20 +1,20 @@
  #!/usr/bin/env python3
  """Driver for generic kanban board missions.
- 
+
  The driver never commits. Gates wait for a human unless the lane's idea (or
  the board default) sets auto-gates, in which case the gate auto-completes on
  a PASS verdict with staged-file evidence — still no commit.
- 
+
  Usage: driver/run.py [--serve] [--once] [--timeout-min 120]
  """
 -import contextlib, json, shutil, subprocess, sys, time, os, re, datetime
 +import contextlib, json, math, shutil, subprocess, sys, time, os, re, datetime
- 
+
  # No default: this repo has no one board, and a stale default would drive the
  # wrong one. Enforced in main(), not here — the test suite imports this module.
  BOARD = os.environ.get("BOARD", "")
@@ -351,7 +351,7 @@ index 527604e..9920719 100755
  # gates close would make every new idea a terminal command again.
  SERVE = "--serve" in sys.argv
 @@ -51,23 +51,32 @@ CURRENT_RUN = os.path.join(RUNS_ROOT, "current")   # a file naming the live run
- 
+
  def _read_current_run():
      """The run id runs/current names, or None. A pointer FILE, not a symlink: the
      per-card paths are rendered into card bodies at filing time and swept from the
@@ -374,16 +374,16 @@ index 527604e..9920719 100755
 +              f"name — ignoring it", flush=True)
 +        return None
 +    return named
- 
- 
+
+
  # The run directory this process has actually seen on disk. A `current` pointer to a
  # folder the human already trashed is a stale pointer, not a disappearance; only a
  # directory that was there and went away stops the board.
- 
- 
+
+
  class RunState:
      """Everything this process remembers between ticks — one home, one reset.
- 
+
 @@ -95,33 +104,38 @@ class RunState:
          self.gate_tag = {}   # gate code -> the review card its current readiness rests on
          self.opened = set()
@@ -426,20 +426,20 @@ index 527604e..9920719 100755
          # card TITLES (I1, Gi1 …), so a cache carried across runs made a card whose
          # status happened to match skip its card_log line in the new run.
          self.timing_prev = {}
- 
+
      def reset(self):
          """A refile: the previous run's notes are stale, not history to keep."""
          self.opened.clear()
 @@ -134,23 +148,26 @@ class RunState:
- 
- 
+
+
  STATE = RunState()
- 
- 
+
+
  def _remember_run_dir(path):
      STATE.run_dir_seen["path"] = os.path.abspath(path) if path and os.path.isdir(path) else None
- 
- 
+
+
  def use_run(run_id):
 -    """Point every per-run path at runs/<run-id>. Reassigns the module globals so
 -    the paths stay plain strings: a hundred call sites join them, tests patch
@@ -457,12 +457,12 @@ index 527604e..9920719 100755
      STATE.verdicts_path = os.path.join(STATE.run_dir, "verdicts.jsonl")
      _remember_run_dir(STATE.run_dir)
      return STATE.run_dir
- 
- 
+
+
  def mint_run(run_id, armed):
 @@ -204,25 +221,30 @@ use_run(_read_current_run())
- 
- 
+
+
  def manifest():
      """Board manifest, through the SAME reader: `card_render`
      owns the file's shape, and a second `json.load` here is one edit away from two
@@ -486,12 +486,12 @@ index 527604e..9920719 100755
 +        # to start without a manifest (require_manifest), so this is the import-time
 +        # and deleted-mid-run path only.
 +        return {"slug": BOARD}
- 
- 
+
+
  WORKDIR = manifest().get("default-workdir") or os.path.join(BOARD_DIR, "work")
- 
- 
- 
+
+
+
  def board_lane_count(state):
      n = 0
      for title in state:
@@ -505,8 +505,8 @@ index 527604e..9920719 100755
              rows.append((c["title"], parents, c["code"].lower(), lane))
              prev = c["id"]
      return rows
- 
- 
+
+
 +class IdeaFileBlank(RuntimeError):
 +    """`lane-<k>.md` exists and is empty.
 +
@@ -566,11 +566,11 @@ index 527604e..9920719 100755
      opts = lanes.resolve_lane_options(manifest(), headers, lane)
      opts["idea"] = body
      return opts
- 
- 
+
+
  def lane_model_opts(lane):
      """The model scope a lane's idea file NAMES — its header pair, or {}.
- 
+
      Deliberately NOT the resolved options: `resolve_lane_options` fills a missing
      provider from the board, so a lane naming a local model on a board whose
      provider is a cloud one would ask that cloud backend for a model it does not
@@ -587,7 +587,7 @@ index 527604e..9920719 100755
          return {}
      headers = board_schema.headers_to_cfg(parsed[0])
      return {k: headers[k] for k in ("model", "provider") if k in headers}
- 
+
 +def card_model_args(code, lane):
 +    """The `--model`/`--provider` flags for one of this lane's cards.
 +
@@ -606,28 +606,28 @@ index 527604e..9920719 100755
  # Every CLI call is bounded: a hung `hermes` or `git` would stall the driver silently
  # while its lock stays live, and start-board.sh would keep seeing a healthy driver.
  CLI_TIMEOUT_S = 60
- 
- 
+
+
  READ_VERBS = ("show", "list", "attachments", "runs", "events")
- 
- 
+
+
  def kb(*args, capture=True):
      if args[:1] and args[0] not in READ_VERBS:
 @@ -512,26 +601,29 @@ def _goal_args(assignee, code):
- 
- 
+
+
  # How many rework rounds `latest_verdict_card` scans for a finished verdict. `max-reworks`
  # caps the rounds a board can file (the shipped ones set 2-4), so the scan has to reach
  # past that; the bound also stops a hand-renamed card from walking the board forever.
  MAX_VERDICT_ROUND_SCAN = 10
- 
- 
+
+
  def latest_verdict_card(state, lane, reviewer_prefix, final_code=None):
      """(card, verdict text) of the newest review round that has FINISHED —
 -    (None, "") when none has.
 +    (None, "") when none has, and (card, None) when the card is done with an empty
 +    result and its runs could not be read (the verdict is UNKNOWN this tick).
- 
+
 -    Only the card's result field counts — the verdict contract lives there.
 -    Falling back to run summaries (as this first did) read RVp1's parking
 -    block summary ('parked: awaiting lane activation') as a verdict and held
@@ -669,13 +669,13 @@ index 527604e..9920719 100755
          last = max(closed_ok, key=lambda r: r.get("ended_at") or 0)
          return best_card, (last.get("summary") or "").strip()
      return best_card, ""
- 
- 
+
+
  def latest_verdict(state, lane, reviewer_prefix, final_code=None):
      """The gate-relevant verdict text — see latest_verdict_card."""
      return latest_verdict_card(state, lane, reviewer_prefix, final_code)[1]
 @@ -711,41 +808,41 @@ def file_revision(state, lane, round_no, findings, base="P", reviewer_prefix="RV
- 
+
      rbody = render(rev_body_file)
      rbody += (f"\nREVISION ROUND {round_no} of {max_rounds} (max {max_rounds}, then human "
                f"escalation).\n\n{sender} sent this back. Address EXACTLY:\n{findings}\n"
@@ -688,7 +688,7 @@ index 527604e..9920719 100755
 -                        + lanes.model_args(base, manifest(), lane_model_opts(lane)))
 +                        + card_model_args(base, lane))
      rev_id = json.loads(kb(*args))["id"]
- 
+
      rrbody = render(rr_body_file)
      if kind == "plan":
          # A re-review is a verdict card like the review it repeats: told to act
@@ -716,24 +716,24 @@ index 527604e..9920719 100755
      # STATE.opened stays untouched: the lane's option state is settled.
      log(f"filed {kind} rework round {round_no}: {rev_title} + {rr_title}")
      record_rework(lane, gate_code, round_no, [rev_title, rr_title], findings, state)
- 
+
  WORKDIR_FACTS = "workdir.json"          # written per run, beside its other state
 @@ -767,21 +864,21 @@ def workdir_facts():
              "branch": git_at(WORKDIR, "rev-parse", "--abbrev-ref", "HEAD").strip()
                        or "DETACHED",
              "head": git_at(WORKDIR, "rev-parse", "HEAD").strip() or ""}
- 
- 
+
+
  def write_workdir_state(lane, when="open"):
      """One reading of WORKDIR, written into the run directory.
- 
+
      Two of them per lane, and they answer different questions: `open` is what the
      lane found — the input the plan is written against — and `gate` is what the
 -    code gate is looking at, taken after clean_work_noise(). Between them the tree
 +    code gate is looking at, taken when the gate opens. Between them the tree
      may have moved (a worker, or the human who owns the directory), and a gate whose
      record is the OPEN reading then reports on a tree that no longer exists.
- 
+
      `-at-<when>` in the name on purpose, and in SNAP_DIR: the chain must not read
      either as a hand-off document.
      """
@@ -742,22 +742,22 @@ index 527604e..9920719 100755
      tmp = path + ".tmp"
      with open(tmp, "w") as f:
 @@ -990,21 +1087,23 @@ def rework_owner(verdict_text):
- 
+
  def is_rework(text):
      """The idea gate's send-back: the result's first word is REWORK, in any case."""
      return bool(re.match(r"\s*REWORK\b", text or "", re.IGNORECASE))
- 
- 
+
+
  def rework_answers(text, limit=4000):
      return re.sub(r"^\s*REWORK\b[\s:—–-]*", "", text or "", flags=re.IGNORECASE).strip()[:limit]
- 
- 
+
+
 -VERDICT_GATES = frozenset({"Gi", "Gp", "Gc"})
 +# From the ONE declaration of the gate vocabulary (board_schema.GATE_CODES): this was a
 +# second literal set, with nothing pinning the two equal (2026-09-23 review, I12).
 +VERDICT_GATES = frozenset(board_schema.GATE_CODES)
- 
- 
+
+
  def verdict_parents(state, kind, lane):
      """The parents of this candidate, from the *pruned* graph (the cards that hand it a verdict
      rather than merely finishing). Read `lane_graph`, not LANE_CARDS: a board with
@@ -783,15 +783,15 @@ index 527604e..9920719 100755
 +        if verdict is None or verdict_sends_it_back(verdict):
 +            return True          # None: unreadable this tick — hold, never release on it
      return False
- 
- 
+
+
  def md_section(text, name):
      """Body of the `## name` section of a markdown file, up to the next heading."""
      m = re.search(rf"^#+[ \t]*{re.escape(name)}\b[^\n]*\n(.*?)(?=^#+[ \t]|\Z)",
                    text, re.IGNORECASE | re.MULTILINE | re.DOTALL)
      return m.group(1) if m else ""
- 
- 
+
+
  # A person answers a held gate with a COMMENT, because a comment is the one write
  # every surface offers (CLI, browser dashboard, desktop app); the driver turns it into
  # the gate's `--result`, so every verdict reader downstream is unchanged. The driver's
@@ -822,24 +822,24 @@ index 527604e..9920719 100755
 +    except KeyError:
 +        raise UnknownGateKind(f"{kind!r} is not a gate kind — the board's gates are "
 +                              f"{', '.join(board_schema.GATE_CODES)}") from None
- 
- 
+
+
  def verdict_code(state, v_card):
      """The code of the review card a verdict came from ('RVp1-r2'), or ''."""
      for t, c in state.items():
          if v_card is not None and c.get("id") == v_card.get("id"):
              return t.split(":")[0]
      return ""
- 
- 
+
+
 @@ -1231,28 +1349,28 @@ def auto_gates():
- 
+
      Board-level, so it is read here and never from a lane's resolved options — which is
      where it lived until 2026-09-16, and reading it there after the move raised
      `KeyError: 'auto-gates'` every tick until the board halted."""
      return manifest().get("auto-gates", board_schema.OPTIONS["auto-gates"][1])
- 
- 
+
+
  def gate_action(state, title, kind, lane):
      msg = _gate_action(state, title, kind, lane)
      if msg.startswith("waiting:") and not board_schema.gate_is_auto(
@@ -847,8 +847,8 @@ index 527604e..9920719 100755
 +            auto_gates(), gate_code_of(kind)):
          answer_early_verdicts(state, title, msg)
      return msg
- 
- 
+
+
  def _gate_action(state, title, kind, lane):
      opts = lane_options(lane) or {}
 -    auto = board_schema.gate_is_auto(auto_gates(), GATE_CODE_OF[kind])
@@ -949,8 +949,8 @@ index 527604e..9920719 100755
      except Exception:
          r["attachments"] = None
      return r
- 
- 
+
+
  def card_log(card):
      """Append the card's full record (input + result) to
 @@ -1498,21 +1626,21 @@ def open_lane(state, lane):
@@ -977,7 +977,7 @@ index 527604e..9920719 100755
      if opts.get("model") and not board_cfg.get("model_override"):
          log(f"LANE {lane}: model {opts['model']!r} applies to the whole lane and no "
 @@ -1721,38 +1849,46 @@ def ledger(record):
- 
+
      Run state, beside the chain: `runs/<run-id>/verdicts.jsonl` is that run's own
      ledger, and never staged — the board directory
      holds its DEFINITION only (board.json, lane-<k>.md, README). A rejection that
@@ -1001,8 +1001,8 @@ index 527604e..9920719 100755
              f.write(json.dumps(rec) + "\n")
      except OSError as e:
          log(f"ledger: cannot append to {STATE.verdicts_path} ({e})")
- 
- 
+
+
  def lane_refinement(lane):
      """Does this lane run the idea's refinement? Resolved like every lane option
      (the manifest's default, the idea's header winning either way) — and it decides
@@ -1016,11 +1016,11 @@ index 527604e..9920719 100755
 +        record_halt(f"lane {lane}: {e}")
 +        return True          # keep the root this lane was filed with; the halt stops the board
 +    return bool((opts or {}).get("refinement", True))
- 
- 
+
+
  def lane_paths_agree(state, lane):
      """Does the lane's root card name the run the driver is writing to?
- 
+
      The root's body carries its <IDEA> path from filing time. If it does not name
      the current run, the two disagree about where this lane's documents live, and
      nothing downstream can recover: the worker writes where its body says and the
@@ -1067,10 +1067,10 @@ index 527604e..9920719 100755
                       attached=attached, result=result[:200], verdict=verdict, staged=staged)
          if verdict:
 @@ -2038,22 +2177,24 @@ def note_empty_results(state):
- 
+
  def open_lanes(state):
      """Open every lane whose turn has come, BEFORE anything is promoted.
- 
+
      open_lane() used to run only from the root card's promotion branch, and that
      branch is skipped for any card that is not `blocked` — so a root someone else
      had already unblocked never opened its lane. `start-board.sh --once` used to
@@ -1096,11 +1096,11 @@ index 527604e..9920719 100755
 @@ -2104,21 +2245,21 @@ def unstage_run_paths():
      log(f"unstaged {len(staged.split())} path(s) under {rel} "
          f"(nothing run-generated stays in the index)")
- 
- 
+
+
  def run_directory_is_gone():
      """True when the run directory this process recorded into is no longer on disk.
- 
+
      The board deletes nothing (user rule, 2026-09-12), so a missing run directory means
      something else removed it: a desktop file manager sends the whole folder to the
      trash, a stray `rm` does not, and `runs/current` still names the run either way.
@@ -1113,8 +1113,8 @@ index 527604e..9920719 100755
      return (STATE.run_dir != RUNS_ROOT
              and STATE.run_dir_seen["path"] == os.path.abspath(STATE.run_dir)
              and not os.path.isdir(STATE.run_dir))
- 
- 
+
+
  def halt_run_directory_gone():
 @@ -2131,20 +2272,21 @@ def halt_run_directory_gone():
      run's own directory is exactly what is missing.
@@ -1124,17 +1124,17 @@ index 527604e..9920719 100755
          f"deleted nothing (a file manager's trash holds it if that is where it went); "
          f"restore it or arm the idea for a new run", where=RUNS_ROOT)
      return STATE.halted["reason"]
- 
- 
+
+
  def tick():
 +    STATE.tick_serial[0] += 1    # "once per tick" bookkeeping (count_unreadable) keys on it
      with show_memo():
          return _tick()
- 
- 
+
+
  def _tick_preflight(st):
      """The guards that run before promotion, in their required order.
- 
+
      Split out of `tick()`: the ORDER is the meaning here — a spent turn budget is
      checked before the reasonless block the driver's own marker would otherwise read
      as, and the lane open happens BEFORE the graph is built (see the graph note in
@@ -1146,8 +1146,8 @@ index 527604e..9920719 100755
      if STATE.halted["reason"]:
          return True, st
      return False, st
- 
- 
+
+
  def _tick():
 -    # Nothing in this template removes a run directory (see clean_work_noise), so a
 +    # Nothing in this template removes a run directory (the rule is argued in
@@ -1250,9 +1250,9 @@ index 527604e..9920719 100755
      unstage_run_paths()
      _, gc = title_of_prefix(st, f"Gc{last}:")
      return bool(gc and gc["status"] == "done")
- 
- 
- 
+
+
+
 @@ -2412,40 +2551,40 @@ def file_code_revision(state, lane, round_no, findings, owner="C", max_rounds=2,
      rbody = render(body_file)
      rbody += (f"\nREVISION ROUND {round_no} of {max_rounds} (max {max_rounds}, then human "
@@ -1291,22 +1291,22 @@ index 527604e..9920719 100755
      kb("link", rr_id, gate_id)
      log(f"filed code rework round {round_no}: {rev_title} + {rr_title}")
      record_rework(lane, "Gc", round_no, [rev_title, rr_title], findings, state)
- 
- 
+
+
  def escalate(card_id, code, reason, key=None):
      """Escalate a rework loop that exhausted its rounds — once per run.
- 
+
 @@ -2530,29 +2669,43 @@ def empty_run_reason(state):
          return None
      return (f"run {run_id} (runs/current) has no lane cards and no idea card to arm — "
              f"its filing failed; reset the board: {RESET_STEPS.format(b=BOARD)}")
- 
- 
+
+
  # The same exception this many ticks running is a loop, not a transient: measured on
  # roman-evaluator-java, 26 identical ValueErrors in 15 minutes and nothing stopped.
  TICK_ERROR_LIMIT = 3
- 
- 
+
+
 +def tick_error_signature(exc):
 +    """What makes two tick errors THE SAME error: the type, and the message with the
 +    parts that vary between ticks masked — card ids (`t_…`) and every run of digits
@@ -1334,15 +1334,15 @@ index 527604e..9920719 100755
          record_halt(f"the tick raised the same exception {TICK_ERROR_LIMIT} times "
 -                    f"running — {sig}; retrying will not change it")
 +                    f"running — {type(exc).__name__}: {exc}; retrying will not change it")
- 
- 
+
+
  # A gate whose parents are all done and which still gives the same `waiting:` reason
  # after this long is not waiting for anything: minimal-development ...-135050 sat on
  # `Gc1: waiting: final review verdict` until a human killed it. Wall time, in memory
  # only — a restart restarts the clock.
  GATE_WAIT_S = 10 * 60
- 
- 
+
+
  def gate_wait_reason(title, msg, kind):
 @@ -2658,20 +2811,35 @@ def halt_if_exhausted(st):
      graph = {t: parents for t, parents, _k, _l in lane_graph(st)}
@@ -1384,27 +1384,27 @@ index 527604e..9920719 100755
          log(f"WARNING: halt comment failed ({e})")
      record_halt(reason)
      return STATE.halted["reason"]
- 
- 
- 
- 
+
+
+
+
  def card_model(code, lane):
-     """The model a card of this code runs on ('ornith-35b'), or '' when the board names
+     """The model a card of this code runs on ('swift15-27b'), or '' when the board names
      none and the card runs its profile's own."""
 -    args = lanes.model_args(code, manifest(), lane_model_opts(lane))
 +    args = card_model_args(code, lane)
      return args[args.index("--model") + 1] if "--model" in args else ""
- 
- 
+
+
  def concurrency_note(state, card):
      """Which other cards were in flight beside this one, on the same model.
- 
+
      A model slot that serves one request at a time turns the lane's `TW ∥ C` fork into
      two wall clocks: measured on is-even, 2026-09-16, both fork cards timed out at 1202s
      of a 20m ceiling on a `--parallel 1` llama.cpp slot while the work itself was
      minutes. The halt used to name only the card that tripped, which reads as a slow
 @@ -2831,45 +2999,35 @@ def provider_hits(card_id):
- 
+
      The log is append-only per card, so it holds every earlier attempt too, and a
      whole-file count let an earlier storm re-queue a later failure and label every
      later halt. The attempt starts at the offset `mark_attempt` recorded before the
@@ -1412,15 +1412,15 @@ index 527604e..9920719 100755
      no attempt before this one, so it counts from 0."""
      return runs_util.upstream_hits_since(worker_log_path(card_id),
                                           STATE.log_offsets.get(card_id, 0))[0]
- 
- 
+
+
 -# Card id -> byte size of its worker log when the driver last started an attempt
 -# (rejoined from the ledger on restart).
 -
 -
  def mark_attempt(card):
      """Record where the attempt the driver is about to start begins in the card's log.
- 
+
      Called before every unblock that starts one (lane release, re-promotion,
      re-queue): the previous worker has exited, so nothing of it lands after this.
      """
@@ -1431,8 +1431,8 @@ index 527604e..9920719 100755
      STATE.log_offsets[card["id"]] = offset
      ledger({"event": "attempt", "code": card["title"].split(":")[0],
              "card_id": card["id"], "log_offset": offset})
- 
- 
+
+
 -# Cards this run has already re-queued once for provider starvation (rejoined from
 -# the ledger on restart), mapped to the time of the re-queue. Keyed by time because
 -# the exhaustion event that caused it stays in the card's history for ever: without
@@ -1441,7 +1441,7 @@ index 527604e..9920719 100755
 -
  def requeue_provider_starved(card, hits):
      """Re-queue a card whose attempt died of a transport storm — once.
- 
+
      The one-attempt rule is about CONTENT failures: a worker that tried and could
      not is done. A worker that spent its whole attempt in upstream 4xx/5xx never
      got to try, and halting the board there costs a whole run for a flake. So the
@@ -1453,13 +1453,13 @@ index 527604e..9920719 100755
      STATE.read_error.pop(card_id, None)
      STATE.unreadable_ticks.pop(card_id, None)
      return record if isinstance(record, dict) else {}
- 
- 
+
+
  # Promotion ticks in a row a blocked card could not be read. A CLI timeout or "database
  # is locked" is a transient: the card is skipped, and only a streak halts.
  UNREADABLE_LIMIT = 3
- 
- 
+
+
 +def count_unreadable(card_id):
 +    """Ticks in a row `card_id`'s `show` has failed, counted ONCE per tick whichever scan
 +    asks first: the exhaustion scan reads every live card and promotion reads the ones
@@ -1475,11 +1475,11 @@ index 527604e..9920719 100755
  # (kanban_db.release_stale_claims) straight back to `ready`.
  RATE_LIMIT_LIMIT = 3
  RECLAIM_LIMIT = 2
- 
- 
+
+
  def card_stall(state, card, record, parents):
      """Why a card the engine keeps retrying by itself must stop, or None.
- 
+
 @@ -3022,36 +3190,32 @@ def is_parked(card):
      the older two-call path carries 'parked: awaiting lane activation'. Both are the
      board's own doing and neither wants a human, so both are excluded from the
@@ -1487,7 +1487,7 @@ index 527604e..9920719 100755
      p = _blocked_event_payload(card["id"])
      reason = str((p or {}).get("reason") or "")
      return bool(p) and ("awaiting lane activation" in reason or reason == "initial_status")
- 
+
  def is_reasonless_block(card):
      """The newest block event has no reason (`hermes kanban block <id>` with no words
      stores `reason: None`, kanban_db._route_block). A card whose record cannot be read
@@ -1497,13 +1497,13 @@ index 527604e..9920719 100755
 +    (review Important 19)."""
      p = _blocked_event_payload(card["id"])
      return p is not None and not p.get("reason")
- 
- 
+
+
  def block_reason_text(card):
      """Reason text of a card's newest block event, '' when it never blocked."""
      return str((_blocked_event_payload(card["id"]) or {}).get("reason") or "")
- 
- 
+
+
 -# Cards the driver has already re-promoted once this run because their own worker
 -# blocked them (rejoined from the ledger on restart). The parking brake is released
 -# as often as the graph asks; a stop that came from the worker is honoured once, and
@@ -1522,7 +1522,7 @@ index 527604e..9920719 100755
          if e.get("kind") == "spawned" and isinstance(e.get("payload"), dict):
 @@ -3208,31 +3372,42 @@ def preserve_artifacts():
      and a patch is not one.
- 
+
      Called at each lane's code gate: the lane is finished, its cards are about
      to be archived by the next refile, and this is the last moment the patches
      are still collectable. They were written for exactly this and were never
@@ -1555,11 +1555,11 @@ index 527604e..9920719 100755
 +        # this function's whole job is provenance, and a silent empty return is how the
 +        # hardcoded path went unnoticed.
 +        log(f"artifacts: no provenance patches found under {attachments_root}")
- 
+
  def finish_run():
      """Everything the driver does when the lane's last gate closes: the run's
      summary, and then the banner that says the run is finished.
- 
+
      THE ORDER IS LOAD-BEARING. `run-audit.py` reads `ALL GATES COMPLETE` as "this
      run finished" and only then demands `run-summary.json`; logged the other way
      round (observed: 3 s in the is_even run of 2026-09-12) there is a window in
@@ -1614,17 +1614,17 @@ index 527604e..9920719 100755
 -
 +    os.replace(tmp, path)
 +    log(f"summary written: {path} ({total:.0f} min agent work)")
- 
+
 -# Gates already announced this run — see gate_action.
 -# gate code -> what opened it. E4 reads the summary's gate text for "verdict PASS"
 -# (Gp/Gc) and "refined idea present" (Gi), and a human gate-holder's result is their
 -# decision, not that evidence — see gate_summary_text.
- 
+
  # The triage card body file_ideas writes always opens with this line, so a card
  # the human typed from scratch in the dashboard is distinguishable from one the
  # driver seeded — and the lane it belongs to is stated rather than guessed.
  _RAW_RE = re.compile(r"^RAW IDEA for lane (\d+)")
- 
+
 -# Serve mode holds every lane until a human arms an idea. Set by adopt_and_refile.
 -# Idea cards already told they are invalid, keyed by card id -> the text that was
 -# wrong. The driver ticks every few seconds and a refusal is sticky (the card stays
@@ -1634,7 +1634,7 @@ index 527604e..9920719 100755
 -
  def lane_is_armed(lane):
      """May serve mode open this lane?
- 
+
      Armed this session, or already opened by an earlier driver: the lane's
      snapshot is written by open_lane before it unblocks anything, so its
      existence is the durable record that this lane is under way. Without that
@@ -1643,7 +1643,7 @@ index 527604e..9920719 100755
      """
      if not SERVE or STATE.armed:
 @@ -3624,20 +3798,39 @@ def acquire_lock():
- 
+
      The rule itself — a DEAD holder's lockfile taken over rather than refused, a LIVE
      one refused, release only while the lock is still ours — lives in `driver_lock`,
      which every door takes: they all build in the same `work/`, so two of them must not
@@ -1651,8 +1651,8 @@ index 527604e..9920719 100755
      _, note = driver_lock.take(RUNS_ROOT, "kill it or remove the lockfile")
      if note:
          log(note)
- 
- 
+
+
 +def require_manifest_valid():
 +    """Refuse a board whose manifest the engine cannot honour.
 +
@@ -1681,7 +1681,7 @@ index 527604e..9920719 100755
          raise SystemExit(
              f"no manifest at {BOARD_CFG} — create the board first:\n"
              f"  driver/create-board.sh --board boards/{BOARD}")
- 
+
 @@ -3672,51 +3865,81 @@ def reset_attempt_budgets():
                      "last_failure_error = NULL WHERE status != 'archived' "
                      "AND (consecutive_failures != 0 OR last_failure_error IS NOT NULL)")
@@ -1691,8 +1691,8 @@ index 527604e..9920719 100755
              return
          except sqlite3.OperationalError as e:
              log(f"WARNING: attempt-budget reset failed on {path}: {e}")
- 
- 
+
+
 +def timeout_seconds(argv=None, serve=False):
 +    """This driver's wall-clock cap in seconds, or None for no cap.
 +
@@ -1772,10 +1772,10 @@ index 527604e..9920719 100755
              # A new idea outranks the current tick: adopt it, refile, and let the
 @@ -3761,21 +3984,26 @@ def main():
          time.sleep(POLL_BUSY if moved else POLL)
- 
+
  def board_removed_exit(exc, idle):
      """The exit code when `exc` says the Hermes board itself is gone, else None.
- 
+
      Retrying cannot bring a removed board back, and three tracebacks before a halt
      buried the cause. A serving driver whose run had finished has nothing left to
      guard: it exits 0 without writing a halt into that finished run (blade-workspace
@@ -1806,12 +1806,12 @@ index 87e9887..014793a 100755
  print(v if v else '')
  " 2>/dev/null)
  fi
- 
+
  cd "$REPO"
  RUNLOG=${RUNLOG:-$REPO/boards/$SLUG/runs/driver.log}
  LOCK="$REPO/boards/$SLUG/runs/driver.lock"
  mkdir -p "$(dirname "$RUNLOG")"
- 
+
  # Already up? Say so and stop. The lock FILE existing proves nothing — a driver
 -# killed with SIGKILL leaves one behind — so ask whether a live process holds it.
 -if [ -f "$LOCK" ] && kill -0 "$(cat "$LOCK" 2>/dev/null)" 2>/dev/null; then
@@ -1827,7 +1827,7 @@ index 87e9887..014793a 100755
 +  echo "driver for '$SLUG' already running (pid $DRIVER_PID)"
    exit 0
  fi
- 
+
  if [ "$ONCE" = 1 ]; then
    [ -s "$REPO/boards/$SLUG/lane-1.md" ] || {
      echo "refusing: boards/$SLUG/lane-1.md is empty — enter an idea first" >&2
@@ -1853,9 +1853,9 @@ index 4a03250..305c6e5 100644
 @@ -1,5 +1,5 @@
 -THE RESULT FIELD IS THE REPORT: completing this card means putting the line above in the card's `result` — `--result "..."` on the CLI, or the `result` argument if you complete through the `kanban_complete` tool. That tool's schema prefers `summary` and calls `result` a legacy field: it is legacy but supported, and it is the field the BOARD READS — the driver derives every verdict, rejection and gate decision from `result`, so a card completed with a summary only has reported nothing to the board. Put the verdict or the outcome first in `result`. Complete with `result` only. If you also write a `summary`, repeat in it every failing-test, TEST FIX and TEST DEFECT line: a card run under a goal judge is judged on `summary` whenever there is one, and a short summary hides the evidence that shows the card is finished.
 +THE RESULT FIELD IS THE REPORT: completing this card means putting the line above in the card's `result` — `--result "..."` on the CLI, or the `result` argument if you complete through the `kanban_complete` tool. That tool's schema prefers `summary` and calls `result` a legacy field: it is legacy but supported, and it is the field the BOARD READS — the driver derives every verdict, rejection and gate decision from `result` first, and falls back to the closing run's summary only when `result` is empty — a supported path, not one to rely on. Put the verdict or the outcome first in `result`. Complete with `result` only. If you also write a `summary`, repeat in it every failing-test, TEST FIX and TEST DEFECT line: a card run under a goal judge is judged on `summary` whenever there is one, and a short summary hides the evidence that shows the card is finished.
- 
+
  SAY WHAT THE LANE GOT: start a worker card's `result` with `CHANGED: <paths>` when you changed the product, or `NO CHANGE: <what you verified, and how>` when the right answer was that what is already there satisfies the idea. Both are valid outcomes — a lane that concludes nothing needed changing did its job, and a change manufactured to look busy is worse than none. When a test fails, the line says so after the paths: `CHANGED: <paths> — TEST FIX: <test> (plan step <n>): <why it was unsatisfiable>, see test-fix.diff`, `CHANGED: <paths> — TEST DEFECT (not corrected): <test>: <why>`, or `— FAILING: <test>: <why>` for any other red test. A review card starts with its verdict (PASS/REJECT) and says the same fact inside it: what the lane changed, or that it changed nothing and the criterion was re-derived by running it.
- 
+
  REQUIRED: a finished worker card with an empty `result` is an audit warning (E7).
 diff --git a/template/card-bodies/gc-body.txt b/template/card-bodies/gc-body.txt
 index 81b8e8f..b0a2b86 100644
@@ -1863,10 +1863,10 @@ index 81b8e8f..b0a2b86 100644
 +++ b/template/card-bodies/gc-body.txt
 @@ -1,13 +1,13 @@
  CODE GATE — lane <N>. A person holds this card: no worker runs it, and the driver never commits. Nothing is committed unless you choose to commit it.
- 
+
 -The gate becomes ready only when the newest implementation-review verdict is PASS; the driver records the staged path list in the result. It runs no build of its own: the review cards ran the plan's Run commands, and here you run whatever verification you want.
 +The gate becomes ready only when the newest implementation-review verdict is PASS; the driver records how many files are staged in the result; the path list is in the driver log (first eight). It runs no build of its own: the review cards ran the plan's Run commands, and here you run whatever verification you want.
- 
+
  WHAT YOU DO (from this card, in the dashboard or the CLI):
  1. Wait for the driver's comment starting "GATE READY" on this card. Until it appears the review has not passed, and a verdict you write is not applied (the driver answers "NOT APPLIED" and says why).
  2. Read the plan at <PLAN> and the newest review verdict (RVa, RVc, or their latest re-review round), with the run evidence in the driver log.
@@ -1882,21 +1882,21 @@ index f9b0ec7..e18b13b 100644
 +++ b/template/card-bodies/rvp-body.txt
 @@ -1,15 +1,15 @@
  VERDICT CARD — plan review for lane <N>. You review a PLAN, not code. Never edit or stage anything.
- 
+
  HARD RULES: (1) Read-only on the repository; write only `<RUNS>/scratch/<YOUR-CARD-ID>/review.md` (create the directory) — nothing temporary belongs in `work/`. (2) Do not commit, branch, stash, reset, restore or clean. (3) Do not write profile memories or create, patch or delete skills — the profile serves every later card.
- 
+
 -TASK: the parent card staged a plan at <PLAN> — that file, and never a document under `docs/`, the engine or the tests. Its contract is the refined idea at <REFINED> — the raw idea at <IDEA> only when <REFINED> says `refinement failed`, or on a lane that runs no refinement (`refinement: false`), where <IDEA> is the contract and the plan must say it planned from it. This lane's files are <REFINED>, <PLAN> and exactly the files the plan's Files blocks name; anything else in the index belongs to someone else and is not this lane's to judge. Check the plan against this checklist, item by item:
 +TASK: the parent card wrote a plan at <PLAN> (a run hand-off the driver attaches to its card — never staged, so do not look for it in the index) — that file, and never a document under `docs/`, the engine or the tests. Its contract is the refined idea at <REFINED> — the raw idea at <IDEA> only when <REFINED> says `refinement failed`, or on a lane that runs no refinement (`refinement: false`), where <IDEA> is the contract and the plan must say it planned from it. This lane's files are <REFINED>, <PLAN> and exactly the files the plan's Files blocks name; anything else in the index belongs to someone else and is not this lane's to judge. Check the plan against this checklist, item by item:
- 
+
  <PLAN_CHECKLIST>
- 
+
  SCOPE OF A FINDING: REJECT only on a checklist item — cite its number, quote the plan line that breaks it, give the fix. Anything else you notice (style, a simpler design, a risk) is a NOTE inside a PASS, never a reason to reject. Environment facts are the researcher's (Findings); you do not re-run them. Item 8 is the one command you run. A plan whose smallest correct change is NO change is a PASS — a lane may legitimately only verify what is already there.
- 
+
  VERDICT — the result field's first word is the verdict:
  - PASS: `hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "PASS: checklist 1-8 hold. NOTES: <notes, or none>"`
  - REJECT: `hermes kanban --board <BOARD> complete <YOUR-CARD-ID> --result "REJECT: <numbered findings — item, plan line, fix>"` — the driver files a plan revision (up to the board's rework cap, then a human).
  Write the full review to `<RUNS>/scratch/<YOUR-CARD-ID>/review.md` — the driver attaches it when your card is done, and you never attach anything yourself. If you cannot complete every check, the verdict is `REJECT: incomplete review — <what is unchecked>`, never a PASS with caveats.
- 
+
 diff --git a/template/lanes.py b/template/lanes.py
 index ce3e5e5..8b5a46d 100644
 --- a/template/lanes.py
@@ -1906,24 +1906,24 @@ index ce3e5e5..8b5a46d 100644
      "RVc": "final review",
      "Gc":  "code gate",
  }
- 
+
  # The refined idea's headings, in order. i-body.txt prescribes them and the idea
  # gate refuses a file missing any — one list, so the two cannot drift apart.
  REFINED_SECTIONS = ("Problem", "Scope", "Open questions", "Assumptions", "Findings",
                      "Verification recipe", "Prior art", "Success criteria")
- 
+
 -# codes dropped when a lane runs without integration tests: the integration
 -# tester AND the final review, because RVc reviews nothing else.
 +# codes dropped when a lane runs without integration tests: the integration-test
 +# card (TI) AND the final review, because RVc reviews nothing else.
  IT_CODES = ("TI", "RVc")
- 
+
  # Roles that never spawn a worker: a gate is completed by a person, or by the
  # driver when `auto-gates` is on, so no profile has to exist for it. The dispatcher
  # buckets a card whose assignee is not a profile as unspawnable — correct for a
  # gate, and the reason `required_profiles` must not demand one.
  NO_PROFILE_ROLES = frozenset({"human-gate"})
- 
+
 -# The review cards. `model_override` (the review model) is applied to these cards and
 -# above the board's or the lane's `model` — see lanes.model_args for the precedence.
 -# to nothing else. Keyed on the CARD CODE, not on a role: every work card is the coder's
@@ -1937,20 +1937,20 @@ index ce3e5e5..8b5a46d 100644
 +# implementation too. Not the goal judge,
  # which is `auxiliary.goal_judge` on the worker's profile.
  JUDGE_CODES = frozenset({"RVp", "RVa", "RVc"})
- 
+
  # codes dropped when a lane runs no REFINEMENT: the researcher who turns the raw
  # idea into a refined one, and the human gate that accepts that refinement. The lane
  # then plans from the raw idea itself, and P becomes the lane ROOT — the walk below
  # reparents it, exactly as it hands C to the plan gate when TW is dropped.
  REFINEMENT_CODES = ("I", "Gi")
- 
+
  # codes dropped when a lane runs without unit tests. TW alone: RVa is the CODE
 @@ -145,22 +146,23 @@ def goal_args(code, cards=(), max_turns=None):
      card legitimately needs more turns than a /goal chat loop (observed: a P1
      attempt died at 20/20 healthy, then finished in 51s with a fresh attempt).
      agent.max_turns (80) is untouched — goal-mode workers measure against the
      goal ceiling, not the agent one.
- 
+
      The gate/review refusal comes first, so a list naming one cannot arm it.
      """
      c = code.lower()
@@ -1963,8 +1963,8 @@ index ce3e5e5..8b5a46d 100644
 +                             # substring containment (gate_is_auto's defect, Important 5)
      turns = max_turns or board_schema.OPTIONS["goal-max-turns"][1]
      return ["--goal", "--goal-max-turns", str(turns)]
- 
- 
+
+
  def skill_for(code):
      """The skill a card of this code is filed with — rework rounds reuse it."""
      for row in LANE_CARDS:
@@ -1973,14 +1973,14 @@ index ce3e5e5..8b5a46d 100644
      raise KeyError(code)
 @@ -349,21 +351,24 @@ def lane_cards(lane, integration_tests=True, unit_tests=True, assignees=None,
      return cards
- 
- 
+
+
  import os
  import re
- 
+
  import board_schema
- 
- 
+
+
  def base_code(code):
 -    """A card's code without its lane and round: `P1` / `P1-rev-1` -> `P`, `RVa1-r2` -> `RVa`."""
 +    """A card's code without its lane and round: the leading letters, one rule —
@@ -1988,12 +1988,12 @@ index ce3e5e5..8b5a46d 100644
 +    revision, `-r<n>` for a re-review) start after the lane digits, so neither needs a
 +    case of its own."""
      return re.match(r"[A-Za-z]*", code).group()
- 
+
  # The codes that DO the work, as opposed to a gate or a review. Read by the driver's
  # chain record (`run.py`), by doc-chain's hand-off check and by the auditor, so the
  # list lives with the grammar above it rather than in three copies of the tuple.
  WORKER_CODES = ("I", "P", "TW", "C", "TI")
- 
+
  # The option set — and the per-lane subset an idea header may carry — is declared
  # once, in board_schema. A second copy here is what let the manifest and the
  # header spell the same option two different ways.

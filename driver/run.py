@@ -3085,7 +3085,7 @@ def halt_if_exhausted(st):
 
 
 def card_model(code, lane):
-    """The model a card of this code runs on ('ornith-35b'), or '' when the board names
+    """The model a card of this code runs on ('swift15-27b'), or '' when the board names
     none and the card runs its profile's own."""
     args = card_model_args(code, lane)
     return args[args.index("--model") + 1] if "--model" in args else ""

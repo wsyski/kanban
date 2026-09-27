@@ -30,7 +30,7 @@ how its runs went is not kept here — the runs describe themselves (§4).
 
 Every shipped board pins its review cards (`RVp`, `RVa`, `RVc` and their rework rounds)
 to a different model from the one that did the work — `"model_override":
-"glm-5.3-flash"`, `"provider_override": "opencode-go"` — so the review model is
+"deepseek-v4.1-flash"`, `"provider_override": "opencode-go"` — so the review model is
 independent of the author. Every other card runs its profile's own model: `"model"` /
 `"provider"` are the board's WORK model, filed on every card and overridable per lane
 from an idea header, and the pin wins over them on the reviews. Neither key has a default,
@@ -457,7 +457,7 @@ with the CLI:
   Which model judges is not a board option: it is each worker profile's resolved
   `auxiliary.goal_judge` (the managed `/etc/hermes/config.yaml` pin wins), and
   `create-board.sh` prints it per profile in its pre-flight (`goal judge for C,TI (profile
-  coder): openrouter / z-ai/glm-5.3-flash`).
+  coder): openrouter / z-ai/deepseek-v4.1-flash`).
 - **The review model is a different model.** `model_override`/`provider_override`
   (board-level only, so no lane can buy itself a different review model) go on the
   review cards and their rounds. The goal judge is not affected: it runs on the worker's
