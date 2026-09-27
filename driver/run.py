@@ -844,11 +844,9 @@ def record_rework(lane, gate_code, round_no, cards, findings, state):
 
 
 FROZEN_NOTE = (
-    "The verdict also lists what it VERIFIED, and those regions are FROZEN: leave them "
-    "byte-identical and change only what the findings name. The driver attaches every "
-    "earlier version of a hand-off to its card, so the re-review can diff what you hand "
-    "off against the round you were sent — a round that rewrites the document instead of "
-    "fixing the findings is churn, and it is measured."
+    "The driver attaches every earlier version of a hand-off to its card, so the re-review "
+    "diffs what you hand off against the round you were sent — a round that rewrites the "
+    "document instead of fixing the findings is churn, and it is measured."
 )
 
 
@@ -860,9 +858,22 @@ def rework_tail(round_no, max_rounds, findings, lead, closing):
     exists for — silently missing from the other is drift no test can see: the cards would
     simply differ by accident.
     """
+    ticked, cited = verified_items(findings), cited_items(findings)
+    frozen = sorted(ticked - cited, key=item_sort_key)
+    if ticked & cited:
+        # The model's own inconsistency, and the revision must not inherit it.
+        log(f"rework round {round_no}: the verdict ticks items it also rejects "
+            f"({', '.join(sorted(ticked & cited, key=item_sort_key))}) — the finding wins, "
+            f"the tick is dropped")
+    if frozen:
+        freeze = (f"FROZEN — leave byte-identical: items {', '.join(frozen)}. Everything "
+                  f"else in the tick list is also named in a finding, so it is NOT frozen.")
+    else:
+        freeze = ("Nothing is FROZEN this round: no item the verdict ticked is outside the "
+                  "findings.")
     return (f"\nREVISION ROUND {round_no} of {max_rounds} (max {max_rounds}, then human "
             f"escalation).\n\n{lead} Address EXACTLY:\n{findings}\n"
-            f"Fix only these. {FROZEN_NOTE} {closing}\n")
+            f"Fix only these. {freeze} {FROZEN_NOTE} {closing}\n")
 
 
 def rework_churn(diff_text):
@@ -1249,6 +1260,50 @@ def rejection_findings(text, limit=4000):
     """
     m = re.search(r"\bREJECT\b[\s:—–-]*", text or "")
     return (text[m.end():] if m else (text or "")).strip()[:limit]
+
+
+_VERIFIED_RE = re.compile(r"\bVERIFIED\b\s*:?")
+# An entry's LEADING item token, then any tag the reviewer added before the dash. Live
+# forms: `1 — evidence`, `1 (structure) — evidence`, `3 (commands) — evidence`. Only the
+# head of an entry counts: the evidence itself is full of numbers (line counts, file:line,
+# totals), and reading those as ticks fails a correct list for citing its own work.
+# An entry STARTS at a sentence or list boundary — the live list separated its entries
+# with `; ` AND with `. `, so splitting on one of them read two entries as one and found a
+# single tick in a list of six.
+_ITEM_LEAD = re.compile(r"(?:^|[;\n]\s*|[.]\s+)\s*\(?([0-9]{1,2}|[a-f])\)?\s*"
+                        r"(?:\([A-Za-z][A-Za-z /-]{0,23}\))?\s*"
+                        r"(?:[A-Za-z][A-Za-z /-]{0,18})?\s*[-—–:]")
+
+
+def verified_items(verdict_text):
+    """The items a verdict's VERIFIED list names — from the HEAD of each entry only."""
+    m = _VERIFIED_RE.search(verdict_text or "")
+    if not m:
+        return set()
+    return {x.lower() for x in _ITEM_LEAD.findall((verdict_text or "")[m.end():])}
+
+
+def cited_items(verdict_text):
+    """The items a verdict's findings name — `Item 5`, `item b`, `ITEM 5`."""
+    m = _VERIFIED_RE.search(verdict_text or "")
+    head = (verdict_text or "")[:m.start()] if m else (verdict_text or "")
+    return {x.lower() for x in re.findall(r"\bitems?\s*\(?([0-9]{1,2}|[a-f])\b", head, re.I)}
+
+
+def frozen_items(verdict_text):
+    """What a revision must leave byte-identical: the ticks MINUS the items findings name.
+
+    A verdict can both tick and reject the same item — measured 2026-09-27, a live one
+    ticked items 1, 3 and 4 and named items 1, 4, 5 and 7 in its findings. Freezing what a
+    finding asks to change is the one thing the ledger must never do, so the finding wins
+    and the overlap is dropped. The tick is evidence the reviewer looked; the finding is
+    the instruction.
+    """
+    return verified_items(verdict_text) - cited_items(verdict_text)
+
+
+def item_sort_key(item):
+    return (0, int(item)) if item.isdigit() else (1, item)
 
 
 def rework_owner(verdict_text):
@@ -3025,6 +3080,23 @@ def triage_halt_reason(card):
     return f"{msg} ({text})" if text else msg
 
 
+DEAD_WORKER = re.compile(r"\bpid \d+ (?:not alive|exited with code|killed by signal)\b")
+
+
+def worker_moved_on(events, crash_at):
+    """True when the card ran again after `crash_at` — a spawn, a heartbeat, a completion.
+
+    A dead-worker reclaim is a LIVENESS event, not a content failure: the dispatcher
+    re-spawns the card by itself, and by the time the driver ticks it usually has. Halting
+    the board on one stops a run whose retry is already in flight — measured 2026-09-27:
+    RVp1-r4 was reclaimed as "pid 329824 not alive" (an earlier attempt's pid) and the
+    retry that was already running reached PASS in that same minute, five minutes after
+    the driver had halted on it.
+    """
+    return any((e.get("created_at") or 0) > crash_at for e in events
+               if e.get("kind") in ("spawned", "heartbeat", "completed"))
+
+
 def halt_if_exhausted(st):
     """Stop the whole driver the moment any card gives up: retries exhausted,
     max_runtime reached, or a rework loop escalated.
@@ -3110,6 +3182,16 @@ def halt_if_exhausted(st):
                     and ("protocol violation" in str(p.get("reason") or "")
                          or p.get("trigger") == "crashed")):
                 requeue_provider_starved(c, hits, lanes_of.get(title, 1))
+                continue
+            # The dispatcher reclaiming a dead worker is a liveness event, and it
+            # re-spawns the card on its own. Only a reclaim with NOTHING since is the
+            # card being stuck; one whose retry has already run is history, and halting
+            # on it stops a board that is working (worker_moved_on has the measurement).
+            if (p.get("kind") == "gave_up"
+                    and DEAD_WORKER.search(str(p.get("reason") or ""))
+                    and worker_moved_on(events, p.get("at") or 0)):
+                log(f"{title.split(':')[0]}: {str(p.get('reason') or '')[:70]} — this card "
+                    f"has run again since; not halting the board on a worker-liveness event")
                 continue
             reason_txt = str(p.get("reason") or "")
             break

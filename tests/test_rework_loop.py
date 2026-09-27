@@ -1,5 +1,6 @@
 import json
 import os
+import pathlib
 import re
 import sys
 
@@ -765,8 +766,59 @@ def test_the_frozen_note_is_in_every_rework_tail():
     code loop's is drift no other test can see."""
     code = run.rework_tail(1, 3, "REJECT: (c) red test", "The implementation review returned the work.",
                            "Re-stage your files.")
-    assert "FROZEN" in code and "VERIFIED" in run.FROZEN_NOTE
+    # The freeze is COMPUTED and stated, so every tail carries a decision even when there is
+    # nothing to freeze ("Nothing is FROZEN this round") — an omitted line would read as an
+    # omitted rule, which is the drift this test exists for.
+    assert "FROZEN" in code and "Nothing is FROZEN this round" in code
     assert "(c) red test" in code
+
+
+# --- the ledger's readers, and the freeze the driver computes from them -------------
+
+# The verdict a live run actually wrote, pinned verbatim: it ticks items 1, 3 and 4 AND
+# names items 1, 4, 5 and 7 in its findings — the self-contradiction the computed freeze
+# exists to survive (2026-09-27). Paraphrasing it into a literal would have lost the case.
+LIVE_VERDICT = (pathlib.Path(__file__).parent / "integration" / "fixtures" / "recorded"
+                / "rvp-inconsistent-ledger.txt").read_text()
+
+
+def test_the_ledger_reader_takes_each_entry_head_only():
+    """The evidence itself is full of numbers — line counts, `file:line`, test totals. A
+    reader that scans for digits reads those as ticks and fails a correct list for citing
+    its own work."""
+    assert run.verified_items(LIVE_VERDICT) == {"1", "2", "3", "4", "6", "8"}
+    assert run.cited_items(LIVE_VERDICT) == {"1", "3", "4", "5", "7"}
+
+
+def test_an_entry_may_carry_a_tag_before_its_dash_and_end_with_a_period():
+    """`1 (structure) — evidence` is a live form, and the live list separated entries with
+    `. ` as well as `; `: a reader that demands `<n> —` read a six-item ledger as one item
+    (measured 2026-09-27)."""
+    assert run.verified_items("PASS: ok. VERIFIED: 1 (structure) — a. 2 (commands) — b. "
+                              "b (tests) — c.") == {"1", "2", "b"}
+
+
+def test_the_freeze_never_names_an_item_a_finding_rejects():
+    """The one thing the ledger must not do. A tick is evidence the reviewer looked; the
+    finding is the instruction, so where they disagree the finding wins."""
+    assert run.frozen_items(LIVE_VERDICT) == {"2", "6", "8"}
+
+
+def test_a_verdict_with_no_ledger_freezes_nothing():
+    assert run.verified_items("REJECT: 1 — broken.") == set()
+    assert run.frozen_items("REJECT: 1 — broken.") == set()
+
+
+def test_nothing_is_frozen_when_every_ticked_item_is_also_named():
+    only_overlap = "REJECT: item 4 broken. VERIFIED: 4 — it was checked."
+    assert run.frozen_items(only_overlap) == set()
+
+
+def test_the_tail_states_the_computed_freeze_and_says_what_is_not_frozen(capsys):
+    tail = run.rework_tail(1, 3, LIVE_VERDICT, "The plan review sent this back.", "Re-stage.")
+    assert "FROZEN — leave byte-identical: items 2, 6, 8." in tail
+    assert "NOT frozen" in tail, "the tail must say what is NOT frozen, not only what is"
+    assert "ticks items it also rejects (1, 3, 4)" in capsys.readouterr().out
 
 
 def test_rework_churn_counts_hunk_lines_only():

@@ -171,6 +171,61 @@ def test_a_flake_below_the_threshold_still_halts(monkeypatch):
     assert not run.STATE.requeued
 
 
+# --- a dead worker is liveness, not content: its retry may already be running ------
+
+DEAD_WORKER_EVENT = {"kind": "gave_up", "at": 100.0, "trigger": "crashed",
+                     "reason": "pid 329824 not alive Worker's last output: "
+                               "'Interrupted during API call.'"}
+
+
+def _dead_worker_harness(monkeypatch, event, events):
+    calls = _halt_harness(monkeypatch, None, event)
+    monkeypatch.setattr(run, "kb", lambda *a: json.dumps({"events": events}))
+    return calls
+
+
+def test_a_dead_worker_with_a_retry_already_running_does_not_halt_the_board(monkeypatch):
+    """Measured 2026-09-27 on roman-evaluator-liferay-client-ext: the dispatcher reclaimed
+    RVp1-r4 as "pid 329824 not alive" — an EARLIER attempt's pid — while the retry was
+    already in flight, and that retry reached PASS in the same minute. The driver halted
+    the board on the reclaim, so the run it watched died for work that had succeeded.
+    """
+    events = [{"kind": "spawned", "created_at": 160.0},     # the retry, after the reclaim
+              {"kind": "heartbeat", "created_at": 170.0}]
+    _dead_worker_harness(monkeypatch, dict(DEAD_WORKER_EVENT), events)
+    st = {"C2: code - lane 2": card("C2: code - lane 2")}
+    assert run.halt_if_exhausted(st) is None
+    assert not run.STATE.halted["reason"]
+
+
+def test_a_dead_worker_with_nothing_since_still_halts(monkeypatch):
+    """A reclaim with no newer attempt is the card genuinely stuck — the state the halt
+    is for, and the reason the allowance above cannot be a blanket one."""
+    _dead_worker_harness(monkeypatch, dict(DEAD_WORKER_EVENT),
+                         [{"kind": "heartbeat", "created_at": 90.0}])
+    st = {"C2: code - lane 2": card("C2: code - lane 2")}
+    reason = run.halt_if_exhausted(st)
+    assert reason and "not alive" in reason
+
+
+def test_a_content_failure_halts_even_with_a_newer_attempt(monkeypatch):
+    """The allowance is for liveness only: a card whose worker keeps exiting without a
+    terminal call is failing, whatever else has run since."""
+    _dead_worker_harness(monkeypatch, dict(PROTOCOL, at=100.0),
+                         [{"kind": "spawned", "created_at": 160.0}])
+    st = {"C2: code - lane 2": card("C2: code - lane 2")}
+    assert run.halt_if_exhausted(st)
+
+
+def test_the_moved_on_reader_ignores_events_older_than_the_reclaim():
+    """The comparison is against the reclaim's own timestamp: a card that only has
+    history BEFORE it has not run since."""
+    assert run.worker_moved_on([{"kind": "spawned", "created_at": 99.0}], 100.0) is False
+    assert run.worker_moved_on([{"kind": "spawned", "created_at": 100.0}], 100.0) is False
+    assert run.worker_moved_on([{"kind": "spawned", "created_at": 101.0}], 100.0) is True
+    assert run.worker_moved_on([], 100.0) is False
+
+
 def test_the_halt_guidance_walks_the_recovery_it_took_a_halt_to_learn():
     """Restarting the driver does not resume a halted lane: the halted card is blocked
     by the DRIVER's own mark (HALTED:), which the driver never releases, and a card
