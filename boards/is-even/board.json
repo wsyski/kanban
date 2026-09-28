@@ -5,7 +5,6 @@
   "lanes": 1,
   "unit-tests": true,
   "integration-tests": false,
-  "default-workdir": "/opt/projects/kanban/main/kanban/boards/is-even/work",
   "auto-gates": [
     "Gi",
     "Gp",
