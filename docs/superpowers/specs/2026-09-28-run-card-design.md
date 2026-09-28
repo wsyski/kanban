@@ -24,8 +24,9 @@ test; the revision it would trigger is a separate invocation.
    title, in `chain.jsonl` order (`cards/<id>.jsonl` for title, body and full result),
    except the card under test's own title. No cutoff at the card's earlier start, so RVp1
    run on a copy and then P1-rev-1 on the same copy sees the new REJECT. Stubs are filed
-   blocked with assignee `human-gate`, completed with their original result, and given
-   their hand-off files from `scratch/<original-id>/` as attachments. The card under test
+   blocked with assignee `human-gate`, unblocked and completed with their original result
+   (the order the driver's auto-gate completes a parked card in), and given their hand-off
+   files from `scratch/<original-id>/` as attachments. The card under test
    is linked to the stubs of its lane-graph parents.
 5. **Output**: the card writes into the run as usual (hand-offs under
    `scratch/<new-card-id>/`, `artifacts/`, the work tree). The harness writes the driver's
@@ -42,7 +43,9 @@ test; the revision it would trigger is a separate invocation.
    matching `OWNER:` for C/TW/TI) or a `REWORK` from Gi for I. Otherwise the harness refuses
    and says what is missing. The trigger is read with the driver's `latest_verdict_card`,
    with the same findings reader, sender, cap and verdict text `rework_rounds` passes per
-   loop (an UNPROBED REJECT files a probe retry, not a revision, so it is no trigger). The
+   loop (an UNPROBED REJECT files a probe retry, not a revision, so it is no trigger). A
+   round past `max-reworks` is refused (production escalates instead), and so is a verdict
+   completed summary-only (the run keeps 400 characters of a summary). The
    revision body is composed by a function extracted from `file_revision`/
    `file_code_revision`, shared by driver and harness. A test proves the two bodies are
    equal. Re-review rounds (`RVp<l>-r<k>`, `RVa<l>-r<k>`) run when the run holds a done
@@ -52,16 +55,21 @@ test; the revision it would trigger is a separate invocation.
    revision stub as parent. `judged` is the version the review before the revision judged.
    Probe-retry rounds and the Gi re-gate are not runnable (Gi is a gate).
 8. **Guards**: the harness takes the board's `driver.lock` (refuses while a driver runs);
-   gate cards are refused (they run no worker); the one-card board is removed on every exit
-   path unless `--keep`.
+   gate cards are refused (they run no worker); on every exit path the card's worker is
+   stopped — a dispatcher-spawned worker outlives its board — and the one-card board is
+   removed unless `--keep`.
 9. **Exit code**: non-zero unless the card reached `done` AND the driver's own readers can
-   read what it needs — a review's PASS/REJECT token and VERIFIED ticks, a worker's
+   read what it needs — a review's PASS/REJECT token and VERIFIED ticks as
+   `latest_verdict_card` reads them (summary fallback, and an RVp PASS without its probe
+   log reads as a REJECT), a worker's
    `CHANGED:`/`NO CHANGE:` line, and the card's hand-off file. Content expectations belong to
    tests.
 10. **Tests**: `tests/integration/replay_card.py`, `verdicts/`, `fixtures/recorded/` and the
     loose fixtures are replaced by one committed fixture board
     (`tests/integration/fixtures/greet/`) whose run holds a refined idea, a plan with planted
-    defects and a recorded RVp REJECT. The LLM-gated test copies it to tmp and runs RVp1
+    defects and a recorded RVp REJECT. The ledger reader's pinned live verdict
+    (`rvp-inconsistent-ledger.txt`, read by `tests/test_rework_loop.py`) stays, one level up.
+    The LLM-gated test (`tests/integration/test_run_card_live.py`) copies it to tmp and runs RVp1
     (must REJECT) and P1-rev-1 (must be surgical). It runs through `./test.sh`,
     skipped unless `KANBAN_LLM_TESTS=1`. Integration runs stay on the local model
     — the fixture's `board.json` names it.
