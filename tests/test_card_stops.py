@@ -34,6 +34,7 @@ def _driver_memory():
         run.STATE.tick_error.update(sig=None, n=0)
         run.STATE.read_error.clear()
         run.STATE.unreadable_ticks.clear()
+        run.STATE.quiet_since[0] = None
     clear()
     yield
     clear()
@@ -1311,9 +1312,7 @@ def test_the_deadman_ignores_unreadable_cards(monkeypatch):
 # ---- the Hermes board itself removed under a driver ------------------------
 
 def test_a_removed_board_halts_at_once_naming_it(monkeypatch):
-    """A driver exits with the run it drove, so every removed board is met mid-run or before
-    the first arm: the old "the run had finished, exit 0 quietly" case went with the idle
-    loop (2026-09-28). The halt names the board and how to re-file it."""
+    """Mid-run, a removed board is a halt that names the board and how to re-file it."""
     halts = []
     monkeypatch.setattr(run, "BOARD", "b1")
     monkeypatch.setattr(run, "log", lambda m: None)
@@ -1321,6 +1320,19 @@ def test_a_removed_board_halts_at_once_naming_it(monkeypatch):
     gone = RuntimeError("kb ('list', '--json'): kanban: board 'b1' does not exist. Create it")
     assert run.board_removed_exit(gone) == 1
     assert "was removed under a live run" in halts[0] and "create-board.sh" in halts[0]
+
+
+def test_a_removed_board_met_while_waiting_for_an_idea_is_an_exit(monkeypatch):
+    """No run is in flight while a driver waits for its idea: the run it would halt is one
+    that never opened a lane or already finished, and a halt.txt there audits a finished run
+    as halted (blade-workspace, 2026-09-15). BOARD REMOVED, exit 0, no halt."""
+    halts, lines = [], []
+    monkeypatch.setattr(run, "BOARD", "b1")
+    monkeypatch.setattr(run, "log", lines.append)
+    monkeypatch.setattr(run, "record_halt", halts.append)
+    gone = RuntimeError("kb ('list', '--json'): kanban: board 'b1' does not exist. Create it")
+    assert run.board_removed_exit(gone, waiting=True) == 0
+    assert halts == [] and any(m.startswith("BOARD REMOVED") for m in lines), lines
 
 
 def test_other_errors_and_other_boards_are_not_a_removal(monkeypatch):
@@ -1479,3 +1491,280 @@ def test_an_unreadable_card_is_counted_once_per_tick_whichever_scan_asks():
     assert run.count_unreadable("c") == 1
     run.STATE.tick_serial[0] += 1
     assert run.count_unreadable("c") == 2
+
+
+# --- a halt that recurs on the same card, and the timeout's one block -------------------
+
+
+def test_a_second_exhaustion_on_the_same_card_comments_again(monkeypatch, tmp_path):
+    """escalate() comments once per key per run, rejoined from the ledger on restart. Keyed
+    by the card's code, the SECOND exhaustion of a card — after the human fixed the cause,
+    released the block and restarted — reached halt.txt and the notice, never the card
+    (2026-09-28 review, item 2). The same exhaustion met again by a restart stays one
+    comment."""
+    calls = _halt_harness(monkeypatch, 0, {"kind": "gave_up", "at": 100.0,
+                                           "reason": "provider refused: 401"})
+    _ledger_env(monkeypatch, tmp_path)
+    st = {"C2: code - lane 2": card("C2: code - lane 2", "c2")}
+
+    def restart():
+        run.STATE.halted["reason"] = None
+        run.STATE.escalated.clear()
+        run.rejoin_chain()
+        calls.clear()
+
+    assert run.halt_if_exhausted(st)
+    assert len([c for c in _comments(calls) if c.startswith("ESCALATION")]) == 1
+    restart()                                          # nothing fixed: the same event
+    assert run.halt_if_exhausted(st)
+    assert _comments(calls) == [], calls
+    restart()                                          # fixed, released, failed again
+    monkeypatch.setattr(run, "_exhaustion_event", lambda cid, events=None: {
+        "kind": "gave_up", "at": 200.0, "reason": "provider refused: 429"})
+    assert run.halt_if_exhausted(st)
+    comments = _comments(calls)
+    assert len(comments) == 1 and "429" in comments[0], comments
+
+
+def test_a_timeout_halt_blocks_the_card_once(monkeypatch, tmp_path):
+    """stop_a_timeout blocks the card; the halt that follows read the pass's snapshot
+    (`ready`), blocked it a second time, and the CLI's refusal was logged as a failed block
+    — with the HALTED: mark never applied (2026-09-28 review, item 3)."""
+    calls = _halt_harness(monkeypatch, 0, {"kind": "timed_out", "at": 100.0,
+                                           "reason": "runtime ceiling reached"})
+    _ledger_env(monkeypatch, tmp_path)
+    lines = []
+    monkeypatch.setattr(run, "log", lines.append)
+    st = {"C2: code - lane 2": card("C2: code - lane 2", "c2", status="ready")}
+    assert run.halt_if_exhausted(st)
+    blocks = [c for c in calls if c[0] == "block"]
+    assert len(blocks) == 1 and blocks[0][4].startswith(run.TIMEOUT_BLOCK_MARK), calls
+    assert not [m for m in lines if "could not block" in m], lines
+
+
+def test_a_refused_timeout_block_is_still_retried_by_the_halt(monkeypatch, tmp_path):
+    """The one case a second block is worth it: the first was refused (the card was
+    re-claimed a heartbeat ago), and an unblocked card is re-spawned with no driver."""
+    calls = []
+
+    def kb(*a):
+        calls.append(a)
+        if a[0] == "block" and len([c for c in calls if c[0] == "block"]) == 1:
+            raise RuntimeError("kb ('block',): refused")
+        return json.dumps({"events": []})
+    _halt_harness(monkeypatch, 0, {"kind": "timed_out", "at": 100.0, "reason": "ceiling"})
+    _ledger_env(monkeypatch, tmp_path)
+    monkeypatch.setattr(run, "kb", kb)
+    st = {"C2: code - lane 2": card("C2: code - lane 2", "c2", status="ready")}
+    assert run.halt_if_exhausted(st)
+    blocks = [c for c in calls if c[0] == "block"]
+    assert len(blocks) == 2 and blocks[1][4].startswith(run.HALT_BLOCK_MARK), calls
+
+
+# --- quiescence: the backstop for a wedge no specific stop names -------------------------
+
+
+def _quiet_board(monkeypatch, tmp_path, cards, opened=(1,)):
+    calls = []
+    _ledger_env(monkeypatch, tmp_path)
+    monkeypatch.setattr(run, "kb", lambda *a: calls.append(a) or "")
+    monkeypatch.setattr(run, "board", lambda: cards)
+    monkeypatch.setattr(run, "opened_lanes", lambda st: list(opened))
+    monkeypatch.setattr(run, "is_parked", lambda c: c.get("parked", False))
+    monkeypatch.setattr(run, "block_reason_text", lambda c: c.get("why", ""))
+    now = [1000.0]
+    monkeypatch.setattr(run.time, "time", lambda: now[0])
+    return calls, now
+
+
+WEDGED = {
+    "C2: code - lane 1": card("C2: code - lane 1", "c2", why="needs the schema from P1"),
+    "TW2: tests - lane 1": card("TW2: tests - lane 1", "tw2", parked=True),
+    "P1: plan - lane 1": card("P1: plan - lane 1", "p1", status="done"),
+}
+
+
+def test_a_live_run_with_nothing_in_flight_halts_after_the_window(monkeypatch, tmp_path):
+    calls, now = _quiet_board(monkeypatch, tmp_path, WEDGED)
+    w = run.STATE.mutations[0]
+    assert run.halt_if_quiescent(w, False) is False          # the streak begins
+    now[0] += run.QUIESCENT_S - 1
+    assert run.halt_if_quiescent(w, False) is False
+    now[0] += 1
+    assert run.halt_if_quiescent(w, False) is True
+    reason = run.STATE.halted["reason"]
+    assert reason.startswith("C2: quiescent — "), reason
+    assert "C2 (needs the schema from P1)" in reason, reason
+    assert [c for c in _comments(calls) if c.startswith("ESCALATION")], calls
+
+
+@pytest.mark.parametrize("why,cards,wrote,gate,opened", [
+    ("a card is running",
+     {**WEDGED, "RV1: review": card("RV1: review", "rv", status="running")}, False, False, (1,)),
+    ("a card is ready (a rate-limit cooldown)",
+     {**WEDGED, "RV1: review": card("RV1: review", "rv", status="ready")}, False, False, (1,)),
+    ("the driver wrote this tick", WEDGED, True, False, (1,)),
+    ("a human gate is held", WEDGED, False, True, (1,)),
+    ("no lane has opened (waiting for the idea)", WEDGED, False, False, ()),
+])
+def test_waiting_is_not_a_wedge(monkeypatch, tmp_path, why, cards, wrote, gate, opened):
+    calls, now = _quiet_board(monkeypatch, tmp_path, cards, opened)
+    w = run.STATE.mutations[0] - (1 if wrote else 0)
+    for _ in range(3):
+        assert run.halt_if_quiescent(w, gate) is False, why
+        now[0] += run.QUIESCENT_S
+    assert not run.STATE.halted["reason"], why
+    assert run.STATE.quiet_since[0] is None, why
+
+
+def test_movement_restarts_the_quiet_window(monkeypatch, tmp_path):
+    calls, now = _quiet_board(monkeypatch, tmp_path, WEDGED)
+    w = run.STATE.mutations[0]
+    run.halt_if_quiescent(w, False)
+    now[0] += run.QUIESCENT_S - 60
+    run.halt_if_quiescent(w - 1, False)                   # a write: the window restarts
+    now[0] += 120
+    assert run.halt_if_quiescent(w, False) is False
+    assert not run.STATE.halted["reason"]
+
+
+# --- a refused re-queue does not spend the one-shot -------------------------------------
+
+
+def _requeue_env(monkeypatch, tmp_path, status_after, unblock_ok=False):
+    calls = []
+    _ledger_env(monkeypatch, tmp_path)
+
+    def kb(*a):
+        calls.append(a)
+        if a[0] == "unblock" and not unblock_ok:
+            raise RuntimeError("kb ('unblock',): cannot unblock (not blocked/scheduled?)")
+        if a[0] == "show":
+            return json.dumps({"task": {"status": status_after}, "events": []})
+        return ""
+    monkeypatch.setattr(run, "kb", kb)
+    monkeypatch.setattr(run, "repin_before_release", lambda *a: None)
+    monkeypatch.setattr(run, "mark_attempt", lambda c, offset=None: calls.append(("mark",)))
+    run.STATE.requeue_failed.clear()
+    return calls
+
+
+def test_a_requeue_marks_the_attempt_only_after_the_unblock(monkeypatch, tmp_path):
+    """mark_attempt before a refused unblock recorded an attempt that never started."""
+    calls = _requeue_env(monkeypatch, tmp_path, "ready", unblock_ok=True)
+    c = card("RVp1: plan review - lane 1", "rv", status="blocked")
+    assert run.requeue_provider_starved(c, 7, 1) == "requeued"
+    order = [a[0] for a in calls if a[0] in ("unblock", "mark")]
+    assert order == ["unblock", "mark"], order
+
+
+def test_a_card_already_back_in_the_engines_hands_counts_as_its_requeue(monkeypatch, tmp_path):
+    """Run 1 (2026-09-27): `cannot unblock … (not blocked)` — the engine was retrying it."""
+    calls = _requeue_env(monkeypatch, tmp_path, "ready")
+    c = card("RVp1: plan review - lane 1", "rv", status="blocked")
+    assert run.requeue_provider_starved(c, 7, 1) == "requeued"
+    assert "rv" in run.STATE.requeued
+    assert any(a[0] == "comment" for a in calls)
+
+
+def test_a_refused_requeue_is_retried_then_lets_the_exhaustion_stand(monkeypatch, tmp_path):
+    calls = _requeue_env(monkeypatch, tmp_path, "blocked")
+    c = card("RVp1: plan review - lane 1", "rv", status="blocked")
+    results = [run.requeue_provider_starved(c, 7, 1) for _ in range(run.REQUEUE_TRIES)]
+    assert results == ["retry"] * (run.REQUEUE_TRIES - 1) + ["failed"]
+    assert "rv" not in run.STATE.requeued, "nothing was re-queued, so nothing is spent"
+    assert ("mark",) not in calls, "a refused unblock started no attempt"
+    assert not any(a[0] == "comment" for a in calls), "no RE-QUEUED comment for a refusal"
+
+
+# --- toolchain facts: what a finished run learned, carried to the next ------------------
+
+
+def _facts_env(monkeypatch, tmp_path):
+    monkeypatch.setattr(run, "REPO", str(tmp_path))
+    monkeypatch.setattr(run, "BOARD", "b")
+    monkeypatch.setattr(run, "log", lambda m: None)
+    monkeypatch.setattr(run, "_read_current_run", lambda: "run-1")
+    monkeypatch.setattr(run, "board_lane_count", lambda st: 1)
+    (tmp_path / "boards" / "b").mkdir(parents=True)
+    return tmp_path / "boards" / "b" / "toolchain-facts.md"
+
+
+def _facts_state(rva_result, rvc_result=None, gc="done"):
+    st = {
+        "C1: implement - lane 1": card("C1: implement - lane 1", "c1", status="done",
+            result="CHANGED: x — DEVIATION: Task 1 Step 1: plugins {} → buildscript classpath, "
+                   "because the marker 404s — DEVIATION: Task 1 Step 2: nodeDownload → "
+                   "subprojects { node { download = false } }, because unknown property"),
+        "RVa1: code review - lane 1": card("RVa1: code review - lane 1", "rva", status="done",
+            completed_at=10, result=rva_result),
+        "Gc1: code gate - lane 1": card("Gc1: code gate - lane 1", "gc", status=gc),
+    }
+    if rvc_result:
+        st["RVc1: final review - lane 1"] = card("RVc1: final review - lane 1", "rvc",
+                                                 status="done", completed_at=20, result=rvc_result)
+    return st
+
+
+def test_the_accepted_deviations_reach_the_boards_toolchain_facts(monkeypatch, tmp_path):
+    facts = _facts_env(monkeypatch, tmp_path)
+    st = _facts_state(
+        "PASS: (a)-(f) hold. DEVIATION: Task 1 Step 1: plugins {} → buildscript "
+        "classpath, because the marker 404s VERIFIED: (a) — x",
+        rvc_result="PASS: suite green. DEVIATION: Task 2 Step 1: vitest.config.js → "
+                   "vitest.config.mjs, because ESM only VERIFIED: (a) — y")
+    assert run.append_toolchain_facts(st) == 2
+    text = facts.read_text()
+    assert "## run-1 — accepted at the code gate" in text
+    assert "plugins {} → buildscript classpath, because the marker 404s (accepted by RVa1)" in text
+    assert "vitest.config.mjs, because ESM only (accepted by RVc1)" in text
+    assert "nodeDownload" not in text, "a DEVIATION no review named is not a fact"
+    assert run.FACTS_HEADER in text
+    assert run.append_toolchain_facts({}) == 0
+
+
+def test_the_facts_are_appended_once_per_run(monkeypatch, tmp_path):
+    facts = _facts_env(monkeypatch, tmp_path)
+    st = _facts_state("PASS: ok. DEVIATION: Task 1 Step 1: a → b, because c")
+    assert run.append_toolchain_facts(st) == 1
+    assert run.append_toolchain_facts(st) == 0, "a restart finishing the same run again"
+    assert facts.read_text().count("## run-1") == 1
+
+
+def test_none_prose_a_reject_or_an_unpassed_gate_adds_no_fact(monkeypatch, tmp_path):
+    facts = _facts_env(monkeypatch, tmp_path)
+    assert run.append_toolchain_facts(_facts_state("PASS: ok. DEVIATION: none")) == 0
+    assert run.append_toolchain_facts(_facts_state(
+        "PASS: ok. DEVIATION: the plan was followed")) == 0
+    assert run.append_toolchain_facts(_facts_state(
+        "REJECT: 1. x. DEVIATION: Task 1 Step 1: a → b, because c")) == 0
+    assert run.append_toolchain_facts(_facts_state(
+        "PASS: ok. DEVIATION: Task 1 Step 1: a → b, because c", gc="blocked")) == 0
+    assert not facts.exists()
+
+
+def test_only_the_newest_pass_of_a_review_family_carries_its_deviations(monkeypatch, tmp_path):
+    """RVa PASS → RVc REJECT → a code revision → RVa-r2 PASS: the revision may have
+    reverted what the first PASS accepted, so only the newest verdict counts."""
+    facts = _facts_env(monkeypatch, tmp_path)
+    st = _facts_state("PASS: ok. DEVIATION: Task 1 Step 1: a → b, because c")
+    st["RVc1: final review - lane 1"] = card("RVc1: final review - lane 1", "rvc",
+                                             status="done", completed_at=20, result="REJECT: 1. x")
+    st["RVa1-r2: implementation re-review round 2 - lane 1"] = card(
+        "RVa1-r2: implementation re-review round 2 - lane 1", "rva2", status="done",
+        completed_at=30, result="PASS: ok. DEVIATION: Task 1 Step 2: d → e, because f")
+    assert run.append_toolchain_facts(st) == 1
+    text = facts.read_text()
+    assert "d → e, because f (accepted by RVa1-r2)" in text and "a → b" not in text
+
+
+def test_a_finished_run_prunes_its_probe_trees_dependencies(monkeypatch, tmp_path):
+    monkeypatch.setattr(run.STATE, "run_dir", str(tmp_path))
+    monkeypatch.setattr(run, "log", lambda m: None)
+    tree = tmp_path / "scratch" / "c1" / "probe" / "tree"
+    (tree / "node_modules" / "x").mkdir(parents=True)
+    (tree / "src").mkdir()
+    (tree / "src" / "a.js").write_text("a\n")
+    (tmp_path / "scratch" / "c2").mkdir()
+    assert run.prune_probe_trees() == 1
+    assert not (tree / "node_modules").exists() and (tree / "src" / "a.js").exists()

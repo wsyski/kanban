@@ -433,15 +433,18 @@ def test_patches_land_in_the_runs_own_directory(monkeypatch, tmp_path):
     monkeypatch.setattr(r, "board", lambda: {"C1: implement - lane 1": {"id": "t_c"}})
     attachments = tmp_path / "kanban" / "boards" / "b" / "attachments" / "t_c"
     attachments.mkdir(parents=True)
-    (attachments / "t_c.patch").write_text("diff --git a/x b/x\n")
+    # The hand-offs as the cards name them (patch.diff, test-fix.diff) — the old `*.patch`
+    # glob matched none of them and every run's patches/ stayed empty (2026-09-28).
+    (attachments / "patch.diff").write_text("diff --git a/x b/x\n")
+    (attachments / "test-fix.diff").write_text("diff --git a/t b/t\n")
     r.preserve_artifacts()
     patches = os.path.join(r.STATE.run_dir, "patches")
-    assert sorted(os.listdir(patches)) == ["t_c.patch"]
-    assert open(os.path.join(patches, "t_c.patch")).read() == "diff --git a/x b/x\n"
+    assert sorted(os.listdir(patches)) == ["t_c-patch.diff", "t_c-test-fix.diff"]
+    assert open(os.path.join(patches, "t_c-patch.diff")).read() == "diff --git a/x b/x\n"
     # idempotent: a later, different copy of the same patch must not replace what was kept
-    (attachments / "t_c.patch").write_text("diff --git a/other b/other\n")
+    (attachments / "patch.diff").write_text("diff --git a/other b/other\n")
     r.preserve_artifacts()
-    assert open(os.path.join(patches, "t_c.patch")).read() == "diff --git a/x b/x\n"
+    assert open(os.path.join(patches, "t_c-patch.diff")).read() == "diff --git a/x b/x\n"
 
 
 def test_a_run_with_no_attachments_says_so(monkeypatch, tmp_path):
@@ -636,7 +639,7 @@ def test_the_writers_do_not_follow_a_symlink_planted_at_the_temp_path(monkeypatc
     monkeypatch.setattr(r, "expected_workdir_facts", lambda: {})
     monkeypatch.setattr(r, "board_lane_count", lambda state: 0)
     monkeypatch.setattr(r, "workdir_facts", lambda: {"repo": None, "workdir": str(tmp_path)})
-    monkeypatch.setattr(r.card_render, "workdir_state", lambda workdir, board: "empty")
+    monkeypatch.setattr(r.card_render, "workdir_state", lambda workdir, board, when="open": "empty")
     monkeypatch.setattr(r.runs_util, "board_runs", lambda board, cid: None)
     monkeypatch.setattr(r.STATE, "run_dir", str(tmp_path / "run-1"))
     monkeypatch.setattr(r.STATE, "snap_dir", str(tmp_path / "snapshots"))
@@ -680,7 +683,7 @@ def test_the_idea_snapshot_does_not_follow_a_planted_temp_symlink(monkeypatch, t
     monkeypatch.setattr(r, "BOARD_DIR", str(tmp_path))
     monkeypatch.setattr(r, "manifest", lambda: {})
     monkeypatch.setattr(r, "workdir_facts", lambda: {"repo": None, "workdir": str(tmp_path)})
-    monkeypatch.setattr(r.card_render, "workdir_state", lambda workdir, board: "empty")
+    monkeypatch.setattr(r.card_render, "workdir_state", lambda workdir, board, when="open": "empty")
     monkeypatch.setattr(r.lanes, "lane_cards", lambda lane, **kw: [])
     monkeypatch.setattr(r, "lane_paths_agree", lambda state, lane: True)
     monkeypatch.setattr(r, "lane_opened_on_record", lambda lane: False)

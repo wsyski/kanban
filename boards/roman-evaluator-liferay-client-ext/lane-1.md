@@ -5,14 +5,14 @@ on any Liferay page — implementing a roman number evaluator with **the React a
 already loads**, styled by the CSS the portal already provides, deployable to the local
 Liferay Portal CE 7.4 GA129 bundle:
 
-    /opt/projects/liferay/portal/arena-7.4.3.129-ga129/bundles
+    /opt/liferay/portal/arena-7.4.3.129-ga129/bundles
 
 ### Target portal: Arena Liferay Portal
 
 The portal is the **Arena Liferay Portal**, Axiell's fork of Liferay Portal CE 7.4.3.129
 GA129:
 
-- Source: `/opt/projects/liferay/portal/arena-7.4.3.129-ga129/portal`, branch
+- Source: `/opt/liferay/portal/arena-7.4.3.129-ga129/portal`, branch
   `arena-7.4.3.129-ga129`, base tag `7.4.3.129-ga129`. Read its `AGENTS.md` and
   `DESIGN.md` first. The Axiell vault describes it in
   `/home/wos/Documents/Obsidian/Axiell/wiki/entities/Arena-Liferay-Portal.md` and
@@ -20,7 +20,7 @@ GA129:
   every card.
 - Client extensions (`modules/apps/client-extension/`) are upstream code here; the
   `liferay-expert` skill says how to check for Arena (`PLCB-*`) changes.
-- Runtime bundle: `/opt/projects/liferay/portal/arena-7.4.3.129-ga129/bundles`,
+- Runtime bundle: `/opt/liferay/portal/arena-7.4.3.129-ga129/bundles`,
   with Tomcat in `tomcat-9.0.90/`, client extensions loaded from `osgi/client-extensions/`,
   logs in `tomcat-9.0.90/logs/catalina.out` and `logs/liferay.*.log`, and the OSGi shell
   on `telnet localhost 11611`.
@@ -70,18 +70,20 @@ of a client extension. Nothing of its toolchain (wrapper, Node pin) is taken:
   `gradle.properties` declares `dxp-2023.q4.5`, and `build.gradle` pins
   `node { nodeVersion = "16.15.1" }`. None of the three is copied as is.
 
-**`/home/playground/liferay/workspaces/blade-workspace`** — the root files, on the GA129
+**`/opt/playground/liferay/workspaces/blade-workspace`** — the root files, on the GA129
 line:
 
 - `settings.gradle` applies `com.liferay.workspace` from `mavenLocal()`,
   `repository-cdn.liferay.com`, `mavenCentral()` and `gradlePluginPortal()`, with the
-  plugin version from a property (`12.1.0`). `work/settings.gradle` copies this shape
-  and writes the version **literally** (`12.1.0`), since `work/gradle.properties`
-  does not carry that property.
+  plugin version from a property (`12.1.0`). `work/settings.gradle` copies this shape —
+  the `buildscript` classpath `com.liferay:com.liferay.gradle.plugins.workspace` plus
+  `apply plugin`, **not** a `plugins { id … version … }` block, whose marker artifact
+  does not resolve for 12.1.0 — and writes the version **literally** (`12.1.0`), since
+  `work/gradle.properties` does not carry that property.
 - Its Gradle wrapper is **not** copied: the workspace runs on the workstation's own
   Gradle (see Toolchain).
 - **Its `gradle.properties` is never copied.** It holds repository credentials and
-  Axiell-internal settings that must not enter `work/`, which is tracked and committed.
+  Axiell-internal settings that must not enter `work/`, the product a human takes away.
   `work/gradle.properties` is written from scratch with exactly the lines under
   "What to build".
 
@@ -132,7 +134,7 @@ extension:
         client-extension.yaml
         package.json                   # webpack (from sample 5); react, react-dom, @clayui/* as
                                        #   devDependencies for tests only; vitest + testing libs
-        yarn.lock                      # committed: the build is reproducible
+        yarn.lock                      # kept: the build is reproducible
         webpack.config.js              # copied from sample 5, externals extended
         src/roman.js                   # parsing module, no DOM, no React
         src/RomanEvaluator.js          # the React component, React.createElement, no JSX
@@ -142,7 +144,7 @@ extension:
 `gradle.properties` is exactly:
 
     liferay.workspace.product=portal-7.4-ga129
-    liferay.workspace.home.dir=/opt/projects/liferay/portal/arena-7.4.3.129-ga129/bundles
+    liferay.workspace.home.dir=/opt/liferay/portal/arena-7.4.3.129-ga129/bundles
     liferay.workspace.node.package.manager=yarn
 
 so `gradle deploy` in the workspace copies the built extension into that bundle's
@@ -183,9 +185,12 @@ downloads no JDK, no Gradle distribution and no Node distribution:
 
 - **Java:** the JDK on `PATH` / `JAVA_HOME`, 17 (the GA129 line's
   `javaSourceCompatibility`).
-- **Gradle:** the `gradle` on `PATH`. No wrapper in `work/` (`gradlew`, `gradlew.bat`,
-  `gradle/wrapper/` are neither copied nor generated), so every command here is
-  `gradle ...` run from `work/`. The installed version must be one workspace plugin
+- **Gradle:** the workstation's Gradle 8.5, installed by sdkman at
+  `/home/wos/.sdkman/candidates/gradle/current/bin/gradle`. A card's shell does not load
+  sdkman, so `gradle` is not on its `PATH`: commands name that path. No wrapper in
+  `work/` (`gradlew`, `gradlew.bat`, `gradle/wrapper/` are neither copied nor
+  generated), so every command here runs that Gradle from `work/` (written `gradle ...`
+  below). The installed version must be one workspace plugin
   12.1.x runs on; the researcher records `gradle --version` and cites what the plugin
   requires.
 - **Node and yarn:** the `node` and `yarn` (classic) on `PATH`, for both `yarn test` and
@@ -196,8 +201,10 @@ downloads no JDK, no Gradle distribution and no Node distribution:
   `portal/modules/sdk/gradle-plugins-node/src/main/java/com/liferay/gradle/plugins/node/NodeExtension.java`,
   and the workspace applies the Node plugin in
   `portal/modules/sdk/gradle-plugins-workspace/src/main/java/com/liferay/gradle/plugins/workspace/LiferayWorkspaceNodePlugin.java`;
-  the plan cites both `file:line`. The build log is the evidence: no Node download, and the
-  build's `node --version` equals the host's. Likewise no yarn download if the workspace's
+  the plan cites both `file:line`. What earlier runs measured about that switch — which
+  form the build accepts and which one still downloads — is in this board's toolchain
+  facts, which the researcher and the planner read first. The build log is the
+  evidence: no Node download, and the build's `node --version` equals the host's. Likewise no yarn download if the workspace's
   yarn setup (`task/SetUpYarnTask.java` there) would fetch one.
 - webpack (sample 5's version) and Vitest versions must run on the host Node (their
   `engines` accept it), not the other way round.
@@ -320,11 +327,19 @@ satisfies the lines above, checked against the `liferay-expert` skill's sources.
 Each item is evidence a card records in its report (command and output).
 
 1. **Layout.** `work/` holds the workspace and extension as in "What to build", including
-   `yarn.lock`. `node_modules/`, `build/`, `dist/` and `.gradle/` are ignored, not
-   deliverables. No scratch files are left behind.
+   `yarn.lock` (wherever the workspace build's install writes it). `node_modules/`,
+   `build/`, `dist/` and `.gradle/` are ignored, not deliverables. The workspace build
+   also writes files of its own at `work/`'s root — a `package.json` naming the yarn
+   workspaces, `.yarnrc`, an npm `package-lock.json`: they are the build's by-products,
+   listed as such, not deliverables. No scratch files are left behind.
 2. **No secrets.** `work/gradle.properties` contains exactly the three lines above, and
-   `grep -rinE "password|secret|token|artifactory" work --exclude-dir=node_modules
-   --exclude-dir=.gradle` finds nothing.
+   no hand-written file assigns a credential:
+   `grep -rniE '^[[:space:]]*[a-z_.-]*(password|secret|token|artifactory)[a-z_.-]*[[:space:]]*[:=]' work --exclude-dir=node_modules --exclude-dir=.gradle --exclude-dir=build --exclude-dir=dist --exclude=yarn.lock --exclude=package-lock.json`
+   finds nothing. The lock files are generated, not written, and name packages such as
+   `js-tokens`; the pattern needs a key being assigned, so a parser's `tokens` variable is
+   not a credential. (The earlier `grep -rinE "password|secret|token|artifactory" work`
+   could never come out empty — it matched `yarn.lock` every time, and three plan-review
+   rounds went on it, 2026-09-26.)
 3. **Unit tests.** `yarn test` in `client-extensions/roman-evaluator/` exits 0 and covers
    at least:
    - parser: `XIV` → 14, `xiv` → 14, `MMMCMXCIX` → 3999; rejection of `IIII`, `VX`,

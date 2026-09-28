@@ -1,4 +1,4 @@
-INTEGRATION TESTS — lane <N>. The implementation is staged and the code review before this card has passed.
+INTEGRATION TESTS — lane <N>. The implementation is in the tree (staged, where git is discovered) and the code review before this card has passed.
 
 FINISH: this card's finish is a GREEN integration suite with the unit suite still green — change whatever in the work tree it takes (hard rule 2). If after genuine effort you cannot get the integration suite green, or cannot keep the unit suite green, a failing test is a finished card, not a blocker: never block and never keep looping — complete naming each failing test and why; the final review rejects it and routes the fix.
 

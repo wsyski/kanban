@@ -236,11 +236,47 @@ def test_plan_card_and_plan_review_share_one_checklist():
         assert re.search(rf"^{n}\. ", checklist, re.M), f"checklist item {n}"
 
 
-def test_plan_body_forbids_probes_and_allows_marked_unverified_facts():
-    """The manager may not probe (Findings is the lane's only source of
-    environment facts), so a fact Findings lack is marked, never guessed."""
-    assert "No environment probes" in read("p-body.txt")
+def test_plan_body_splits_environment_facts_from_toolchain_behaviour():
+    """Findings are the lane's only source of ENVIRONMENT facts, so the planner does not
+    re-survey the machine; how the tools treat the plan's own files is behaviour, which
+    the planner derives with the probe. Forbidding that too is what made the Liferay
+    board's planner assert values it could only get by running, round after round
+    (2026-09-26). A fact neither can establish is still marked, never guessed."""
+    body = read("p-body.txt")
+    assert "ENVIRONMENT FACTS" in body and "do not re-survey the machine" in body
+    assert "TREAT THE PLAN'S OWN FILES" in body
+    assert "<PROBE>" in body and "--also-without C" in body
+    assert "you do not verify the environment and you do not build" not in body
     assert "UNVERIFIED — executor confirms by:" in read("_plan-checklist.txt")
+
+
+def test_the_plan_review_probes_every_round_and_labels_its_fixes():
+    """Run 1's reviewer built the plan's files against the letter of its body and found
+    the defects; run 2's followed "Item 8 is the one command you run" and passed a plan
+    whose build could never succeed. Probing is the body's first step now, every round."""
+    body = read("rvp-body.txt")
+    assert "Item 8 is the one command you run" not in body
+    assert "PROBE FIRST, EVERY ROUND" in body and "<PROBE>" in body
+    assert "IN FULL again" in body
+    assert "VERIFIED FIX:" in body and "SUGGESTION:" in body
+    assert "<TOOLCHAIN_BOUNDARY>" in body
+    assert "PROBE: <n> exit 0" in body
+
+
+def test_probe_writes_are_inside_the_cards_own_scratch():
+    """The boundary names the probe copy as the project for package fetches, and the
+    review may not park its tree in a profile cache (run 1's round 3 re-used a stale one
+    from ~/.hermes/profiles/coder/cache/scratch)."""
+    boundary = read("_toolchain-boundary.txt")
+    assert "<RUNS>/scratch/<YOUR-CARD-ID>/probe/" in boundary
+    assert "profile's own cache" in read("rvp-body.txt")
+
+
+def test_the_code_card_declares_a_toolchain_deviation_and_the_review_checks_it():
+    """Run 2's C card made five toolchain-forced deviations with no rule for them."""
+    assert "DEVIATION: <plan step>" in read("c-body.txt")
+    assert "DEVIATION: <plan step>" in read("_result-field.txt")
+    assert "A `DEVIATION:` the C card declared" in read("rva-body.txt")
 
 
 def test_refined_template_matches_the_idea_gate():
@@ -540,7 +576,11 @@ def test_every_hand_off_file_a_body_names_is_one_the_driver_attaches():
     import run
     named = set()
     for _name, text in all_texts():
-        named |= set(re.findall(r"<RUNS>/scratch/<YOUR-CARD-ID>/([A-Za-z0-9._-]+)", text))
+        # A DIRECTORY a body names (the probe's copy, ocr's copy) is not a hand-off.
+        named |= set(re.findall(r"<RUNS>/scratch/<YOUR-CARD-ID>/([A-Za-z0-9._-]+)(?![A-Za-z0-9._/-])",
+                                text))
+    # `probe` is the probe's output DIRECTORY (`--out …/probe`), not a hand-off.
+    named -= {"probe"}
     assert named, "the bodies must name their hand-off files"
     assert named <= set(run.HANDOFF_NAMES), sorted(named - set(run.HANDOFF_NAMES))
 
@@ -588,5 +628,5 @@ def test_every_review_body_requires_the_verified_ledger():
     for body in ("rvp-body.txt", "rva-body.txt", "rvc-body.txt"):
         t = read(body)
         assert "VERIFIED:" in t, body
-        assert "FROZEN" in t, body
+        assert "ACCEPTED" in t and "byte-identical" not in t, body
         assert "TICK WHAT YOU ACCEPT" in t, body

@@ -119,12 +119,12 @@ def test_the_plan_card_is_told_the_raw_idea_is_the_contract():
 
 
 def test_the_plan_card_may_establish_facts_when_nobody_else_can():
-    """The researcher is the lane's fact authority, and the plan card is forbidden to
-    probe — both true only while the lane refines. With the researcher gone the plan
+    """The researcher is the lane's fact authority, and the plan card does not re-survey
+    the machine — both true only while the lane refines. With the researcher gone the plan
     card is the only card that can establish a fact, and the review still re-derives
     it, so the prohibition is conditioned rather than kept."""
     body = _body("p-body.txt")
-    assert "No environment probes while the lane refines the idea" in body
+    assert "ENVIRONMENT FACTS — what is installed, which version, which path — are the researcher's" in body
     assert "YOU establish the facts the plan depends on" in body
 
 

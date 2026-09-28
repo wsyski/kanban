@@ -18,7 +18,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # What the driver may import: the card graph, the option declaration, the body renderer
 # and the board lock.
-TEMPLATE_FILES = ["board_schema", "card_render", "driver_lock", "lanes"]
+TEMPLATE_FILES = ["board_schema", "card_render", "driver_lock", "lanes", "probe"]
 # The kanban driver's own.
 DRIVER_FILES = ["doc-chain", "file_lanes", "render-flow", "run", "run-audit",
                 "runs-report", "runs_util", "timing-report"]

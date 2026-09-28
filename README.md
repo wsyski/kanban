@@ -188,9 +188,11 @@ drive the board from `http://127.0.0.1:9119/kanban`:
 2. **Drag it from Triage to Todo.** That is the go signal — a shell makes the same one with
    `driver/arm.sh --slug <slug> [--lane <n>]`, which creates an unassigned card carrying
    the idea (`armed_ideas` reads either, because what it tests is that an unassigned card
-   has left Triage). A driver has to be up to see the drag, and it exits when its run
-   finishes, so start it first — and again for every idea after that (a card armed while
-   nothing drives just waits).
+   has left Triage). A driver has to be up to read the drag, and it exits when its run
+   finishes, so every idea needs one — started before the drag or after it: a driver with
+   nothing to drive (no lane opened yet, or the last run already finished) runs no tick,
+   waits up to 30 min for the go signal (`--arm-wait-min`), and exits 0 if none comes. A
+   card armed while nothing drives just waits.
    **When `kanban.default_assignee` names a profile, prefer `arm.sh`:** the
    dispatcher assigns an unassigned `ready` card and spawns a worker on it within seconds,
    and `armed_ideas` then skips it (it ignores any card with an assignee), so the lane never
@@ -216,12 +218,13 @@ thing to read is always the end of `boards/<s>/runs/driver.log`.
 **1. The run finished — you have another idea.** The board keeps its cards and its `runs/`
 while nothing drives it, and another idea is another run on the same board:
 
-1. Write it: `$EDITOR boards/<s>/lane-1.md` — or, with a driver already up, edit the
-   board's Triage card in the dashboard.
+1. Write it: `$EDITOR boards/<s>/lane-1.md` — or edit the board's Triage card in the
+   dashboard.
 2. One command: `driver/arm.sh --slug <s>`. It files the go signal AND starts the board's
    driver when none is up (a finished board has none — the driver exited with its run), so
    this is the whole "next idea" gesture. Arming from the dashboard instead? Then start the
-   driver yourself: `driver/start-board.sh --slug <s>`, and prefer `arm.sh` when
+   driver yourself, before or after the drag: `driver/start-board.sh --slug <s>` (it waits
+   up to 30 min for the drag without ticking the finished run), and prefer `arm.sh` when
    `kanban.default_assignee` names a profile (the race in item 2 above).
 3. The driver adopts the text, archives the previous run's cards, mints a fresh
    `runs/<run-id>/`, files a fresh lane set and drives it; the gates behave as in the
@@ -234,8 +237,9 @@ idea.
 
 **2. The board halted.** Something the lane could not get past stopped the driver — a
 provider quota wall (an exhausted token pool), a worker that kept dying, an upstream
-outage, a card that spent its runtime ceiling, an unreadable card, the same tick error
-three times. EVERY stall gets the same treatment, whatever the reason: the card is blocked,
+outage, a card that spent its runtime ceiling, an unreadable card or the same tick error
+for a minute, a run in which nothing moved for 15 minutes (`quiescent`), the run's own
+`--timeout-min` cap. EVERY stall gets the same treatment, whatever the reason: the card is blocked,
 the reason is commented on it, and the board halts ([DESIGN.md: stall classes](DESIGN.md#stall-classes)).
 What you find:
 
@@ -284,11 +288,11 @@ silently open the gate that card guards.
 Do **not** use the dashboard's `specify` button to promote the card: it rewrites your
 idea with an auxiliary LLM before the researcher reads it. Drag it.
 
-`start-board.sh` is idempotent — a second call sees the driver's lock and exits 0 — so
-it is safe as a cron entry that keeps a board up across reboots:
-
-    hermes --profile <p> cron add --name kanban-<slug> --schedule '* * * * *' \
-        --script driver/start-board.sh --args '--slug <slug>'
+`start-board.sh` is idempotent — a second call sees the driver's lock and exits 0. Do
+**not** put it on a `* * * * *` cron: a driver exits with its run, so every minute would
+start another driver that waits up to `--arm-wait-min` for an idea nobody armed — a
+standing waiter again. After a reboot, one `start-board.sh --slug <slug>` resumes a run
+that was in flight (it rejoins `runs/current`).
 
 `--once` releases lane 1 immediately and exits when the gates close. It is for tests
 and recovery, not daily use.
@@ -347,9 +351,9 @@ Re-create a board after engine changes:
 
 Run `reset.sh` first, not `boards rm` alone: `create-board.sh` refuses (exit 6) while the
 board's driver is still running, because a driver reads a half-filed run as a failed filing
-and halts. A driver only ever meets a removed board mid-run (a finished board has no driver
-— it exited with its run), and then it halts at once: `was removed under a live run` in
-`driver.log`.
+and halts. Mid-run, a removed board halts the driver at once: `was removed under a live run`
+in `driver.log`. A driver that was only waiting for an idea logs `BOARD REMOVED` and exits 0
+— it had no run in flight to halt.
 
 ### How it flows (diagram)
 
@@ -448,13 +452,24 @@ by default: the idea gate is the loop, and you are it — edit `refined.md` at `
 rather than sending the card back.
 
 A REJECT carries two halves — the findings, and a `VERIFIED:` ledger of the checklist
-items the review ACCEPTS. What the revision must leave byte-identical is computed from
-both: **the ticked items minus the ones the findings name**, so a verdict cannot freeze
-ground it is asking to be changed (a live one ticked items 1, 3 and 4 and named 1, 4, 5
-and 7; the rework card was told `FROZEN — leave byte-identical: items 2, 6, 8`). The
-round is then judged on the diff it hands back — its own findings closed, `surgical`
-rather than a regeneration — not on its word for it.
-Mechanics in [DESIGN.md](DESIGN.md#rework-loops).
+items the review ACCEPTS. What the revision must leave alone is computed from both: **the
+ticked items minus the ones the findings name**, so a verdict cannot accept ground it is
+asking to be changed (a live one ticked items 1, 3 and 4 and named 1, 4, 5 and 7; the
+rework card was told the review ACCEPTED items 2, 6, 8). The driver measures how much each
+round changed against the version it was sent, and calls a ≥60 % rewrite a REGENERATION.
+
+**The plan is probed, not read.** `template/probe.py` builds the plan's own files in a
+scratch copy of the work directory and runs its Run commands there, one call, writing
+`probe-log.md`. The planner runs it before completing; the plan review runs it first,
+every round, in full, and labels every fix `VERIFIED FIX:` (it ran it) or `SUGGESTION:`.
+A plan-review PASS without its own complete, clean probe log for that version of the
+plan is an UNPROBED PASS: the driver files the review again (twice at most, outside
+`max-reworks`), never a plan revision, and after that the plan gate waits for a person
+even on an auto-gated board. A code card that finds a plan step the toolchain rejects
+makes the smallest correction and declares it `DEVIATION:`; the code review re-derives
+it, and once the code gate passes the driver carries it into
+`boards/<slug>/toolchain-facts.md`, which the next run's researcher and planner read
+first. Mechanics in [DESIGN.md](DESIGN.md#rework-loops).
 
 **Gates** cost 0 agent minutes because the driver completes them itself — on an
 auto-gated board as "auto-gate: … NOTHING COMMITTED", otherwise as "HUMAN COMMIT
@@ -500,7 +515,10 @@ while the auditor reports anything.
 A halted board writes its reason to `runs/<run-id>/halt.txt`, comments it on the card
 where there is one, sends it once as a notice (`deadman.txt`, Telegram when tokens are
 set), and the driver exits. Short of a halt, a deadman notice means two or more blocked
-cards are waiting on a human — cards the driver will still re-promote are not counted.
+cards are waiting on a human — cards the driver will still re-promote are not counted. A
+live run in which nothing is in flight for 15 minutes — no card todo, ready or running,
+no human gate held, no driver write — is not left to the deadman: it halts as
+`quiescent`, naming the blocked cards.
 Every halt and what it says: [DESIGN.md](DESIGN.md#stall-classes).
 
 **Worker sessions** are not in `runs/`. Each card's worker runs in its assignee
@@ -546,12 +564,20 @@ with the CLI:
   and messages: [block origins](DESIGN.md#block-origins) and [stall classes](DESIGN.md#stall-classes).
 - **Every other stall halts the board, naming its cause** — rework rounds exhausted, a
   card the engine escalated to Triage or keeps retrying without counting a failure, a
-  gate that waits for 10 minutes with every parent done, the same tick exception 3
-  times, a lane card archived by hand, a run with no cards to drive — because the lane
+  gate that waits for 10 minutes with every parent done, the same tick exception for a
+  minute, a lane card archived by hand, a run with no cards to drive, a live run with
+  nothing in flight for 15 minutes, the run's `--timeout-min` cap — because the lane
   cannot advance by itself and polling would read as a stall. Two of them (a failed
   refile and a restart onto its empty run) name the [Resetting](#resetting) sequence,
   because the armed idea card is already archived. The full decision tables:
   [how a lane avoids and escapes a stall](DESIGN.md#how-a-lane-avoids-and-escapes-a-stall).
+- **`kanban.auto_decompose` must be off.** hermes decomposes every Triage card on every
+  board and runs the pieces; the board parks its next idea in Triage. `create-board.sh`,
+  `arm.sh`, `start-board.sh` and the driver refuse (exit 7) while it is on for the root
+  configuration or the board's profiles — unset counts as on — and print the
+  `hermes [--profile p] config set kanban.auto_decompose false` lines to run.
+  `--allow-auto-decompose` overrides, with a WARNING. A driver start that finds cards the
+  board did not file halts and names them.
 - **Turn budgets are global, not per-profile.** `agent.max_turns` (80) in
   `~/.hermes/config.yaml` governs every kanban worker. A profile-level shadow value
   kills runs — never set `agent.max_turns` on a worker profile.
@@ -698,9 +724,9 @@ by every board — nothing scenario-specific to write per idea. To run new work:
    does **not** make it current, and the dispatcher follows the current board.
 4. Arm it: `driver/arm.sh --slug <s>` — that also starts the board's driver, so there is
    nothing else to do. (Arming by dragging the Triage card instead — see §3 for the
-   `default_assignee` race — needs `driver/start-board.sh --slug <s>` after it.)
-   The driver exits when the run it drove finishes — see "A finished board, and the next
-   idea" above for the run after this one.
+   `default_assignee` race — needs `driver/start-board.sh --slug <s>`, before or after the
+   drag.) The driver exits when the run it drove finishes — see "When a run ends: three
+   scenarios" in §3 for the run after this one.
 
 Only touch `template/card-bodies/` or `template/lanes.py` when the card graph itself must
 change (a new role, a new gate) — that changes every board, not just one idea. See

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start a board's driver. Idempotent: safe to call from cron every minute.
+# Start a board's driver. Idempotent: a no-op while this board's driver is up.
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 
@@ -22,19 +22,28 @@ validate_board_files() {
 
 usage() {
 cat <<'USAGE'
-driver/start-board.sh --slug <s> [--once] [--timeout-min N]
+driver/start-board.sh --slug <s> [--once] [--timeout-min N] [--arm-wait-min N]
 
   --slug <s>        board slug (required)
   --once            legacy one-shot: open lane 1 (the driver releases its root
                     once the lane is prepared) and exit when the
                     gates close. For tests and recovery.
-  --timeout-min N   driver runtime cap (default: 240 with --once, none in
-                    serve mode)
+  --timeout-min N   the run's cap, counted from the adopted idea (from the start
+                    with --once); default 240 with --once, else the board's
+                    timeout-min, else none. Running out halts the board
+  --arm-wait-min N  serve mode: how long a driver with nothing to drive waits
+                    for the go signal before it exits 0 (default 30)
+  --allow-auto-decompose
+                    start although hermes kanban.auto_decompose is on (the
+                    driver logs a WARNING)
   -h, --help        this text
 
 DEFAULT IS SERVE MODE: the driver waits for the go signal, and the board is driven
 from the dashboard. You write an idea into a Triage card and drag it to Todo; that
-is the "go" signal. The driver adopts the card's text into
+is the "go" signal. Either order works: drag first and then run this, or run this
+and drag within --arm-wait-min — a driver with nothing to drive (no lane opened, or
+the last run already finished) runs no tick while it waits, and exits 0 when the
+wait runs out. The driver adopts the card's text into
 boards/<slug>/lane-<k>.md, archives the previous run, files a fresh lane set,
 and drives it. When the gates close the run is over and the driver EXITS: one
 driver per run, and the next idea is the next call to this script. (It used to
@@ -54,12 +63,14 @@ so call it directly when you armed the card from the dashboard.
 USAGE
 }
 
-SLUG= ONCE=0 TIMEOUT=
+SLUG= ONCE=0 TIMEOUT= ARMWAIT=
 while [ $# -gt 0 ]; do
   case "$1" in
     --slug) SLUG=$2; shift 2 ;;
     --once) ONCE=1; shift ;;
     --timeout-min) TIMEOUT=$2; shift 2 ;;
+    --arm-wait-min) ARMWAIT=$2; shift 2 ;;
+    --allow-auto-decompose) export KANBAN_ALLOW_AUTO_DECOMPOSE=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown arg: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -99,6 +110,12 @@ if DRIVER_PID=$(live_driver_pid "$REPO/boards/$SLUG"); then
   exit 0
 fi
 
+# Refuse while hermes would decompose this board's Triage idea card (runs_util). After
+# the live-driver check: a no-op start stays a no-op (exit 0) whatever the setting, and
+# the driver checks again at start, so a driver started by hand is covered too.
+python3 "$REPO/driver/runs_util.py" auto-decompose \
+  --board-json "$REPO/boards/$SLUG/board.json" || exit 7
+
 if [ "$ONCE" = 1 ]; then
   [ -s "$REPO/boards/$SLUG/lane-1.md" ] || {
     echo "refusing: boards/$SLUG/lane-1.md is empty — enter an idea first" >&2
@@ -118,7 +135,9 @@ else
   # a prefilled board sits until a human says so.
   set -- --serve
   [ -n "$TIMEOUT" ] && set -- "$@" --timeout-min "$TIMEOUT"
+  [ -n "$ARMWAIT" ] && set -- "$@" --arm-wait-min "$ARMWAIT"
   BOARD="$SLUG" nohup python3 -u driver/run.py "$@" >> "$RUNLOG" 2>&1 &
   echo "board '$SLUG' serving; log: $RUNLOG"
-  echo "write an idea into a Triage card and drag it to Todo to start a run."
+  echo "write an idea into a Triage card and drag it to Todo to start a run — within"
+  echo "${ARMWAIT:-30} min if nothing is armed yet, or this driver exits (run this again then)."
 fi

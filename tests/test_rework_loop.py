@@ -272,7 +272,22 @@ def test_rejection_findings_accept_any_punctuation_after_the_token():
     assert run.rejection_findings("REJECT: 1. commits") == "1. commits"
     assert run.rejection_findings("REJECT — 1. commits") == "1. commits"
     assert run.rejection_findings("Plan review REJECT - 1. commits") == "1. commits"
-    assert len(run.rejection_findings("REJECT: " + "x" * 9000)) == 4000
+    cut = run.rejection_findings("REJECT: " + "x" * 9000)
+    assert cut.startswith("x" * 4000) and "CUT at 4000 characters" in cut, \
+        "a cut is said AT the cut — run 1's round-1 finding 7 just stopped mid-word"
+
+
+def test_rejection_findings_stop_before_the_verdicts_own_lists():
+    """VERIFIED is what the review ACCEPTED and NOTES are not findings: a revision told to
+    "address exactly" text carrying both was told to address what it must leave alone. A
+    finding's own `VERIFIED FIX:` label is part of the finding and stays."""
+    v = ("REJECT: 1) item 4, plan.md:12 — VERIFIED FIX: add `-r`. 2) item 3 — SUGGESTION: "
+         "scope the grep. PROBE: 3 exit 0, 1 failed VERIFIED: 1 — header; 2 — SC table "
+         "NOTES: none")
+    f = run.rejection_findings(v)
+    assert f.endswith("PROBE: 3 exit 0, 1 failed")
+    assert "VERIFIED FIX: add `-r`" in f and "SUGGESTION: scope the grep" in f
+    assert "1 — header" not in f and "NOTES" not in f
 
 
 def test_rework_is_the_first_word_in_any_case():
@@ -748,17 +763,32 @@ def test_rework_keys_are_scoped_to_the_run(monkeypatch):
 
 # --- the frozen ledger: the reviewer ticks, the revision leaves ticks alone -----
 
-def test_a_rework_round_carries_the_frozen_note_and_the_tick_list():
-    """The verdict's VERIFIED list reaches the revision card BOTH ways: as the frozen
-    instruction, and as the reviewer's own text — `rejection_findings` takes everything
-    after the REJECT token, so a tick list written there travels with the findings."""
+def test_a_rework_round_names_the_accepted_items_from_the_full_verdict():
+    """The findings excerpt stops before the VERIFIED list, so the accepted items are read
+    from the FULL verdict — reading them from the excerpt would accept nothing."""
     verdict = "REJECT: 1) item 3, plan.md:57, fix x\nVERIFIED: 1 — read header; 2 — ran the build"
     tail = run.rework_tail(2, 8, run.rejection_findings(verdict),
-                           "The plan review sent this back.", "Re-stage.")
+                           "The plan review sent this back.", "Stage nothing.",
+                           verdict_text=verdict)
     assert "REVISION ROUND 2 of 8" in tail
-    assert "FROZEN" in tail and "byte-identical" in tail
-    assert "VERIFIED: 1 — read header; 2 — ran the build" in tail
+    assert "ACCEPTED — the review checked items 1, 2" in tail
+    assert "byte-identical" not in tail and "Re-stage" not in tail
+    assert "1 — read header" not in tail, "the tick list is not a finding to address"
     assert "plan.md:57" in tail
+    assert "VERIFIED FIX:" in tail, "the reviser is told what a verified fix obliges"
+
+
+def test_a_capped_verdict_still_names_what_it_accepted():
+    """The adviser's first risk: the cap and the accepted list read the same text, so
+    stripping or cutting it could silently accept nothing. An item both ticked and cited
+    is still dropped — the finding wins."""
+    verdict = ("REJECT: 1) item 3 " + "x" * 5000 +
+               " VERIFIED: 1 — header; 2 — coverage; 3 — stack")
+    findings = run.rejection_findings(verdict)
+    assert "CUT at 4000 characters" in findings and "VERIFIED" not in findings
+    tail = run.rework_tail(1, 8, findings, "The plan review sent this back.", "x",
+                           verdict_text=verdict)
+    assert "ACCEPTED — the review checked items 1, 2 and found them correct" in tail
 
 
 def test_the_frozen_note_is_in_every_rework_tail():
@@ -766,10 +796,11 @@ def test_the_frozen_note_is_in_every_rework_tail():
     code loop's is drift no other test can see."""
     code = run.rework_tail(1, 3, "REJECT: (c) red test", "The implementation review returned the work.",
                            "Re-stage your files.")
-    # The freeze is COMPUTED and stated, so every tail carries a decision even when there is
-    # nothing to freeze ("Nothing is FROZEN this round") — an omitted line would read as an
-    # omitted rule, which is the drift this test exists for.
-    assert "FROZEN" in code and "Nothing is FROZEN this round" in code
+    # The accepted set is COMPUTED and stated, so every tail carries a decision even when
+    # nothing was accepted — an omitted line would read as an omitted rule, which is the
+    # drift this test exists for.
+    assert "Nothing was ACCEPTED this round" in code
+    assert run.FROZEN_NOTE in code and run.FIX_LABELS_NOTE in code
     assert "(c) red test" in code
 
 
@@ -815,9 +846,9 @@ def test_nothing_is_frozen_when_every_ticked_item_is_also_named():
 
 
 def test_the_tail_states_the_computed_freeze_and_says_what_is_not_frozen(capsys):
-    tail = run.rework_tail(1, 3, LIVE_VERDICT, "The plan review sent this back.", "Re-stage.")
-    assert "FROZEN — leave byte-identical: items 2, 6, 8." in tail
-    assert "NOT frozen" in tail, "the tail must say what is NOT frozen, not only what is"
+    tail = run.rework_tail(1, 3, LIVE_VERDICT, "The plan review sent this back.", "x")
+    assert "ACCEPTED — the review checked items 2, 6, 8 and found them correct" in tail
+    assert "Change only what a finding requires" in tail
     assert "ticks items it also rejects (1, 3, 4)" in capsys.readouterr().out
 
 
@@ -826,29 +857,342 @@ def test_rework_churn_counts_hunk_lines_only():
     assert run.rework_churn(diff) == (2, 1)
 
 
-def test_the_churn_line_calls_a_whole_file_rewrite_a_regeneration(tmp_path):
-    """The measured shape of the plan loop's round 1: a 1124-line plan came back as
-    +1125/-1 to fix seven findings, and it read exactly like a surgical round."""
-    (tmp_path / "patch.diff").write_text("--- a/plan.md\n+++ b/plan.md\n" + "+x\n" * 1125 + "-y\n")
-    line = run.rework_churn_line(str(tmp_path), "P1-rev-1: plan revision round 1 - lane 1")
-    assert "REGENERATION" in line and "+1125/-1" in line
+def _plan_rounds(tmp_path, monkeypatch, old, new):
+    """P1 handed `old` over; P1-rev-1 hands `new` back. Returns (state, rev scratch dir)."""
+    monkeypatch.setattr(run.STATE, "run_dir", str(tmp_path))
+    p1 = tmp_path / "scratch" / "id-P1"
+    rev = tmp_path / "scratch" / "id-P1-rev-1"
+    p1.mkdir(parents=True)
+    rev.mkdir(parents=True)
+    (p1 / "plan.md").write_text("\n".join(old) + "\n")
+    (rev / "plan.md").write_text("\n".join(new) + "\n")
+    st = {"P1: implementation plan - lane 1": card("P1", status="done"),
+          "P1-rev-1: plan revision round 1 - lane 1": card("P1-rev-1", status="done")}
+    return st, str(rev)
 
 
-def test_the_churn_line_is_surgical_for_a_real_fix(tmp_path):
-    """The measured shape of round 2 (+246/-120 on that same plan)."""
-    (tmp_path / "patch.diff").write_text("--- a/plan.md\n+++ b/plan.md\n" + "+x\n" * 246 + "-y\n" * 120)
-    line = run.rework_churn_line(str(tmp_path), "P1-rev-2: plan revision round 2 - lane 1")
-    assert "surgical" in line and "+246/-120" in line
+def test_the_churn_line_measures_against_the_version_the_round_was_sent(tmp_path, monkeypatch):
+    """Measured by the driver from the two versions, never from the worker's own patch:
+    without an index that patch shows every file whole, and run 2's twenty-line fix was
+    logged "+965/-0 — REGENERATION" (2026-09-28)."""
+    old = [f"line {i}" for i in range(100)]
+    new = list(old)
+    for i in range(5):
+        new[i * 10] = f"fixed {i}"
+    st, rev = _plan_rounds(tmp_path, monkeypatch, old, new)
+    with open(os.path.join(rev, "patch.diff"), "w") as fh:   # the whole-file patch: ignored
+        fh.write("--- /dev/null\n+++ b/plan.md\n" + "+x\n" * 965)
+    line = run.rework_churn_line(rev, "P1-rev-1: plan revision round 1 - lane 1", st)
+    assert "+5/-5 of 100 lines — surgical" in line, line
+    assert "965" not in line
 
 
-def test_the_churn_line_reads_the_code_loops_patch_too(tmp_path):
-    (tmp_path / "patch-code.diff").write_text("--- a/x.py\n+++ b/x.py\n+new\n")
-    line = run.rework_churn_line(str(tmp_path), "C1-rev-1: code revision round 1 - lane 1")
-    assert "+1/-0" in line
+def test_the_churn_line_calls_a_rewrite_a_regeneration(tmp_path, monkeypatch):
+    old = [f"line {i}" for i in range(100)]
+    new = [f"other {i}" for i in range(110)]
+    st, rev = _plan_rounds(tmp_path, monkeypatch, old, new)
+    line = run.rework_churn_line(rev, "P1-rev-1: plan revision round 1 - lane 1", st)
+    assert "REGENERATION" in line and "of 100 lines" in line, line
 
 
-def test_an_unmeasured_round_says_so(tmp_path):
-    """A revision that staged no patch reads as unmeasured, never as zero churn: zero
-    would claim the frozen regions were untouched when nothing was read."""
-    line = run.rework_churn_line(str(tmp_path), "P1-rev-3: plan revision round 3 - lane 1")
+def test_the_churn_line_measures_a_code_round_against_its_filed_tree(tmp_path, monkeypatch):
+    """No index: the driver keeps the lane's files as they stood when the round was filed
+    (snapshot_lane_files) and diffs the tree against them when the round is done."""
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "x.py").write_text("a\nb\nc\n")
+    monkeypatch.setattr(run.STATE, "run_dir", str(tmp_path / "run"))
+    monkeypatch.setattr(run, "WORKDIR", str(work))
+    base = pathlib.Path(run.rework_base_dir("C1-rev-1"))
+    base.mkdir(parents=True)
+    (base / "x.py").write_text("a\nB\nc\n")
+    line = run.rework_churn_line(str(tmp_path), "C1-rev-1: code revision round 1 - lane 1", {})
+    assert "+1/-1 of 3 lines" in line and "surgical" in line, line
+
+
+def test_the_churn_line_says_unmeasured_without_a_base(tmp_path, monkeypatch):
+    """No base is unmeasured, never zero churn: zero would claim the accepted regions were
+    untouched when nothing was read."""
+    monkeypatch.setattr(run.STATE, "run_dir", str(tmp_path))
+    line = run.rework_churn_line(str(tmp_path), "C1-rev-1: code revision round 1 - lane 1", {})
     assert "unmeasured" in line
+    line = run.rework_churn_line(str(tmp_path), "P1-rev-3: plan revision round 3 - lane 1", {})
+    assert "unmeasured" in line
+
+
+
+
+# --- the probe rule: a plan-review PASS needs a probe log for THIS plan -----------------
+
+GOOD_LOG = dict(complete="yes", mode="full", ran=3, failed=0, started=100)
+
+
+def _write_log(d, sha, complete="yes", mode="full", ran=3, failed=0, started=100, out=None,
+               files_failed=0, skipped_defect=0, commands=None, skipped=0):
+    d.mkdir(parents=True, exist_ok=True)
+    commands = ran + skipped if commands is None else commands
+    (d / "probe-log.md").write_text(
+        f"# Probe log\n\nplan-sha256: {sha}\nout: {out or d}\nmode: {mode}\n"
+        f"started-epoch: {started}\n\n## Pass: full\n\n"
+        f"full-pass: files 2, files-failed {files_failed}, commands {commands}, ran {ran}, "
+        f"exit0 {ran - failed}, failed {failed}, skipped {skipped}, skipped-defect "
+        f"{skipped_defect}\ncomplete: {complete}\n")
+
+
+def _probed(tmp_path, monkeypatch, log_sha=None, plan_text="# Plan\n", **log):
+    """A lane whose RVp1 PASSed; the plan on disk; a probe log recording `log_sha` (None:
+    no log at all)."""
+    monkeypatch.setattr(run, "REPO", str(tmp_path))
+    monkeypatch.setattr(run, "BOARD", "b")
+    monkeypatch.setattr(run.STATE, "run_dir", str(tmp_path / "run"))
+    monkeypatch.setattr(run, "log", lambda m: None)
+    monkeypatch.setattr(run, "ledger", lambda rec: None)
+    monkeypatch.setattr(run.runs_util, "board_runs", lambda board, cid: [])
+    plan = run.card_render.lane_paths(str(tmp_path), "b", 1, run_root=str(tmp_path / "run"))["<PLAN>"]
+    os.makedirs(os.path.dirname(plan))
+    with open(plan, "w") as fh:
+        fh.write(plan_text)
+    os.utime(plan, (50, 50))                      # written before the review finished
+    st = full_lane_state()
+    st[lanes.card_title("RVp", 1)].update(status="done", result="PASS: fine", completed_at=150,
+                                          started_at=90)
+    if log_sha is not None:
+        _write_log(tmp_path / "run" / "scratch" / st[lanes.card_title("RVp", 1)]["id"] / "probe",
+                   log_sha, **{**GOOD_LOG, **log})
+    return st
+
+
+def _plan_path(tmp_path):
+    return run.card_render.lane_paths(str(tmp_path), "b", 1, run_root=str(tmp_path / "run"))["<PLAN>"]
+
+
+def _sha(b):
+    import hashlib
+    return hashlib.sha256(b).hexdigest()
+
+
+@pytest.mark.probe_rule
+def test_a_plan_review_pass_without_a_probe_log_is_an_unprobed_pass(tmp_path, monkeypatch):
+    """Run 2 (2026-09-28) passed a plan on paper and the build defects landed in the code
+    card. The gate, the rework loop and held_by_verdict all read the same REJECT."""
+    st = _probed(tmp_path, monkeypatch)
+    v = run.latest_verdict(st, 1, "RVp")
+    assert v.startswith(f"REJECT: {run.UNPROBED_MARK}") and "no probe log" in v
+    assert run.held_by_verdict(st, "gp", 1)
+
+
+@pytest.mark.probe_rule
+def test_a_complete_probe_log_of_this_plan_makes_the_pass_a_verdict(tmp_path, monkeypatch):
+    st = _probed(tmp_path, monkeypatch, log_sha=_sha(b"# Plan\n"))
+    assert run.latest_verdict(st, 1, "RVp") == "PASS: fine"
+    assert not run.held_by_verdict(st, "gp", 1)
+
+
+@pytest.mark.probe_rule
+def test_a_probe_log_of_an_earlier_plan_is_not_evidence(tmp_path, monkeypatch):
+    st = _probed(tmp_path, monkeypatch, log_sha="0" * 64)
+    v = run.latest_verdict(st, 1, "RVp")
+    assert v.startswith(f"REJECT: {run.UNPROBED_MARK}") and "records plan sha256 000000000000" in v
+
+
+@pytest.mark.probe_rule
+@pytest.mark.parametrize("log, why", [
+    ({"complete": "no"}, "incomplete"),
+    ({"mode": "files-only"}, "files-only mode"),
+    ({"ran": 0, "commands": 2, "skipped": 1}, "ran no command"),
+    ({"ran": 0, "commands": 0}, "no Run command"),
+    ({"failed": 1}, "1 failed command"),
+    ({"started": 10}, "predates the review card"),
+    ({"files_failed": 1}, "could not write 1"),
+    ({"skipped_defect": 1, "skipped": 1}, "for a defect of the plan"),
+    ({"out": "/elsewhere/probe"}, "a copied log"),
+])
+def test_a_partial_failing_or_copied_probe_is_not_evidence(tmp_path, monkeypatch, log, why):
+    st = _probed(tmp_path, monkeypatch, log_sha=_sha(b"# Plan\n"), **log)
+    v = run.latest_verdict(st, 1, "RVp")
+    assert v.startswith(f"REJECT: {run.UNPROBED_MARK}") and why in v, v
+
+
+@pytest.mark.probe_rule
+def test_a_lane_whose_every_command_is_the_operators_passes_without_running_one(tmp_path, monkeypatch):
+    st = _probed(tmp_path, monkeypatch, log_sha=_sha(b"# Plan\n"), ran=0, skipped=2)
+    assert run.latest_verdict(st, 1, "RVp") == "PASS: fine"
+
+
+@pytest.mark.probe_rule
+def test_the_review_card_start_comes_from_its_runs_when_the_card_has_none(tmp_path, monkeypatch):
+    st = _probed(tmp_path, monkeypatch, log_sha=_sha(b"# Plan\n"), started=10)
+    del st[lanes.card_title("RVp", 1)]["started_at"]
+    monkeypatch.setattr(run.runs_util, "board_runs",
+                        lambda board, cid: [{"started_at": 95}, {"started_at": 120}])
+    assert "predates the review card" in run.latest_verdict(st, 1, "RVp")
+
+
+@pytest.mark.probe_rule
+def test_a_person_editing_the_plan_at_the_gate_keeps_the_review_a_verdict(tmp_path, monkeypatch):
+    """gp-body invites a person to edit <PLAN> and comment PASS: the review probed the
+    hand-off copy, and that edit must not turn it into a paper review."""
+    st = _probed(tmp_path, monkeypatch, log_sha=_sha(b"# Plan\n"))
+    p1 = st[lanes.card_title("P", 1)]
+    p1.update(status="done", completed_at=5)
+    d = tmp_path / "run" / "scratch" / p1["id"]
+    d.mkdir(parents=True)
+    (d / "plan.md").write_text("# Plan\n")
+    with open(_plan_path(tmp_path), "w") as fh:
+        fh.write("# Plan\nedited by a person at the gate\n")      # mtime now > completed_at
+    assert run.latest_verdict(st, 1, "RVp") == "PASS: fine"
+    assert "edited after the review finished" in run.STATE.probe_note[
+        st[lanes.card_title("RVp", 1)]["id"]]
+
+
+@pytest.mark.probe_rule
+def test_a_gate_edit_keeps_the_review_even_without_a_hand_off_copy(tmp_path, monkeypatch):
+    """No P scratch copy: the plan the driver ACCEPTED the log for is the reference."""
+    st = _probed(tmp_path, monkeypatch, log_sha=_sha(b"# Plan\n"))
+    assert run.latest_verdict(st, 1, "RVp") == "PASS: fine"       # recorded as accepted
+    with open(_plan_path(tmp_path), "w") as fh:
+        fh.write("# Plan\nedited at the gate\n")
+    assert run.latest_verdict(st, 1, "RVp") == "PASS: fine"
+
+
+@pytest.mark.probe_rule
+def test_an_edit_made_before_the_review_finished_is_not_excused(tmp_path, monkeypatch):
+    """A reviser that copied <PLAN> to scratch and kept editing it: the review probed the
+    copy, and the plan TW/C would execute is one nobody probed."""
+    st = _probed(tmp_path, monkeypatch, log_sha=_sha(b"# Plan\n"))
+    p1 = st[lanes.card_title("P", 1)]
+    p1.update(status="done", completed_at=5)
+    d = tmp_path / "run" / "scratch" / p1["id"]
+    d.mkdir(parents=True)
+    (d / "plan.md").write_text("# Plan\n")
+    with open(_plan_path(tmp_path), "w") as fh:
+        fh.write("# Plan\nkept editing\n")
+    os.utime(_plan_path(tmp_path), (60, 60))                # before the review finished
+    v = run.latest_verdict(st, 1, "RVp")
+    assert v.startswith(f"REJECT: {run.UNPROBED_MARK}") and "not edited after" in v
+
+
+def _filing(monkeypatch, tmp_path):
+    made = []
+    monkeypatch.setattr(run.STATE, "run_dir", str(tmp_path / "run"))
+    monkeypatch.setattr(run, "_round_settings", lambda lane: ("60m", lambda f: f"<{f}>"))
+    monkeypatch.setattr(run, "kb", lambda *a, **k: made.append(a) or json.dumps({"id": f"t{len(made)}"}))
+    monkeypatch.setattr(run, "record_rework", lambda *a, **k: None)
+    monkeypatch.setattr(run, "ledger", lambda rec: None)
+    monkeypatch.setattr(run, "card_model_args", lambda code, lane: [])
+    monkeypatch.setattr(run, "escalate", lambda *a, **k: made.append(("escalate",) + a))
+    return made
+
+
+@pytest.mark.probe_rule
+def test_an_unprobed_pass_files_the_review_again_not_a_revision(tmp_path, monkeypatch):
+    st = _probed(tmp_path, monkeypatch)
+    made = _filing(monkeypatch, tmp_path)
+    monkeypatch.setattr(run, "file_revision", lambda *a, **k: made.append(("REVISION",)))
+    st[lanes.card_title("Gp", 1)]["status"] = "blocked"
+    run.rework_rounds(st)
+    creates = [a for a in made if a and a[0] == "create"]
+    assert len(creates) == 1 and ("REVISION",) not in made
+    title, body = creates[0][1], creates[0][3]
+    assert title.startswith("RVp1-r2:") and run.PROBE_RETRY_TAG in title
+    assert "PROBE RETRY 1 of 2" in body and "no probe log" in body
+    assert ("link", "t1", st[lanes.card_title("Gp", 1)]["id"]) in made
+
+
+@pytest.mark.probe_rule
+def test_probe_retries_take_the_next_free_round_and_then_go_to_a_person(tmp_path, monkeypatch):
+    st = _probed(tmp_path, monkeypatch)
+    made = _filing(monkeypatch, tmp_path)
+    st[lanes.card_title("Gp", 1)]["status"] = "blocked"
+    st[f"RVp1-r2: plan review round 2 {run.PROBE_RETRY_TAG} - lane 1"] = card(
+        "RVp1-r2", status="done", result="PASS: again", completed_at=200)
+    run.rework_rounds(st)
+    assert [a[1].split(":")[0] for a in made if a[0] == "create"] == ["RVp1-r3"]
+    st[f"RVp1-r3: plan review round 3 {run.PROBE_RETRY_TAG} - lane 1"] = card(
+        "RVp1-r3", status="done", result="PASS: still paper", completed_at=300)
+    made.clear()
+    run.rework_rounds(st)
+    assert made == [], "no third retry and no halt: the plan gate goes to a person"
+    v = run.latest_verdict(st, 1, "RVp")
+    assert v.startswith(f"PASS: [{run.UNPROBED_MARK} after 2 probe retries") and "still paper" in v
+    assert not run.held_by_verdict(st, "gp", 1)
+
+
+@pytest.mark.probe_rule
+def test_the_gate_after_spent_retries_is_never_auto_and_says_why(tmp_path, monkeypatch):
+    st = _probed(tmp_path, monkeypatch)
+    made = _filing(monkeypatch, tmp_path)
+    for k in (2, 3):
+        st[f"RVp1-r{k}: plan review round {k} {run.PROBE_RETRY_TAG} - lane 1"] = card(
+            f"RVp1-r{k}", status="done", result="PASS: paper", completed_at=100 * k)
+    gp = lanes.card_title("Gp", 1)
+    st[gp].update(status="blocked", title=gp)
+    for c in st.values():
+        c.setdefault("title", "")
+    monkeypatch.setattr(run, "auto_gates", lambda: ["Gp"])
+    monkeypatch.setattr(run, "staged_files", lambda: [])
+    monkeypatch.setattr(run, "verdict_code", lambda st, c: "RVp1-r3")
+    monkeypatch.setattr(run, "apply_comment_verdict", lambda *a: made.append(("human-gate",)))
+    assert run._gate_action(st, gp, "gp", 1) == "gate-held"
+    assert ("human-gate",) in made and not any(a[0] == "complete" for a in made), made
+    assert "after 2 probe retries" in run.STATE.gate_evidence["Gp1"]
+
+
+@pytest.mark.probe_rule
+def test_a_probe_retry_that_rejects_with_findings_files_a_normal_revision(tmp_path, monkeypatch):
+    st = _probed(tmp_path, monkeypatch)
+    made = _filing(monkeypatch, tmp_path)
+    st[lanes.card_title("Gp", 1)]["status"] = "blocked"
+    st[f"RVp1-r2: plan review round 2 {run.PROBE_RETRY_TAG} - lane 1"] = card(
+        "RVp1-r2", status="done", result="REJECT: 1) item 4 — the build fails", completed_at=200)
+    run.rework_rounds(st)
+    titles = [a[1].split(":")[0] for a in made if a[0] == "create"]
+    assert titles == ["P1-rev-1", "RVp1-r3"], titles
+
+
+def test_a_verdict_past_round_ten_is_read():
+    st = full_lane_state()
+    st[lanes.card_title("RVp", 1)].update(status="done", result="REJECT: r1", completed_at=1)
+    for k in range(2, 12):
+        st[f"RVp1-r{k}: plan review round {k} - lane 1"] = card(
+            f"RVp1-r{k}", status="done", result="REJECT: again" if k < 11 else "PASS: r11",
+            completed_at=k * 10)
+    assert run.latest_verdict(st, 1, "RVp") == "PASS: r11"
+
+
+def test_a_revision_after_a_probe_retry_takes_the_next_free_re_review_number(tmp_path, monkeypatch):
+    made = _filing(monkeypatch, tmp_path)
+    monkeypatch.setattr(run, "log", lambda m: None)
+    st = full_lane_state()
+    st[f"RVp1-r2: plan review round 2 {run.PROBE_RETRY_TAG} - lane 1"] = card(
+        "RVp1-r2", status="done", result="REJECT: 1) item 4 — x", completed_at=20)
+    run.file_revision(st, 1, 1, "1) item 4 — x")
+    titles = [a[1].split(":")[0] for a in made if a[0] == "create"]
+    assert titles == ["P1-rev-1", "RVp1-r3"]
+
+
+@pytest.mark.probe_rule
+def test_the_probe_rule_is_the_plan_reviews_alone(tmp_path, monkeypatch):
+    st = _probed(tmp_path, monkeypatch)
+    st[lanes.card_title("RVa", 1)].update(status="done", result="PASS: code ok", completed_at=20)
+    assert run.latest_verdict(st, 1, "RVa") == "PASS: code ok"
+
+
+def test_the_re_review_runs_the_probe_in_full_and_scopes_only_the_paper(tmp_path, monkeypatch):
+    """The adviser's fourth risk: narrowing a re-review must never narrow the probe — the
+    round-2 build defects of 2026-09-26 sat in regions no revision had touched."""
+    bodies = []
+    monkeypatch.setattr(run.STATE, "run_dir", str(tmp_path))
+    monkeypatch.setattr(run, "_round_settings", lambda lane: ("60m", lambda f: f"<{f}>"))
+    monkeypatch.setattr(run, "kb", lambda *a, **k: bodies.append(a) or json.dumps({"id": f"t{len(bodies)}"}))
+    monkeypatch.setattr(run, "log", lambda m: None)
+    monkeypatch.setattr(run, "record_rework", lambda *a, **k: None)
+    monkeypatch.setattr(run, "card_model_args", lambda code, lane: [])
+    st = full_lane_state()
+    run.file_revision(st, 1, 1, "1) item 4 — x", verdict_text="REJECT: 1) item 4 — x VERIFIED: 1 — ok")
+    texts = [" ".join(map(str, a)) for a in bodies if a and a[0] == "create"]
+    rev = next(t for t in texts if "P1-rev-1" in t)
+    rr = next(t for t in texts if "RVp1-r2" in t)
+    assert "Run the probe again IN FULL" in rr and "Re-check EVERY checklist item" not in rr
+    assert "run the probe on the revised plan" in rev and "Re-stage" not in rev
+    assert "ACCEPTED — the review checked items 1" in rev

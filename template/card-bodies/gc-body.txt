@@ -1,16 +1,17 @@
 CODE GATE — lane <N>. A person holds this card: no worker runs it, and the driver never commits. Nothing is committed unless you choose to commit it.
 
-The gate becomes ready only when the newest implementation-review verdict is PASS; the driver records how many files are staged in the result; the path list is in the driver log (first eight). It runs no build of its own: the review cards ran the plan's Run commands, and here you run whatever verification you want.
+The gate becomes ready only when the newest implementation-review verdict is PASS; the driver records in the result what the lane wrote — the staged files where git controls the work directory, otherwise the files the lane's patches wrote (the first eight; the driver log has the line) — and where it can be committed. It runs no build of its own: the review cards ran the plan's Run commands, and here you run whatever verification you want.
 
 WHAT YOU DO (from this card, in the dashboard or the CLI):
 1. Wait for the driver's comment starting "GATE READY" on this card. Until it appears the review has not passed, and a verdict you write is not applied (the driver answers "NOT APPLIED" and says why).
 2. Read the plan at <PLAN> and the newest review verdict (RVa, RVc, or their latest re-review round), with the run evidence in the driver log.
 3. Check by hand every success criterion <REFINED> marks `manual at Gc`; no card could automate those.
-4. Inspect the staged index (git diff --cached --stat) and commit and push it if you want this work in history, with an explicit pathspec. Committing is never required, before or after PASS. Where the work directory is not git-controlled — no repository, or one that ignores it — there is no index to inspect: nothing is staged, and the lane's files are read on disk by path.
+4. Inspect the staged index (git diff --cached --stat) and commit and push it if you want this work in history, with an explicit pathspec. Committing is never required, before or after PASS. Where the work directory is not git-controlled — no repository, or one that ignores it — there is no index to inspect: nothing is staged, the lane's files are read on disk by path, and they belong to the TARGET project — copy or commit them there, never into this board's repository.
 5. Answer with a COMMENT on this card whose first word is the verdict:
    PASS   (or PASS: <your words>) — accept; the driver completes this card and the next lane starts.
    REWORK: <what is wrong> — the coder revises and the review re-runs (up to the board's rework cap). To send it to a test card instead, start the reason with OWNER: TW or OWNER: TI. This card stays held and gets a new GATE READY when the review passes; answer that one. The reason is required.
    Small changes you can also make yourself: edit the files, then comment PASS. To abandon the lane, do not comment: stop the driver and reset the board.
+   PASS also accepts the DEVIATIONs the review named — plan steps the toolchain would not run as written: when the run finishes, the driver appends them to this board's toolchain facts (<TOOLCHAIN_FACTS>), which the next run's researcher and planner read first. Edit that file if one is wrong.
 
 DO NOT — each of these stops the board or skips your decision:
 - block this card: a gate blocked by hand can halt the board;

@@ -237,6 +237,10 @@ def _stub_hermes(tmp_path):
           printf '  coder deepseek stopped\n  researcher deepseek stopped\n  trader deepseek stopped\n'
           exit 0
         fi
+        if [ "$1" = "config" ] || [ "$3" = "config" ]; then
+          echo false            # kanban.auto_decompose off: the guard lets create through
+          exit 0
+        fi
         if [ "$1" = "kanban" ]; then
           for a in "$@"; do
             if [ "$a" = "create" ] && [ "$2" != "boards" ]; then

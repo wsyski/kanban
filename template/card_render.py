@@ -67,8 +67,35 @@ def workdir_state_path(repo, board, lane, run_id=None, run_root=None):
     return os.path.join(run_root or run_dir(repo, board, run_id), "snapshots",
                         f"lane-{lane}-workdir-at-open.md")
 
-def workdir_state(workdir, board_dir=None):
-    """One line describing the tree a lane is opening on.
+# What a file count and a copy of a work directory leave out: reproducible from the
+# files a lane writes, and 13 725 files under node_modules made the Liferay board's gate
+# snapshot read as a huge product (2026-09-28).
+DEPENDENCY_DIRS = frozenset({"node_modules", ".gradle", "build", "dist", "target",
+                             ".venv", "venv", "__pycache__", ".pytest_cache", ".git"})
+
+
+def git_control(workdir):
+    """How git sees a work directory — the worker contract's GIT IS OPTIONAL test, in one
+    place: ("controlled" | "ignored" | "none", the enclosing repository or None).
+
+    "ignored" is a repository that encloses the directory but whose rules ignore it
+    (`check-ignore --no-index`, so an index entry cannot hide the rule): nothing there is
+    staged, `git status` says nothing about it, and a gate that read either as evidence
+    reported a fourteen-file lane as "the tree as it found it"."""
+    if not os.path.isdir(workdir):
+        return "none", None
+    top = subprocess.run(["git", "-C", workdir, "rev-parse", "--show-toplevel"],
+                         capture_output=True, text=True, timeout=60)
+    if top.returncode != 0 or not top.stdout.strip():
+        return "none", None
+    ignored = subprocess.run(["git", "-C", workdir, "check-ignore", "-q", "--no-index", "."],
+                             capture_output=True, text=True, timeout=60)
+    return ("ignored" if ignored.returncode == 0 else "controlled"), top.stdout.strip()
+
+
+def workdir_state(workdir, board_dir=None, when="open"):
+    """One line describing the tree a lane is opening on (`when="open"`), or the tree at
+    its code gate (`when="gate"`).
 
     The card graph is handed `<WORKDIR>` and, without this, no way to tell an empty
     directory from the last run's product from a project with years of history. So
@@ -85,7 +112,7 @@ def workdir_state(workdir, board_dir=None):
     # "21 file(s) on disk" for a one-file repo.
     files = 0
     for _root, dirs, names in os.walk(workdir):
-        dirs[:] = [d for d in dirs if d != ".git"]
+        dirs[:] = [d for d in dirs if d not in DEPENDENCY_DIRS]
         files += len(names)
     # realpath, not abspath: a workdir reached through a symlink into the board's own
     # tree is the board's own, and abspath read it as someone else's (prior T-22)
@@ -93,9 +120,8 @@ def workdir_state(workdir, board_dir=None):
         os.path.realpath(board_dir) + os.sep)
     what = ("a PREVIOUS RUN's product on this board" if own
             else "an EXISTING PROJECT this board did not create")
-    inside = subprocess.run(["git", "-C", workdir, "rev-parse", "--is-inside-work-tree"],
-                            capture_output=True, text=True, timeout=60)
-    if inside.returncode == 0 and inside.stdout.strip() == "true":
+    control, top = git_control(workdir)
+    if control == "controlled":
         # What the LANE works in: files on disk, and how many of them are
         # uncommitted. Deliberately not `git ls-files` — that reads the INDEX, and
         # the line then describes a view neither the worker nor HEAD sees (a staged
@@ -109,11 +135,22 @@ def workdir_state(workdir, board_dir=None):
                                capture_output=True, text=True, timeout=60).stdout.splitlines()
         detail = (f"{files} file(s) on disk, {len(dirty)} with uncommitted changes, "
                   f"git branch {branch or 'no commits yet'}")
+    elif control == "ignored":
+        detail = (f"{files} file(s) on disk, not git-controlled (the repository at {top} "
+                  f"ignores it)")
     else:
         detail = f"{files} file(s) on disk, not under git"
+    detail += " — dependency and build directories not counted"
+    if when == "gate":
+        return (f"the lane's tree at its code gate: {detail}. What this lane wrote is "
+                f"listed in the gate's evidence (from its patches)")
     return (f"NOT empty — {what}: {detail}. Its contents are this idea's input: "
             f"read them before planning, and change the smallest thing that "
             f"satisfies the idea rather than rebuilding it")
+
+def toolchain_facts_path(repo, board):
+    """The board's record of toolchain behaviour earlier runs verified."""
+    return os.path.join(os.path.abspath(repo), "boards", board, "toolchain-facts.md")
 
 def targets_text(targets):
     """The board's extra write roots (board.json `targets`) as a body names them."""
@@ -142,6 +179,12 @@ def render_body_values(*, repo, board, workdir, lane, targets=(), run_id=None,
             # hand-offs — a directory that changes while a card works would read as a
             # document written after the card started.
             "<RUNS>": run_root or run_dir(repo, board, run_id),
+            # The one-call probe (template/probe.py) the plan and review cards run the
+            # plan's own files and commands with, in their scratch directory.
+            "<PROBE>": os.path.join(os.path.abspath(repo), "template", "probe.py"),
+            # What earlier runs on this board VERIFIED about the toolchain — board input,
+            # like the idea, so it outlives every run (driver: append_toolchain_facts).
+            "<TOOLCHAIN_FACTS>": toolchain_facts_path(repo, board),
             **lane_paths(repo, board, lane, run_id, run_root)}
 
 def render_body(body_file, *, repo, board, workdir, lane, targets=(), bodies_dir=None,

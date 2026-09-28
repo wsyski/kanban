@@ -187,11 +187,12 @@ def test_the_gate_records_the_tree_it_judged_not_the_one_the_lane_opened_on(monk
     assert "empty" in at_open
     (work / "built.py").write_text("a worker built this\n")
     at_gate, gate_path = run.write_workdir_state(1, "gate")
-    assert "NOT empty" in at_gate
+    assert "the lane's tree at its code gate" in at_gate and "1 file(s)" in at_gate
     assert open_path.endswith("lane-1-workdir-at-open.md")
     assert gate_path.endswith("lane-1-workdir-at-gate.md")
     assert "empty" in open(open_path).read()          # the open reading is kept
-    assert "NOT empty" in open(gate_path).read()
+    gate_text = open(gate_path).read()
+    assert "code gate" in gate_text and "PREVIOUS RUN" not in gate_text
 
 
 # ---- answering a gate with a comment (the dashboard's gesture) ----------------
@@ -434,3 +435,62 @@ def test_a_code_rework_round_files_the_lanes_model_not_the_boards_array(monkeypa
         [a] = [c for c in creates if c[1].startswith(title)]
         i = a.index("--model")
         assert list(a[i:i + 4]) == ["--model", "m2", "--provider", "p2"], a
+
+
+# --- the gate's evidence in the three git setups (the adviser's fifth risk) -------------
+
+def _git(*a, cwd):
+    import subprocess
+    subprocess.run(["git", *a], cwd=cwd, check=True, capture_output=True)
+
+
+def _lane_with_patch(tmp_path, monkeypatch, work):
+    """A C card whose worker-contract patch (`--no-index` form) wrote two files."""
+    monkeypatch.setattr(run, "WORKDIR", str(work))
+    monkeypatch.setattr(run.STATE, "run_dir", str(tmp_path / "run"))
+    d = tmp_path / "run" / "scratch" / "c1"
+    d.mkdir(parents=True)
+    rel = str(work).lstrip("/")
+    (d / "patch.diff").write_text(
+        f"diff --git a/{rel}/src/a.js b/{rel}/src/a.js\nnew file mode 100644\n"
+        f"--- /dev/null\n+++ b/{rel}/src/a.js\n@@ -0,0 +1 @@\n+a\n"
+        f"--- /dev/null\n+++ b/{rel}/package.json\n@@ -0,0 +1 @@\n+{{}}\n")
+    return {"C1: implement - lane 1": {"id": "c1", "status": "done"},
+            "P1: implementation plan - lane 1": {"id": "p1", "status": "done"}}
+
+
+def test_a_work_directory_its_repository_ignores_is_not_evidence_of_nothing(tmp_path, monkeypatch):
+    """The Liferay gate said "no staged change — the lane ends with the tree as it found
+    it" and "to commit in: … (this repo)" for fourteen files in an ignored work/."""
+    repo = tmp_path / "repo"
+    work = repo / "boards" / "b" / "work"
+    (work / "node_modules" / "dep").mkdir(parents=True)
+    (work / "node_modules" / "dep" / "i.js").write_text("x\n")
+    (work / "src").mkdir()
+    (work / "src" / "a.js").write_text("a\n")
+    _git("init", "-q", cwd=repo)
+    (repo / ".gitignore").write_text("boards/*/work/\n")
+    st = _lane_with_patch(tmp_path, monkeypatch, work)
+    assert run.card_render.git_control(str(work))[0] == "ignored"
+    assert run.staged_files() == []
+    assert "nothing to commit here" in run.commit_target()
+    assert run.lane_patch_paths(st, 1) == ["package.json", "src/a.js"]
+    state_line = run.card_render.workdir_state(str(work), str(repo / "boards" / "b"), when="gate")
+    assert "1 file(s) on disk" in state_line and "ignores it" in state_line
+
+
+def test_no_repository_at_all(tmp_path, monkeypatch):
+    work = tmp_path / "work"
+    work.mkdir()
+    _lane_with_patch(tmp_path, monkeypatch, work)
+    assert run.card_render.git_control(str(work)) == ("none", None)
+    assert "not a git repository" in run.commit_target()
+
+
+def test_a_tracked_work_directory_keeps_the_index_evidence(tmp_path, monkeypatch):
+    work = tmp_path / "work"
+    work.mkdir()
+    _git("init", "-q", cwd=work)
+    _lane_with_patch(tmp_path, monkeypatch, work)
+    assert run.card_render.git_control(str(work))[0] == "controlled"
+    assert "nothing to commit here" not in run.commit_target()

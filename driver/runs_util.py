@@ -217,3 +217,140 @@ def resolve_run_dir(path):
             if os.path.isdir(os.path.join(path, run_id)):
                 return os.path.join(path, run_id)
     return path
+
+
+# --- Hermes auto-decompose: the board's Triage idea card is not a task ---------------------
+#
+# The dispatcher runs the decomposer on every Triage card of every board each tick
+# (`kanban.auto_decompose`, default TRUE in hermes_cli/config_defaults.py). This board keeps
+# its NEXT idea in Triage on purpose — Triage is "not armed" — and on 2026-09-27 the
+# decomposer split the Liferay board's idea card into four cards that ran unsupervised,
+# with no driver up, and wrote into work/. There is no per-card opt-out; only the setting.
+
+ALLOW_AUTO_DECOMPOSE_ENV = "KANBAN_ALLOW_AUTO_DECOMPOSE"
+
+
+def board_profiles(manifest, default_assignee=None):
+    """The hermes profiles whose dispatcher settings reach this board's cards: the worker
+    roles through the board's `assignees` remap, and the dispatcher's default assignee.
+    `None` stands for the root configuration (no `--profile`)."""
+    remap = (manifest or {}).get("assignees") or {}
+    names = [None] + [remap.get(role, role) for role in ("researcher", "coder")]
+    if default_assignee:
+        names.append(default_assignee)
+    seen, out = set(), []
+    for n in names:
+        if n not in seen:
+            seen.add(n)
+            out.append(n)
+    return out
+
+
+def config_value(key, profile=None, timeout=60):
+    """A resolved hermes setting (JSON-decoded), or raise RuntimeError when the CLI cannot
+    say — a missing `hermes`, an unknown profile, output that is not JSON."""
+    cmd = ["hermes"] + (["--profile", profile] if profile else []) + \
+          ["config", "get", key, "--json"]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
+                           env=cli_env(), stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise RuntimeError(f"{' '.join(cmd)}: {e}")
+    if r.returncode != 0:
+        raise RuntimeError(f"{' '.join(cmd)}: {cli_error(r.stderr or r.stdout)}")
+    lines = [l for l in (r.stdout or "").splitlines() if l.strip()]
+    if not lines:
+        raise RuntimeError(f"{' '.join(cmd)}: printed nothing")
+    try:
+        return json.loads(lines[0])
+    except ValueError:
+        raise RuntimeError(f"{' '.join(cmd)}: not JSON: {lines[0][:80]!r}")
+
+
+def auto_decompose_findings(manifest):
+    """([profiles where it is ON], [(profile, why) where the CLI could not say]).
+
+    An UNSET key is on: the default is true, and `config get` resolves it that way."""
+    try:
+        default_assignee = config_value("kanban.default_assignee")
+    except RuntimeError:
+        default_assignee = None
+    on, unknown = [], []
+    for p in board_profiles(manifest, default_assignee if isinstance(default_assignee, str)
+                            else None):
+        try:
+            value = config_value("kanban.auto_decompose", p)
+        except RuntimeError as e:
+            unknown.append((p, str(e)))
+            continue
+        if value is not False and str(value).lower() not in ("false", "0", "no", "off"):
+            on.append(p)
+    return on, unknown
+
+
+def auto_decompose_report(manifest, allow=None):
+    """(exit code, lines) for the guard: 3 when it is on — or UNKNOWN for the root
+    configuration — and not allowed, else 0.
+
+    The root configuration is what the dispatcher runs with unless a profile overrides
+    it, so a root that cannot be read is refused like one that is on: the guard exists
+    because the silent case cost a run. A profile that cannot be read is a warning —
+    the board may not use it, and `board_profiles` is a best guess at which it does."""
+    allow = os.environ.get(ALLOW_AUTO_DECOMPOSE_ENV) == "1" if allow is None else allow
+    on, unknown = auto_decompose_findings(manifest)
+    lines = [f"WARNING: auto-decompose unknown for profile {p} ({why})"
+             for p, why in unknown if p]
+    root_unknown = [why for p, why in unknown if p is None]
+    if root_unknown and not on:
+        if allow:
+            return 0, lines + [f"WARNING: kanban.auto_decompose is UNKNOWN for the root "
+                               f"configuration ({root_unknown[0]}) and "
+                               f"{ALLOW_AUTO_DECOMPOSE_ENV}=1 overrides the refusal"]
+        return 3, lines + [f"refusing: kanban.auto_decompose cannot be read for the root "
+                           f"configuration ({root_unknown[0]}) — it defaults to ON, and "
+                           f"then the dispatcher decomposes this board's Triage idea card "
+                           f"with no driver watching. Check it with `hermes config get "
+                           f"kanban.auto_decompose`, set it with `hermes config set "
+                           f"kanban.auto_decompose false`, or override once with "
+                           f"{ALLOW_AUTO_DECOMPOSE_ENV}=1 (--allow-auto-decompose)."]
+    if root_unknown:
+        lines.append(f"WARNING: auto-decompose unknown for the root configuration "
+                     f"({root_unknown[0]})")
+    if not on:
+        return 0, lines
+    where = ", ".join(p or "the root configuration" for p in on)
+    fixes = [f"  hermes {'--profile ' + p + ' ' if p else ''}config set kanban.auto_decompose false"
+             for p in on]
+    if allow:
+        return 0, lines + [f"WARNING: kanban.auto_decompose is ON for {where} and "
+                           f"{ALLOW_AUTO_DECOMPOSE_ENV}=1 overrides the refusal — the "
+                           f"dispatcher may decompose this board's Triage idea card and run "
+                           f"the pieces with no driver watching"]
+    return 3, lines + [f"refusing: kanban.auto_decompose is ON for {where} (unset counts as on: "
+                       f"the default is true). The dispatcher decomposes every Triage card — "
+                       f"this board's next idea waits in Triage — and runs the pieces with no "
+                       f"driver watching (roman-evaluator-liferay-client-ext, 2026-09-27). "
+                       f"Turn it off:"] + fixes + [
+                       f"or override once with {ALLOW_AUTO_DECOMPOSE_ENV}=1 "
+                       f"(--allow-auto-decompose)."]
+
+
+def _main(argv):
+    import argparse
+    ap = argparse.ArgumentParser(prog="runs_util.py")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    ad = sub.add_parser("auto-decompose", help="refuse while kanban.auto_decompose is on")
+    ad.add_argument("--board-json")
+    a = ap.parse_args(argv)
+    manifest = {}
+    if a.board_json and os.path.isfile(a.board_json):
+        with open(a.board_json) as f:
+            manifest = json.load(f)
+    code, lines = auto_decompose_report(manifest)
+    for line in lines:
+        print(line, file=sys.stderr)
+    return code
+
+
+if __name__ == "__main__":
+    sys.exit(_main(sys.argv[1:]))

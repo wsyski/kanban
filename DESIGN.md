@@ -119,20 +119,90 @@ Gi(n)      ──REWORK───────→ I(n)-rev-N          → Gi(n)-r(
 - **Plan revisions** carry turn-diet guidance: targeted patches to the existing file,
   re-verify only the fixed lines. Framed as "re-verify everything", a plan fix dies at
   the turn ceiling.
-- **A verdict is two halves, and the freeze is computed from them.** The review answers with
-  the findings AND a `VERIFIED:` ledger of the checklist items it accepts. What a revision
-  must leave byte-identical is `frozen_items()` = the ticked items minus the items the
-  findings name: where the two disagree the finding wins, because a tick records that the
-  reviewer LOOKED and a finding is the instruction. `rework_tail` appends
-  `FROZEN — leave byte-identical: items …` (or `Nothing is FROZEN this round`) and logs the
-  overlap. Measured 2026-09-27: a live verdict ticked items 1, 3 and 4 and named 1, 4, 5 and
-  7 — the computed set was 2, 6, 8. Every earlier version of a hand-off is attached to its
-  card, so a re-review diffs round N against round N-1 and reports
-  `churn {changed, shape, remaining, added, removed}`: `shape: surgical` with
-  `remaining: []` is the round closing its own findings without a rewrite; a regenerated
-  document reports as churn. The readers are `verified_items()`/`cited_items()`/
+- **The plan's values are run, not read — the probe.** `template/probe.py` builds the
+  plan's own files (fenced blocks whose info string ends `file=<path>` / `patch=<path>`)
+  in a copy of the work directory under the card's scratch, runs its Run commands there
+  (`Run: `…`` or a ```` ```run ```` block) and writes `probe-log.md`, with the plan's
+  sha256. It skips a command that deploys, builds a bundle or a container, or names a
+  declared target root (the operator's steps — allowed), and, as a DEFECT of the plan,
+  one with an unresolved placeholder, one that still names the real work directory, or
+  one in a shape a card's terminal blocks (`python3 -c`, a script piped into an
+  interpreter). It rewrites every spelling of the work directory (absolute, resolved,
+  `~`, `$HOME`) in commands, in the plan's files and in the seeded copy's own files;
+  hides any git repository above the copy (`GIT_CEILING_DIRECTORIES`, `GIT_DIR` and
+  friends dropped: under the kanban repo's runs/, `git apply` read a patch's paths as the
+  repo's and skipped them all, exit 0) and, where the work directory is git-controlled,
+  makes the copy a fresh one-commit repository; and fingerprints the real work directory
+  (inode, mode, size, mtime, ctime — a `cp -p` restore still shows; dependency
+  directories one level deep) and the target-root files the plan names around every
+  command, so a write that escapes is reported TOUCHED, with its paths, and fails the
+  probe. A linked worktree's `.git` file is never copied (git in the tree would write the
+  real repository's index). A command runs alone, in its own process group with stdin
+  closed and its output in a file — the probe waits for the shell, not for the output to
+  close, so a server it backgrounds is no timeout; a timeout, a signal to the probe and
+  the command's own exit all kill the group. A signal the probe was started to ignore
+  (`setsid nohup`, as the bodies run a long probe) stays ignored, and the log is written
+  `complete: no` before the plan is even read, so an earlier probe's `complete: yes` is
+  never this one's. The trees keep their dependencies — a review re-runs a command in
+  one to prove a VERIFIED FIX — until the run finishes (`prune_probe_trees`).
+  `--also-without C` adds the pass the TW card would see (the predicted FAIL). The planner runs it before completing; the plan review
+  runs it FIRST, every round, in full. Environment facts stay the researcher's; how the
+  tools treat the plan's files is the probe's. Why: on 2026-09-26 the planner was
+  forbidden to run anything and rejected three rounds for values it could only get by
+  running them, and the reviewer that built the files by hand (against "Item 8 is the one
+  command you run") found the defects; on 2026-09-28 a reviewer that read instead passed
+  a plan whose build could never succeed, and the code card paid 107 minutes for it.
+- **A plan-review PASS needs a probe log for the plan it passed.** `latest_verdict_card`
+  reads a RVp PASS as `REJECT: UNPROBED PASS` unless `scratch/<card>/probe/probe-log.md`
+  (read by `probe.read_log` — header fields before the first pass, the tally from the
+  footer, never from a command's output or the verdict's prose) was written for THAT
+  card's scratch (`out:` — a log copied from the plan card's probe has the right sha),
+  started after the card did (`started_at`, else its earliest run), records the sha256
+  of the plan's bytes, says `complete: yes` (the probe rewrites the log after every
+  step), ran in full mode, and shows a clean full pass: every file block written, no
+  command skipped as a defect, at least one command run (unless every one is the
+  operator's) and none failed. The sha is the live <PLAN>'s — or, when <PLAN> was edited
+  AFTER the review finished (a person at the plan gate, as gp-body invites), the plan as
+  the review saw it: the hand-off copy it judged, or the plan the driver recorded the
+  log as accepted for (`runs/<run>/probe-accepted/`). An edit made before the review
+  finished is not excused. Every reader (the gate, the rework loop, `held_by_verdict`)
+  sees the same verdict. The rework loop answers it with a PROBE RETRY — the same review
+  filed again as the next free `RVp<lane>-r<k>`, no revision card, outside `max-reworks`.
+  After two, the verdict reads as `PASS: [UNPROBED PASS after 2 probe retries …]` and the
+  plan gate waits for a person even where the board auto-gates it — a halt there left the
+  person nothing to answer, since a comment on a gate still `waiting` is NOT APPLIED. A
+  revision's re-review takes the next free round number too, and the verdict scan reads
+  every round, however many.
+- **Fixes are labelled.** A finding's fix is `VERIFIED FIX: <text>` when the reviewer ran
+  it in its probe copy, or `SUGGESTION: <direction>`. The revision takes a VERIFIED FIX
+  verbatim and proves a suggestion itself: run 1's round 3 existed only because the
+  reviser wrote its own untested variant of a fix round 2 had already proved.
+- **A verdict is two halves, and what it ACCEPTED is computed from them.** The review
+  answers with the findings AND a `VERIFIED:` ledger of the checklist items it accepts.
+  The revision is told the accepted items = the ticked items minus the items the findings
+  name (the finding wins: a tick records that the reviewer LOOKED, a finding is the
+  instruction), and to leave what they judged as it is — change only what a finding
+  requires, even inside a region an accepted item covers. It is NOT "byte-identical": an
+  item is a property of the whole plan (item 5 is every code step), so no fix could have
+  honoured that. The ticks are read from the FULL verdict; the findings the card is told
+  to address stop before `VERIFIED:`/`NOTES:` (`rejection_findings`), and a cut past 4000
+  characters is marked where it happens. The readers are `verified_items()`/`cited_items()`/
   `frozen_items()` — anything that judges a verdict calls them instead of keeping its own
   copy, which drifts and fails a correct verdict silently (`tests/test_rework_loop.py`).
+- **The re-review re-runs the probe in full and scopes only the paper checks:** the
+  findings' items and whatever the revision changed (diffed against the version the
+  previous review judged, named on the card); an accepted item stands unless the change
+  touches it. The build defects of round 2 (2026-09-26) sat in regions no revision had
+  touched, so the probe is never scoped.
+- **Churn is the driver's measurement.** `rework_churn_line` diffs the version a round
+  was sent against the version it handed back — the scratch copies of the two plan
+  versions, or, for a code round, the lane's files as they stood when the round was filed
+  (`runs/<run>/rework-base/<code>/`, taken by `snapshot_lane_files`) against the tree when
+  it is done. A round that changes ≥60 % of the lines it was sent is a REGENERATION. The
+  worker's own patch is never read for it: without an index the worker contract's patch
+  is a `/dev/null` diff of every file, so every round read "+1125/-1 — REGENERATION"
+  where the plan had really moved +109/-60 (2026-09-26), and a twenty-line fix read
+  "+965/-0" (2026-09-28).
 - **Escalation:** when the rounds are exhausted the driver comments `ESCALATION` on
   the card, records it in `verdicts.jsonl`, and halts the board ([stall classes](#stall-classes)).
 
@@ -230,6 +300,48 @@ how to read them.
   next idea instead polls a finished board for ever (measured 2026-09-28: two drivers,
   ~20 % of a core each and ~12 `hermes` processes every ~24 s, 8 h and 9 h after the
   runs they had finished). The next idea is the next `start-board.sh`.
+- **hermes must not decompose the board's Triage card.** The dispatcher runs its
+  auto-decomposer on every Triage card of every board (`kanban.auto_decompose`, default
+  true), and the board parks its next idea in Triage: on 2026-09-27 it split the Liferay
+  board's idea into four cards that ran with no driver and wrote into `work/`. There is no
+  per-card opt-out, so `create-board.sh`, `arm.sh`, `start-board.sh` and the driver refuse
+  (exit 7 / SystemExit) while the setting is on for the root configuration, the board's
+  worker profiles or the default assignee — an unset key counts as on — and print the
+  `hermes [--profile p] config set kanban.auto_decompose false` lines.
+  `--allow-auto-decompose` (`KANBAN_ALLOW_AUTO_DECOMPOSE=1`) overrides with a WARNING.
+  `runs_util.auto_decompose_report` is the one implementation.
+- **The code gate says what the lane wrote, git or not.** `card_render.git_control` is
+  the worker contract's GIT IS OPTIONAL test in one place (a repository encloses the
+  directory, and `check-ignore --no-index` says whether it ignores it). Where git does
+  not control the work directory, the gate's evidence lists the files the lane's patches
+  wrote and the commit target says "nothing to commit here"; the work-directory snapshot
+  counts no dependency or build directory. The Liferay gate had said "no staged change —
+  the lane ends with the tree as it found it" and "to commit in: … (this repo)" for
+  fourteen new files in an ignored `work/` (2026-09-28).
+- **What a run learned is carried forward.** A code card declares every plan step the
+  toolchain rejected as `DEVIATION: <step>: <plan> → <done>, because <evidence>`; the code
+  review re-derives it; when the code gate passes, `append_toolchain_facts` writes the
+  accepted ones into `boards/<slug>/toolchain-facts.md`, which `i-body`/`p-body` name as
+  `<TOOLCHAIN_FACTS>`. Run 2 re-learned in its code card what run 1's reviewers had
+  measured, because nothing carried it (2026-09-28).
+- **Nothing to drive is a bounded wait, not a tick.** A serve driver whose current run
+  never opened a lane, or had already finished when it rejoined it, and that armed
+  nothing itself (`run.awaiting_idea`), only checks for the go signal — one `list` per
+  wake, no tick, no deadman — for `ARM_WAIT_S` (30 min, `--arm-wait-min`), then exits 0.
+  Ticking there re-read every parked card, and on a finished run it ran `finish_run` a
+  second time and exited before the human's drag could be read: `start-board.sh` then the
+  drag failed on every run after the first (2026-09-28 review). The run's `--timeout-min`
+  cap is counted from the adopted idea, and running out of it is a halt (`driver timeout`).
+- **The driver watches the board; it does not poll blind.** Between passes it reads the
+  board's fingerprint (`run.board_fingerprint`: one read-only sqlite query on `kanban.db` —
+  live cards' `(id, status)` and the newest non-heartbeat event id — no `hermes` process)
+  every `WATCH_S` (5 s) and starts the next pass on a change: a claim, a block, a
+  completion, a comment. `POLL` (120 s) is only the ceiling for a board where nothing
+  moved; a pass that wrote waits at most `POLL_BUSY` (5 s), one that raised
+  `ERROR_RETRY_S` (10 s). The fingerprint is a wake-up signal only — every decision is
+  still made from the CLI's reads — and an unreadable one falls back to a blind
+  `POLL_BLIND` (30 s), said once. One pass is one board snapshot: the adopt check, the
+  tick and the deadman share `show_memo`, so a quiet pass costs one `list`.
 - **Refile clears per-run state first** (opened lanes, timers, drift findings,
   announced gates), before filing — filing can fail, and the next tick must not treat
   the new run's lanes as already open, carry the last run's drift into this run's
@@ -394,7 +506,7 @@ newest block event, and `run.should_repromote` decides what to do:
 | `timeout` | reason contains `TIMEOUT:`, the block the driver sets at a runtime ceiling (`stop_a_timeout`) | `stop` | never promoted away. Only a review sends work back | "a ceiling is not a review; a human resets the board" |
 | `driver` | reason starts `HALTED:`, the block the driver puts on a card it halted for (`driver_block`) | `stop` | never promoted away. A restart reads this block as the driver's stop, never as the worker's | "blocked by the driver when it halted" |
 | `other` | the newest block event has no reason (`hermes kanban block <id>` with no words; the driver always gives one) | `stop` | escalates at the top of the tick, wherever the card sits, like `judge_budget`: nobody can interpret it, and a card held behind a verdict would otherwise wait unseen. A card whose record cannot be read has no block event and is not halted on | "blocked without a reason (by a human or a worker)" |
-| `unreadable` | the card's `show --json` failed (`card_record` notes the error in `_READ_ERROR`; a good read clears it): a CLI timeout or "database is locked" | `skip` | leaves the card for this tick: no unblock, no escalation, not stuck, not a reasonless block. A failed read is not remembered by the per-tick memo, so the next tick reads again. `STALL_LIMIT` (3) promotion ticks in a row unreadable stops the card and halts; a good read restarts the count | log `<code>: could not read its card (…)` once per streak, then "could not read card <code> (<error>)" |
+| `unreadable` | the card's `show --json` failed (`card_record` notes the error in `_READ_ERROR`; a good read clears it): a CLI timeout or "database is locked" | `skip` | leaves the card for this tick: no unblock, no escalation, not stuck, not a reasonless block. A failed read is not remembered by the per-tick memo, so the next tick reads again. unreadable for `STALL_AFTER_S` (60 s, at least two ticks) stops the card and halts; a good read restarts the count | log `<code>: could not read its card (…)` once per streak, then "could not read card <code> (<error>)" |
 
 Why a worker's stop gets exactly one re-promotion:
 
@@ -455,9 +567,18 @@ What differs is the COUNT, and only where the engine makes it differ:
   duration when the poll went to two minutes (three ticks was ~1 min at `POLL=20`, ~6 min at
   `POLL=120`, measured 2026-09-28).
 - a stall where the attempt spent its whole budget (a ceiling, retries spent) cannot be
-  retried at all, so its first occurrence is the stop.
+  retried at all, so its first occurrence is the stop. A crashed worker and a stale claim
+  end here too: the engine books every non-success attempt through
+  `_record_task_failure` (reclaims since #111306), so its breaker's `gave_up` stops them.
 - silence is not a failure: a gate waiting on a person is counted in wall time
-  (`GATE_WAIT_S`), and the deadman notices stuck cards without halting.
+  (`GATE_WAIT_S`), and the deadman notices stuck cards without halting. Silence with
+  NOTHING in flight is: a live run with no card todo, ready or running, no human gate held
+  and no driver write for `QUIESCENT_S` (15 min) halts as `quiescent` — the backstop for a
+  wedge no specific stop names (a stuck card behind a held parent was silent alone, and
+  only a deadman notice in pairs).
+- an exhaustion halt comments on its card once per EVENT (`<code>:<signature>:<at>`), not
+  once per card: the card that exhausts again after a fix-and-restart gets its own
+  comment.
 
 | stall (the signature the halt names) | detected by | counted | the halt says |
 |---|---|---|---|
@@ -480,19 +601,23 @@ What differs is the COUNT, and only where the engine makes it differ:
 | a lane root was filed against a different run | `open_lane` → `lane_paths_agree`, before anything is archived, linked or written | never released, escalated at once | "filed against a different run than runs/current names" |
 | a gate whose parents are all done keeps giving the same `waiting:` message | the gate loop, `gate_wait_reason` | `GATE_WAIT_S` (10 min) of SILENCE, not a failure count | "verdict unreadable" (Gp/Gc), "the gate's input will not appear by itself" (Gi) |
 | rework rounds exhausted | `rework_rounds` | the board's `max-reworks` | [rework loops](#rework-loops) |
-| the Hermes board itself no longer exists (`board '<slug>' does not exist`) | `board_removed_exit`, before the tick-error count | mid-run, or before the first arm: the first occurrence | "was removed under a live run" |
+| the Hermes board itself no longer exists (`board '<slug>' does not exist`) | `board_removed_exit`, before the tick-error count | mid-run: the first occurrence. A driver waiting for an idea logs `BOARD REMOVED` and exits 0 — no run is in flight to halt | "was removed under a live run" |
 | `runs/current` names a run with no lane card and no idea card to arm, or with lane cards but no P card | `empty_run_reason` (a lane is counted by its P card) | first | the reason plus `RESET_STEPS`, because the armed idea card is already archived |
 | the run directory is gone under a live run | `run_directory_is_gone` | first | "run directory disappeared" |
 | the driver died WITHOUT a halt | `run-audit.py`: no halt, no finish banner, no live pid in `runs/driver.lock` | nothing is running | E1 "the driver died without a halt or the finish banner … restart it with start-board.sh" |
 | two or more cards `is_stuck`, with no halt | `deadman_check` | sends a notice once per distinct stuck set. **No halt** | `DEADMAN` line, `deadman.txt`, Telegram |
+| quiescent — a live run (a lane opened) with no card todo, ready or running, no human gate held, no driver write | `halt_if_quiescent`, the tick's last step | `QUIESCENT_S` (15 min) of it in a row; any of the four restarts it | "quiescent — for n min no card was todo, ready or running … blocked: <code> (<block reason>) …", on the first blocked card that is not parked |
+| cards the board did not file — made by hermes' auto-decomposer, or a card it decomposed | `foreign_cards`, at driver start (read-only kanban.db) | first | "cards this board did not file are on it: …" — archive them and check `work/` |
+| driver timeout — the run outlived its `--timeout-min` cap (start-board.sh passes the board's `timeout-min`) | `main()`, counted from the adopted idea; never while waiting for one | first | "driver timeout — the n-min cap … ran out with the run unfinished" (no card: halt.txt and the notice) |
 
 Where a row's reasoning is not obvious from the table:
 
 - **Why the driver blocks the rate-limit, reclaim and dependency cards before halting.**
   The engine retries those cards for ever without counting a failure:
-  `check_respawn_guard` retries every cooldown, `release_stale_claims` returns the card
-  to `ready`, and `recompute_ready` promotes again. Without the block, the retries would
-  go on after the driver exits.
+  `check_respawn_guard` retries every cooldown and `recompute_ready` promotes again.
+  (`release_stale_claims` returns the card to `ready` too; it books the reclaim toward the
+  breaker since #111306, so the stale-claim count is a second net.) Without the block,
+  the retries would go on after the driver exits.
 - **Why timeouts are never re-queued.** A runtime ceiling is the board's own rule. A
   provider flake is not.
 - **Why a dead-worker reclaim does not halt a board that has moved on.** Measured
@@ -719,7 +844,8 @@ Each is current behaviour, with what to do about it.
 
 ## Timing instrumentation
 
-- The driver ticks every 20 s and appends a status snapshot to
+- The driver ticks when the board's fingerprint changes (at most every `POLL`, 120 s,
+  on a board where nothing moved) and appends a status snapshot to
   `runs/<run-id>/timing.jsonl`; a run-boundary marker (ts, argv) at every driver start
   lets the report cover only the latest segment.
 - On each card status *change* the snapshot embeds the card's run evidence (`last_run`

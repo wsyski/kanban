@@ -36,6 +36,8 @@ driver/arm.sh --slug <slug> [--lane <n>]
 
   --slug <s>   board slug (required)
   --lane <n>   lane to arm (default 1)
+  --allow-auto-decompose
+               arm although hermes kanban.auto_decompose is on (a WARNING is logged)
 
 Files that lane's idea as the board's go-signal card, then starts the board's driver if none
 is up — the ONE command for a new idea:
@@ -51,6 +53,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --slug) need "$@"; SLUG=$2; shift 2 ;;
     --lane) need "$@"; LANE=$2; shift 2 ;;
+    --allow-auto-decompose) export KANBAN_ALLOW_AUTO_DECOMPOSE=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown arg: $1 — the board is named with --slug" >&2
        usage >&2; exit 2 ;;
@@ -105,6 +108,11 @@ done
 # 2026-09-15 had a coder worker build the board's whole deliverable off this card while
 # the driver was reading the same card as the idea. `blocked` is never dispatched, and
 # `armed_ideas` reads it when the body carries the RAW IDEA marker.
+# The dispatcher decomposes Triage cards while kanban.auto_decompose is on — refuse
+# before anything is filed (runs_util.auto_decompose_report).
+python3 "$REPO/driver/runs_util.py" auto-decompose \
+  --board-json "$REPO/boards/$SLUG/board.json" || exit 7
+
 hermes kanban --board "$SLUG" create "$TITLE" --body "$BODY" --created-by arm.sh \
   --initial-status blocked
 

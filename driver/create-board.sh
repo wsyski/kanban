@@ -15,6 +15,9 @@ driver/create-board.sh — create a generic kanban board instance
   --board <dir>   board directory (see below)
   --slug <s>      board slug   — required only without --board
   --title <t>     board title  — required only without --board
+  --allow-auto-decompose
+                  file the board although hermes kanban.auto_decompose is on
+                  (refused otherwise; a WARNING is logged)
   -h, --help      this text
 
 A BOARD IS A DIRECTORY. Everything specific to one board lives in it, and
@@ -24,7 +27,8 @@ nothing about it lives under template/ or driver/:
         board.json          the manifest — see below
         README.md           what this board's ideas require
         lane-<k>.md         the idea for lane <k> — one file per lane
-        work/               what a run BUILDS: the board's product, tracked
+        work/               what a run BUILDS: the board's product — untracked
+                            here (gitignored); it belongs to the target project
         runs/               the DRIVER's own state — driver.log, driver.lock,
                             and `current`, a file naming the live run
         runs/<run-id>/      ONE armed idea's run, minted when it is armed and
@@ -192,6 +196,7 @@ while [ $# -gt 0 ]; do
     --board) need "$@"; BOARD_DIR=$2; shift 2 ;;
     --slug)  need "$@"; SLUG=$2; shift 2 ;;
     --title) need "$@"; TITLE=$2; shift 2 ;;
+    --allow-auto-decompose) export KANBAN_ALLOW_AUTO_DECOMPOSE=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown arg: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -448,6 +453,13 @@ else
   echo "dispatcher: unchecked (no lsof) — confirm a gateway is running" >&2
 fi
 
+# Hermes decomposes every Triage card on every board (kanban.auto_decompose, default
+# true), and this board parks its next idea in Triage: on 2026-09-27 the Liferay board's
+# idea card was split into four cards that ran with no driver up and wrote into work/.
+# There is no per-card opt-out, so the setting itself is the pre-flight.
+python3 "$REPO/driver/runs_util.py" auto-decompose \
+  ${BOARD_DIR:+--board-json "$BOARD_DIR/board.json"} || exit 7
+
 # A driver still serving this board reads a re-filing half-way through — a run with
 # no cards yet — as a failed filing, and halts (is-even, 2026-09-15 19:21). Removing
 # the board with `hermes kanban boards rm` does not stop it; reset.sh does.
@@ -533,15 +545,17 @@ PY
 
 cat <<EOF
 
-Next:
-  1. arm it:    driver/arm.sh --slug $SLUG
-  2. serve it:  driver/start-board.sh --slug $SLUG
-  3. drive it:  http://127.0.0.1:9119/kanban
+Next — ONE of:
+  from a shell:   driver/arm.sh --slug $SLUG
+                  files the go signal and starts the driver
+  from the board: http://127.0.0.1:9119/kanban — edit the Triage card if you
+                  want a different idea, DRAG IT FROM TRIAGE TO TODO, and start
+                  the driver: driver/start-board.sh --slug $SLUG
+                  (before or after the drag: with nothing armed it waits up to
+                  30 min for it, then exits)
 
-Nothing starts until you arm a card. In the dashboard, edit the Triage card if
-you want a different idea, then DRAG IT FROM TRIAGE TO TODO — that is the go
-signal, the same one arm.sh files from the shell. The driver adopts the card's
-text into $BOARD_DIR/lane-<k>.md, files a fresh lane and drives it, and exits
-when the run's gates close. A prefilled board is an initial value, not a
-running one.
+Nothing starts until you arm a card: the drag and arm.sh are the same go signal.
+The driver adopts the card's text into $BOARD_DIR/lane-<k>.md, files a fresh lane
+and drives it, and exits when the run's gates close. A prefilled board is an
+initial value, not a running one.
 EOF

@@ -11,7 +11,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ARM = os.path.join(REPO, "driver", "arm.sh")
 
 
-def _arm(tmp_path, idea_text, *args):
+def _arm(tmp_path, idea_text, *args, decompose="false"):
     """arm.sh copied into a scratch repo (it resolves REPO from its own path), one idea
     file, and a `hermes` that records every call and answers `list` with no cards.
     Default argv is the documented arm; pass args to drive the interface itself."""
@@ -22,6 +22,8 @@ def _arm(tmp_path, idea_text, *args):
     # it asks (driver-pid.sh) and a `start-board.sh` that records being called.
     shutil.copy(os.path.join(REPO, "driver", "driver-pid.sh"),
                 repo / "driver" / "driver-pid.sh")
+    # …and the auto-decompose guard it runs before filing anything (runs_util).
+    shutil.copy(os.path.join(REPO, "driver", "runs_util.py"), repo / "driver" / "runs_util.py")
     started = tmp_path / "start-board.log"
     (repo / "driver" / "start-board.sh").write_text(
         "#!/usr/bin/env bash\n"
@@ -35,7 +37,9 @@ def _arm(tmp_path, idea_text, *args):
     stub = bin_dir / "hermes"
     stub.write_text("#!/usr/bin/env bash\n"
                     f"printf '%s\\n' \"$*\" >> {log}\n"
-                    "case \" $* \" in *' list '*) echo '[]' ;; esac\n")
+                    "case \" $* \" in *' list '*) echo '[]' ;; esac\n"
+                    + (f"case \" $* \" in *' config get kanban.auto_decompose '*) echo {decompose} ;; esac\n"
+                       if decompose else ""))
     stub.chmod(0o755)
     env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}")
     argv = args or ("--slug", "b", "--lane", "1")
@@ -123,3 +127,36 @@ def test_arming_starts_the_board_when_no_driver_is_up(tmp_path):
     started = tmp_path / "start-board.log"
     assert started.exists(), r.stdout
     assert started.read_text().strip() == "--slug b", started.read_text()
+
+
+def test_arming_is_refused_while_hermes_would_decompose_the_idea(tmp_path):
+    """The dispatcher decomposes every Triage card while kanban.auto_decompose is on (the
+    default), and on 2026-09-27 it ran the Liferay board's idea as four unsupervised cards.
+    Refused before anything is filed; the refusal names the exact setting to change."""
+    r, calls = _arm(tmp_path, "## Idea 1: x\n\n### Done means\n\nx\n", decompose="true")
+    assert r.returncode == 7, (r.returncode, r.stderr)
+    assert "config set kanban.auto_decompose false" in r.stderr
+    assert " create " not in calls, calls
+
+
+def test_the_refusal_can_be_overridden_loudly(tmp_path):
+    r, calls = _arm(tmp_path, "## Idea 1: x\n\n### Done means\n\nx\n",
+                    "--slug", "b", "--allow-auto-decompose", decompose="true")
+    assert r.returncode == 0, r.stderr
+    assert "WARNING: kanban.auto_decompose is ON" in r.stderr
+    assert "create Idea 1" in calls, calls
+
+
+def test_an_unreadable_root_setting_is_refused_like_an_on_one(tmp_path):
+    """The root configuration defaults to ON: one the CLI cannot read is the silent case
+    the guard exists for (a stub `hermes` that prints nothing for `config get`)."""
+    r, calls = _arm(tmp_path, "## Idea 1: x\n\n### Done means\n\nx\n", decompose=None)
+    assert r.returncode == 7, (r.returncode, r.stderr)
+    assert "cannot be read for the root configuration" in r.stderr
+    assert " create " not in calls, calls
+
+
+def test_an_off_setting_arms_quietly(tmp_path):
+    r, calls = _arm(tmp_path, "## Idea 1: x\n\n### Done means\n\nx\n", decompose="false")
+    assert r.returncode == 0, r.stderr
+    assert "auto_decompose" not in r.stderr
