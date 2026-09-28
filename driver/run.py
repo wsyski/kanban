@@ -6,6 +6,9 @@ the board default) sets auto-gates, in which case the gate auto-completes on
 a PASS verdict with staged-file evidence — still no commit.
 
 Usage: driver/run.py [--serve] [--once] [--timeout-min 120]
+
+`--serve` waits for the go signal (a card armed out of Triage) instead of releasing a lane
+on start, and exits when the run it drove finishes: one driver per run.
 """
 import contextlib, datetime, glob, json, math, os, re, shutil, sqlite3, subprocess, sys, tempfile, time
 import traceback, urllib.parse, urllib.request
@@ -15,11 +18,20 @@ import traceback, urllib.parse, urllib.request
 BOARD = os.environ.get("BOARD", "")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ONCE = "--once" in sys.argv
-# The main scenario is a board that stays up: you type an idea into the
-# dashboard, promote it out of Triage, and the run starts. Exiting when the
-# gates close would make every new idea a terminal command again.
+# The go signal is a card: you type an idea into the dashboard, promote it out of
+# Triage, and the run starts. A serve driver waits for that — and stops with the run it
+# drove. It does NOT stay up for the next idea: a driver that does polls a finished
+# board for ever (measured 2026-09-28: two boards whose runs finished at 12:45 and 14:56
+# were still being polled at 18:00 — each driver spawning ~12 `hermes` processes every
+# ~24 s and burning ~20 % of a core, 8h43m and 9h37m of process uptime for no work).
+# The next idea is the next `driver/start-board.sh --slug <slug>`.
 SERVE = "--serve" in sys.argv
-POLL = 20
+# A BATCH cadence. A card's worker runs for minutes, so a quiet board has nothing to
+# learn between ticks — the transitions that have to be quick are the driver's OWN, and
+# those land in ticks that CHANGED something (POLL_BUSY, below). The old 20 s quiet poll
+# spent six `hermes kanban list` processes a tick (~0.25 s each) finding out that nothing
+# had moved.
+POLL = 120
 # A board in motion usually has another transition due, and the full POLL between them is
 # dead time a person watching the board pays: measured on is-even (2026-09-16), eight
 # hand-offs each waited ~26 s, 3.5 min of a 5.5 min overhead. After a tick that CHANGED
@@ -99,7 +111,11 @@ class RunState:
         self.cards_dir = self.verdicts_path = None
         self.run_dir_seen = {"path": None}
         self.mutations = [0]   # board writes this process has made; the tick cadence reads it
-        self.show_memo = {"cards": None}
+        # One board snapshot per tick: "cards" memoises `card_show`, "board" memoises
+        # `board()` itself. Both are dropped when the DRIVER writes (kb's mutation verbs), so
+        # a tick still sees its own writes; outside a tick `board()` reads fresh. Typed as a
+        # plain dict because each key holds None outside a tick and a dict inside one.
+        self.show_memo: dict = {"cards": None, "board": None}
         self.drift = set()   # drift already reported, once per change
         self.run_finished = [False]   # this run reached ALL GATES COMPLETE
         self.gate_tag = {}   # gate code -> the review card its current readiness rests on
@@ -109,7 +125,10 @@ class RunState:
         self.process_recorded = [False]
         self.attached = set()
         self.empty_result_noted = set()
-        self.tick_error = {"sig": None, "n": 0}
+        # Consecutive same-shaped tick exceptions: the signature, the streak, and WHEN the
+        # streak began — the beginning is what STALL_AFTER_S measures, because a count alone
+        # stopped meaning a duration when the poll went to two minutes (stall_persisted).
+        self.tick_error = {"sig": None, "n": 0, "since": None}
         self.halted = {"reason": None}   # mutable holder: functions assign inner keys
         self.escalated = set()   # gate codes already escalated this run (rejoined on restart)
         self.log_offsets = {}   # card id -> worker-log size at its last attempt (ledger-rejoined)
@@ -120,7 +139,8 @@ class RunState:
                              # so a board option edited while the lane waits reaches the next
                              # CARD, and a per-card `set-model` by hand is not undone by it
         self.read_error = {}   # card id -> why its latest `show` failed; a good read drops it
-        self.unreadable_ticks = {}
+        self.unreadable_ticks = {}     # card id -> ticks in a row it could not be read
+        self.unreadable_since = {}     # card id -> when that streak began (STALL_AFTER_S)
         # card id -> the tick serial it was last counted unreadable in, so two scans in
         # one tick count it once (count_unreadable)
         self.unreadable_counted = {}
@@ -501,6 +521,10 @@ READ_VERBS = ("show", "list", "attachments", "runs", "events")
 def kb(*args, capture=True):
     if args[:1] and args[0] not in READ_VERBS:
         STATE.mutations[0] += 1
+        # A write changes the board it just read, so the tick's snapshot is stale from here:
+        # the next `board()` re-reads. The deliberate re-reads after unblock/create/link
+        # depend on this (measured 2026-09-28), and so does the promotion loop's `st = board()`.
+        STATE.show_memo["board"] = None
     if args[:1] not in (("show",), ("list",)) and STATE.show_memo["cards"]:
         # A driver write changes the card it names: the next read in this tick fetches.
         for a in args:
@@ -524,11 +548,22 @@ def kb(*args, capture=True):
 
 @contextlib.contextmanager
 def show_memo():
+    """One board snapshot per tick: `card_show` AND `board()` serve from it, and a WRITE
+    drops both (kb's mutation verbs), so a tick still sees its own writes. Outside a tick
+    nothing is memoised and every read is fresh — which is what `main()` and `finish_run`
+    get.
+
+    `board()` was six `hermes kanban list --json` processes a tick before this (measured
+    2026-09-28): the tick re-reads the board after each phase, and only its OWN writes made
+    the re-read necessary.
+    """
     STATE.show_memo["cards"] = {}
+    STATE.show_memo["board"] = None
     try:
         yield
     finally:
         STATE.show_memo["cards"] = None
+        STATE.show_memo["board"] = None
 
 
 def card_show(card_id):
@@ -544,7 +579,14 @@ def card_show(card_id):
 
 
 def board():
-    """Live cards, keyed by title.
+    """Live cards, keyed by title — ONCE per tick.
+
+    The tick re-reads the board between its phases (promotion, gates, rework) and most of
+    those reads were answering the same question with a fresh `hermes kanban list --json`
+    process each — six a tick, ~0.25 s and an interpreter apiece (measured 2026-09-28).
+    Inside `show_memo` the first read is kept and the rest are served from it, and `kb`
+    drops it when the driver WRITES, so a read after `unblock`/`comment`/`create` still sees
+    that write.
 
     Titles are unique by construction (card_title embeds code + lane), so the
     keying is safe — but a refile that fails to archive an old card leaves two
@@ -552,6 +594,9 @@ def board():
     how a card the refile missed stayed invisible for a whole run, so say it
     out loud rather than dropping it.
     """
+    memo = STATE.show_memo["board"]
+    if memo is not None:
+        return memo
     out = json.loads(kb("list", "--json"))
     if STATE.show_memo["cards"]:
         STATE.show_memo["cards"].clear()
@@ -562,6 +607,8 @@ def board():
                 f"({state[card['title']]['id']}, {card['id']}) — one is stale; "
                 f"archive it, or the board will disagree with itself")
         state[card["title"]] = card
+    if STATE.show_memo["cards"] is not None:      # inside a tick: keep this snapshot
+        STATE.show_memo["board"] = state
     return state
 
 
@@ -2694,10 +2741,10 @@ def _tick():
         if verdict == "skip":
             n = count_unreadable(card["id"])
             err = STATE.read_error.get(card["id"], "")
-            if n >= UNREADABLE_LIMIT:
-                escalate(card["id"], code,
-                         f"could not read card {code} ({err}) {n} ticks running — the "
-                         f"driver cannot tell what blocked it")
+            if stall_persisted(n, STATE.unreadable_since.get(card["id"])):
+                stall_halt("unreadable card",
+                           f"{n} ticks in a row could not read card {code} ({err}) — the "
+                           f"driver cannot tell what blocked it", card=card)
                 return True
             if n == 1:
                 log(f"{code}: could not read its card ({err}) — skipped until a read "
@@ -2963,18 +3010,13 @@ def empty_run_reason(state):
             f"its filing failed; reset the board: {RESET_STEPS.format(b=BOARD)}")
 
 
-# The same exception this many ticks running is a loop, not a transient: measured on
-# roman-evaluator-java, 26 identical ValueErrors in 15 minutes and nothing stopped.
-TICK_ERROR_LIMIT = 3
-
-
 def tick_error_signature(exc):
     """What makes two tick errors THE SAME error: the type, and the message with the
     parts that vary between ticks masked — card ids (`t_…`) and every run of digits
     (pids, rowids, timestamps, counts).
 
     The whole message was the key, so a CLI error carrying an id that changed each
-    tick looked like a new problem every time and TICK_ERROR_LIMIT was never reached
+    tick looked like a new problem every time and STALL_LIMIT was never reached
     (2026-09-23 review, Important 18). The halt still NAMES the exception verbatim;
     only the comparison is masked.
     """
@@ -2984,13 +3026,23 @@ def tick_error_signature(exc):
 
 def note_tick_outcome(exc=None):
     """Count consecutive same-shaped tick exceptions; a good tick (None) or a different
-    shape restarts the count, and the limit halts naming the exception."""
+    shape restarts the count, and a streak that has PERSISTED (STALL_AFTER_S, two ticks or
+    more) halts the board like every other stall — the same treatment, with no card to stop.
+
+    Measured on roman-evaluator-java: 26 identical ValueErrors in 15 minutes and nothing
+    stopped, which is why the driver has this counter at all.
+    """
     sig = tick_error_signature(exc) if exc is not None else None
-    STATE.tick_error["n"] = STATE.tick_error["n"] + 1 if sig and sig == STATE.tick_error["sig"] else int(bool(sig))
+    same = bool(sig) and sig == STATE.tick_error["sig"]
+    STATE.tick_error["n"] = STATE.tick_error["n"] + 1 if same else int(bool(sig))
+    if not same or STATE.tick_error["since"] is None:
+        STATE.tick_error["since"] = time.time() if sig else None   # the streak begins now
     STATE.tick_error["sig"] = sig
-    if STATE.tick_error["n"] >= TICK_ERROR_LIMIT:
-        record_halt(f"the tick raised the same exception {TICK_ERROR_LIMIT} times "
-                    f"running — {type(exc).__name__}: {exc}; retrying will not change it")
+    n, since = STATE.tick_error["n"], STATE.tick_error["since"]
+    if stall_persisted(n, since):
+        stall_halt("tick error",
+                   f"the tick raised the same exception {n} times running "
+                   f"({type(exc).__name__}: {exc}) — retrying will not change it")
 
 
 # A gate whose parents are all done and which still gives the same `waiting:` reason
@@ -3140,19 +3192,19 @@ def halt_if_exhausted(st):
             # limit as promotion's skip: a transient is skipped, a streak escalates.
             code = title.split(":")[0]
             n = count_unreadable(c["id"])
-            if n >= UNREADABLE_LIMIT:
-                escalate(c["id"], code,
-                         f"could not read card {code} ({STATE.read_error[c['id']]}) {n} "
-                         f"ticks running — the driver cannot tell whether it is blocked, "
-                         f"exhausted or done")
+            if stall_persisted(n, STATE.unreadable_since.get(c["id"])):
+                stall_halt("unreadable card",
+                           f"{n} ticks in a row could not read card {code} "
+                           f"({STATE.read_error[c['id']]}) — the driver cannot tell "
+                           f"whether it is blocked, exhausted or done", card=c)
                 return STATE.halted["reason"]
             continue
         events = record.get("events", [])
         stall = card_stall(st, c, record, graph.get(title))
         if stall:
-            # The engine keeps retrying this card after the driver exits: block it.
-            driver_block(c, f"{HALT_BLOCK_MARK} {stall}")
-            escalate(c["id"], title.split(":")[0], stall)
+            # A stack here is by definition one the engine re-spawns on its own: the stop
+            # has to block the card, which is stall_halt's first step.
+            stall_halt(stall[0], stall[1], card=c)
             return STATE.halted["reason"]
         p = _exhaustion_event(c["id"], events)
         if p is None:
@@ -3205,20 +3257,22 @@ def halt_if_exhausted(st):
                 break
         else:
             return None
-    reason = f"{title}: {reason_txt or 'exhausted (see board)'}"
+    # One treatment for every exhaustion, whatever tripped it: a spent retry budget, a
+    # ceiling, a crash the engine gave up on. "terminal" is not a special case — the
+    # attempt spent its whole budget and produced nothing, and stall_halt's block is what
+    # keeps the engine from re-spawning it (see STALL_LIMIT).
+    kind = (p.get("kind") if isinstance(p, dict) else None) or ""
+    signature = {"timed_out": "ceiling", "gave_up": "retries spent"}.get(kind, "exhausted")
+    why = f"{title}: {reason_txt or 'the attempt produced nothing (see the board)'}"
     # Distinguish machine-slow from provider-starved: a card whose worker log
     # shows upstream 4xx/5xx storms timed out because of the provider, not the
     # task's size — the restart decision changes.
     hits = provider_hits(c["id"])
     if hits >= 3:
-        reason += f" — provider-starved ({hits} upstream 4xx/5xx in worker log)"
-    # The reason must be readable where the human looks first: on the card
-    # itself, not only in runs/halt.txt or the driver log.
-    try:
-        driver_comment(c["id"], f"BOARD HALTED: {reason}{halt_guidance()}")
-    except RuntimeError as e:
-        log(f"WARNING: halt comment failed ({e})")
-    record_halt(reason)
+        why += f" — provider-starved ({hits} upstream 4xx/5xx in the worker log)"
+    # The reason must be readable where the human looks first: on the card itself, not
+    # only in runs/halt.txt or the driver log — which is where stall_halt puts it.
+    stall_halt(signature, why, card=c)
     return STATE.halted["reason"]
 
 
@@ -3392,12 +3446,86 @@ def card_record(card_id):
         return {}
     STATE.read_error.pop(card_id, None)
     STATE.unreadable_ticks.pop(card_id, None)
+    STATE.unreadable_since.pop(card_id, None)   # a good read restarts the streak
     return record if isinstance(record, dict) else {}
 
 
-# Promotion ticks in a row a blocked card could not be read. A CLI timeout or "database
-# is locked" is a transient: the card is skipped, and only a streak halts.
-UNREADABLE_LIMIT = 3
+# ONE rule for every stall, whatever its reason — a quota wall, a dead worker, an upstream
+# outage, a provider that never answered, a worker's own loop, an unreadable card, a
+# repeated tick error: THE SAME FAILURE `STALL_LIMIT` TIMES IN A ROW ON ONE CARD stops that
+# card and halts the board, through the one path `stall_halt` below. The reason only NAMES
+# the stall; it never picks the treatment.
+#
+# Two shapes stop on their FIRST occurrence, which is not an exception to the rule: the
+# treatment blocks the card, so the engine cannot re-spawn it and there is no second
+# occurrence to count. Both are "the attempt spent its whole budget and produced nothing":
+# a `timed_out` ceiling, and a `gave_up` whose retries are spent (the 2026-09-12 user rule
+# — a timed-out card is not tried again). Every other shape is one the engine retries by
+# itself WITHOUT counting a failure (kanban_db_dispatch.check_respawn_guard retries a
+# rate-limited card every cooldown; kanban_db.release_stale_claims returns a stale claim
+# straight to `ready`; `_route_block` re-queues a worker's dependency block), so the count
+# is the only thing that can ever stop them.
+STALL_LIMIT = 3
+
+# The same rule in WALL TIME, for the two failures the driver counts in TICKS (an unreadable
+# card, a repeated tick error): the same failure in a row for this long — never a single tick.
+# A count alone stopped meaning a duration when the poll went to two minutes (three ticks in a
+# row was ~1 min at POLL=20 and ~6 min at POLL=120, measured 2026-09-28), so these two are
+# measured by the clock: two consecutive ticks spanning this is the "it is not clearing" the
+# count was always for, and one failed tick is still a transient.
+STALL_AFTER_S = 60
+
+
+def stall_persisted(count, since):
+    """True when a streak of `count` consecutive failures has lasted STALL_AFTER_S.
+
+    `since` is when the streak began; no streak (None) is never a stall, and one tick is
+    never enough however long the poll is.
+    """
+    return count >= 2 and since is not None and time.time() - since >= STALL_AFTER_S
+
+
+HALT_BLOCK_MARK = "HALTED:"
+
+
+def since_last_completion(events, kind):
+    """The `kind` events after the newest `completed` one — "in a row" for a card.
+
+    A card's event log is append-only and holds every attempt it ever had, so a LIFETIME
+    count turns two failures an hour apart into a stall even when a run completed in
+    between and the card is working. Order, not timestamps: the log is in append order and
+    two events can share a second, but the newest `completed` is unambiguous.
+    """
+    cut = 0
+    for i, e in enumerate(events):
+        if e.get("kind") == "completed":
+            cut = i + 1
+    return [e for e in events[cut:] if e.get("kind") == kind]
+
+
+def stall_halt(signature, why, card=None):
+    """THE halt: one treatment for every stall, in this order.
+
+    1. Stop the card, if there is one: block it marked `HALTED: <signature> — <why>`. The
+       block is what makes the halt stick — the engine re-spawns a card it counts no
+       failure for, and a driver that halts without blocking leaves it retrying the same
+       broken step for ever. Best effort (driver_block never raises); a card already
+       blocked or in triage is left alone.
+    2. Escalate on the card: one `ESCALATION: …` comment carrying the recovery steps.
+    3. Halt the board: `BOARD HALTED: <signature> — <why>`, `runs/<run-id>/halt.txt`, one
+       notice. main() sees the halt and exits 1.
+
+    The reason is always `<signature> — <evidence>` so a log line, a card comment and the
+    audit read the same shape whichever stall fired.
+    """
+    reason = f"{signature} — {why}"
+    if card is not None:
+        driver_block(card, f"{HALT_BLOCK_MARK} {reason}")
+        # The code comes off the title (`C2: …`); a row without one still gets its halt
+        # named rather than raising inside the halt path.
+        escalate(card["id"], str(card.get("title") or card["id"]).split(":")[0], reason)
+    else:
+        record_halt(reason)
 
 
 def count_unreadable(card_id):
@@ -3407,18 +3535,18 @@ def count_unreadable(card_id):
     if STATE.unreadable_counted.get(card_id) != STATE.tick_serial[0]:
         STATE.unreadable_counted[card_id] = STATE.tick_serial[0]
         STATE.unreadable_ticks[card_id] = STATE.unreadable_ticks.get(card_id, 0) + 1
+        if card_id not in STATE.unreadable_since:
+            STATE.unreadable_since[card_id] = time.time()   # when the streak began
     return STATE.unreadable_ticks[card_id]
 
 
-# The engine retries both of these for ever without counting a failure: a rate-limited
-# exit (kanban_db_dispatch.check_respawn_guard) every cooldown, a stale claim
-# (kanban_db.release_stale_claims) straight back to `ready`.
-RATE_LIMIT_LIMIT = 3
-RECLAIM_LIMIT = 2
-
-
 def card_stall(state, card, record, parents):
-    """Why a card the engine keeps retrying by itself must stop, or None.
+    """A stack the engine keeps retrying BY ITSELF, as `(signature, why)`, or None.
+
+    Every shape here is one the engine counts no failure for, so it re-spawns the card for
+    ever and the streak is the only thing that can stop it (STALL_LIMIT). Nothing is
+    decided here: the caller hands both halves to stall_halt(), the same way for every
+    stall.
 
     A worker's `block --kind dependency` never reaches `blocked`: `_route_block` sends
     it to `todo` and recompute_ready promotes it again, with no recurrence count. With
@@ -3433,16 +3561,20 @@ def card_stall(state, card, record, parents):
         if r.get("outcome") != "rate_limited":
             break
         walled += 1
-    if walled >= RATE_LIMIT_LIMIT:
-        return (f"provider quota wall — {walled} rate-limited exits in a row; the engine "
-                f"retries it every cooldown and counts no failure")
-    # An operator's `reclaim` (payload `manual`) is a person, not a stale worker.
-    reclaims = [e for e in events if e.get("kind") == "reclaimed"
-                and not (isinstance(e.get("payload"), dict) and e["payload"].get("manual"))]
-    if len(reclaims) >= RECLAIM_LIMIT:
-        return (f"its claim was reclaimed {len(reclaims)} times (a stale claim: the "
-                f"worker stopped heartbeating) — the engine puts it back to `ready` and "
-                f"counts no failure")
+    if walled >= STALL_LIMIT:
+        return ("provider quota wall",
+                f"{walled} rate-limited runs in a row; the engine retries it every "
+                f"cooldown and counts no failure")
+    # An operator's `reclaim` (payload `manual`) is a person, not a stale worker. Counted
+    # since the card's last completion, not over its whole life: a card reclaimed twice in
+    # an earlier hour and working since is not a stall.
+    reclaims = [e for e in since_last_completion(events, "reclaimed")
+                if not (isinstance(e.get("payload"), dict) and e["payload"].get("manual"))]
+    if len(reclaims) >= STALL_LIMIT:
+        return ("stale claim",
+                f"the claim was reclaimed {len(reclaims)} times in a row with no run "
+                f"completing (a worker that stops heartbeating); the engine returns it "
+                f"to `ready` and counts no failure")
     # The driver's own rework hold wrote `rework in flight: …` before it was dropped,
     # and a run filed then still carries those events.
     deps = [e["payload"] for e in events if e.get("kind") == "dependency_wait"
@@ -3454,7 +3586,8 @@ def card_stall(state, card, record, parents):
     why = deps[-1].get("reason") or ""
     cid, code = card["id"], card["title"].split(":")[0]
     if len(deps) >= 2 or (cid in STATE.repromoted and cid not in STATE.dependency_noted):
-        return (f"its own worker blocked it twice, the last time with `--kind "
+        return ("worker loop",
+                f"its own worker blocked it twice, the last time with `--kind "
                 f"dependency` ({why}) — the engine re-queues such a block by itself, "
                 f"so the lane cannot advance")
     if cid not in STATE.dependency_noted:
@@ -4269,7 +4402,6 @@ def main():
     t0 = time.time()
     STATE.t0[0] = t0                # wall_min in the summary is measured from here
     timeout = timeout_seconds(serve=SERVE)
-    idle = False
     before = STATE.mutations[0]
     while True:
         if STATE.halted["reason"]:
@@ -4281,7 +4413,6 @@ def main():
             # A new idea outranks the current tick: adopt it, refile, and let the
             # next pass drive the fresh cards.
             if SERVE and adopt_and_refile(board()):
-                idle = False
                 continue
             finished = tick()
             note_tick_outcome()
@@ -4290,15 +4421,19 @@ def main():
                     log("BOARD HALTED — driver exiting; board state left "
                         "for human inspection")
                     return 1
-                if not idle:
-                    finish_run()
-                if not SERVE:
-                    return 0
-                if not idle:
-                    log("IDLE — waiting for a new idea (promote a Triage card to start)")
-                    idle = True
+                finish_run()
+                # The run is over, so this process is: a driver's life is the run it
+                # drives (see SERVE at the top — the resident waiter this replaced was
+                # measured at ~20 % of a core per board, for hours after the run it had
+                # finished). Serving the next idea is one command, and the human who
+                # arms that idea runs it.
+                log(f"RUN FINISHED — driver exiting; drive the next idea with "
+                    f"driver/start-board.sh --slug {BOARD}")
+                return 0
         except Exception as e:
-            code = board_removed_exit(e, idle)
+            # No `idle` argument: this loop never idles — a driver exits with its run, so a
+            # removed board is always met mid-run or before the first arm.
+            code = board_removed_exit(e)
             if code is not None:
                 return code
             log(f"ERROR: {e}\n{traceback.format_exc()}")
@@ -4318,14 +4453,16 @@ def main():
         moved, before = STATE.mutations[0] != before, STATE.mutations[0]
         time.sleep(POLL_BUSY if moved else POLL)
 
-def board_removed_exit(exc, idle):
+def board_removed_exit(exc):
     """The exit code when `exc` says the Hermes board itself is gone, else None.
 
-    Retrying cannot bring a removed board back, and three tracebacks before a halt
-    buried the cause. A serving driver whose run had finished has nothing left to
-    guard: it exits 0 without writing a halt into that finished run (blade-workspace
-    and arena-federated-search, 2026-09-15 19:01, seven hours after ALL GATES
-    COMPLETE). Mid-run it is a real halt, named for what happened."""
+    Retrying cannot bring a removed board back, and three tracebacks before a halt buried
+    the cause. A removed board is always met mid-run or before the first arm — a driver
+    exits with the run it drove, so it never sits under a finished one — and that is a real
+    halt, named for what happened. The old `idle=True` case (a removed board met by a
+    served-but-finished run: log `BOARD REMOVED`, exit 0 without a halt — blade-workspace and
+    arena-federated-search, 2026-09-15 19:01, seven hours after ALL GATES COMPLETE) went with
+    the idle loop that produced it."""
     # The CLI's own phrase, CONTIGUOUS and case-insensitive, in either wording it
     # uses. Not two separate substring tests: "board 'b': card t_1 not found" names
     # the board and says "not found", and is not a removed board (2026-09-23 review,
@@ -4333,10 +4470,6 @@ def board_removed_exit(exc, idle):
     if not re.search(rf"board '{re.escape(BOARD)}' (?:does not exist|not found)",
                      str(exc), re.IGNORECASE):
         return None
-    if idle:
-        log(f"BOARD REMOVED: the Hermes board '{BOARD}' no longer exists and the run "
-            f"had finished — driver exiting")
-        return 0
     record_halt(f"the Hermes board '{BOARD}' was removed under a live run — the cards "
                 f"are gone; re-file it: driver/create-board.sh --board boards/{BOARD}; "
                 f"driver/start-board.sh --slug {BOARD}")

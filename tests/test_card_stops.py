@@ -646,8 +646,20 @@ SAME = "board 'integration-tests' has 2 entries for 3 lane(s)"
 
 def test_the_same_tick_exception_three_times_running_halts_naming_it(monkeypatch, tmp_path):
     """roman-evaluator-java's driver.log: 26 identical ValueErrors in 15 minutes, the
-    catch-all logging each one and driving on."""
+    catch-all logging each one and driving on. The streak is measured in TIME
+    (STALL_AFTER_S), so it is a minute of the same failure — not three ticks, which at a
+    two-minute poll would be six minutes of it."""
     _ledger_env(monkeypatch, tmp_path)
+    run.STATE.tick_error.update(sig=None, n=0, since=None)
+    run.STATE.halted["reason"] = None
+    now = [1000.0]
+
+    def tick_clock():                    # 30 s between the three errors
+        at = now[0]
+        now[0] += 30.0
+        return at
+
+    monkeypatch.setattr(run.time, "time", tick_clock)
     run.note_tick_outcome(ValueError(SAME))
     run.note_tick_outcome(ValueError(SAME))
     assert run.STATE.halted["reason"] is None
@@ -660,6 +672,10 @@ def test_a_different_exception_or_a_good_tick_restarts_the_count(monkeypatch, tm
     """Transient CLI errors are expected mid-run; only a repeat with nothing between
     is a loop."""
     _ledger_env(monkeypatch, tmp_path)
+    # No clock patch here: the streak has to restart on CONTENT alone, and a count left by
+    # another test's fake clock is not this test's starting point.
+    run.STATE.tick_error.update(sig=None, n=0, since=None)
+    run.STATE.halted["reason"] = None
     for outcome in (ValueError(SAME), ValueError(SAME), RuntimeError("kb list"),
                     ValueError(SAME), ValueError(SAME), None,
                     ValueError(SAME), ValueError(SAME)):
@@ -761,6 +777,50 @@ def test_a_stall_halt_blocks_the_card_so_the_engine_stops_retrying_it(
     assert block[4].startswith(run.HALT_BLOCK_MARK) and "quota wall" in block[4]
 
 
+@pytest.mark.parametrize("signature,events,runs", [
+    ("provider quota wall", [], [RL, RL, RL]),                          # a run outcome
+    ("stale claim", [_ev("reclaimed", stale_lock="host:1")] * 3, []),   # a card event
+])
+def test_every_stall_gets_the_same_treatment(monkeypatch, tmp_path, signature, events, runs):
+    """The reason NAMES the stall; it never picks the treatment. A quota wall (counted from
+    run outcomes) and a stale claim (counted from events) take the same three steps in the
+    same order: block the card marked `HALTED: <signature> — <why>`, one ESCALATION comment,
+    then the halt — and the halt is what stops the DRIVER (main() exits 1 on STATE.halted)."""
+    calls = _events_harness(monkeypatch, tmp_path, events, runs)
+    st = {"C2: code - lane 2": card("C2: code - lane 2", "c", status="running")}
+    reason = run.halt_if_exhausted(st)
+    # The halt names the card and then the stall: `escalate` prefixes the code, the block
+    # mark on the card carries the signature alone.
+    assert reason and reason.startswith(f"C2: {signature} — "), reason
+    assert run.STATE.halted["reason"] == reason
+    block = [c for c in calls if c[0] == "block"][-1]
+    assert block[4].startswith(run.HALT_BLOCK_MARK) and signature in block[4], block
+    assert [c for c in _comments(calls) if c.startswith("ESCALATION")], calls
+
+
+def test_the_tick_error_halt_names_the_same_shape(monkeypatch):
+    """A stall with no card to stop (the tick itself) still halts the same way and names the
+    same shape — `<signature> — <why>` — so the log line, the card comment and the audit
+    read alike whichever failure fired."""
+    monkeypatch.setattr(run, "record_halt",
+                        lambda reason, where=None: run.STATE.halted.update(reason=reason))
+    run.STATE.tick_error.update(sig=None, n=0, since=None)
+    run.STATE.halted["reason"] = None
+    now = [1000.0]
+
+    def tick_clock():                      # a minute between the calls
+        at = now[0]
+        now[0] += run.STALL_AFTER_S + 1
+        return at
+
+    monkeypatch.setattr(run.time, "time", tick_clock)
+    for _ in range(run.STALL_LIMIT):
+        run.note_tick_outcome(RuntimeError("database is locked"))
+    reason = run.STATE.halted["reason"]
+    assert reason.startswith("tick error — "), reason
+    assert "database is locked" in reason, reason
+
+
 def test_the_drivers_halt_block_reads_as_a_driver_stop_after_a_restart(monkeypatch):
     blocked_by(monkeypatch, {"reason": f"{run.HALT_BLOCK_MARK} provider quota wall",
                              "kind": "needs_input"})
@@ -771,16 +831,34 @@ def test_the_drivers_halt_block_reads_as_a_driver_stop_after_a_restart(monkeypat
     assert not run.is_stuck(c)
 
 
-def test_a_card_reclaimed_twice_halts(monkeypatch, tmp_path):
-    """release_stale_claims puts the card back to `ready` and counts no failure."""
+def test_a_card_reclaimed_three_times_running_halts(monkeypatch, tmp_path):
+    """release_stale_claims puts the card back to `ready` and counts no failure, so the
+    streak is the only thing that can ever stop it: three in a row, the same limit as every
+    other stall (STALL_LIMIT). An operator's own `reclaim` is a person, not a stale worker,
+    and does not count."""
     rec = _ev("reclaimed", stale_lock="host:1")
     manual = _ev("reclaimed", manual=True, reason="operator")
     _events_harness(monkeypatch, tmp_path, [rec, manual, manual])
     st = {"C2: code - lane 2": card("C2: code - lane 2", "c", status="running")}
     assert run.halt_if_exhausted(st) is None
     _events_harness(monkeypatch, tmp_path, [rec, rec])
+    assert run.halt_if_exhausted(st) is None          # two in a row is not a stall
+    _events_harness(monkeypatch, tmp_path, [rec, rec, rec])
     reason = run.halt_if_exhausted(st)
-    assert reason and "reclaimed" in reason
+    assert reason and "stale claim" in reason and "reclaimed" in reason
+
+
+def test_a_completion_breaks_a_reclaim_streak(monkeypatch, tmp_path):
+    """A card's event log holds every attempt it ever had, so a LIFETIME count made two
+    reclaims an hour apart a stall even though a run completed in between and the card was
+    working. Only failures after the newest `completed` event are "in a row"."""
+    rec = _ev("reclaimed", stale_lock="host:1")
+    done = _ev("completed")
+    _events_harness(monkeypatch, tmp_path, [rec, rec, done, rec, rec])
+    st = {"C2: code - lane 2": card("C2: code - lane 2", "c", status="running")}
+    assert run.halt_if_exhausted(st) is None
+    _events_harness(monkeypatch, tmp_path, [rec, done, rec, rec, rec])
+    assert run.halt_if_exhausted(st)
 
 
 DEP = dict(reason="waiting for the other card", kind="dependency",
@@ -1184,12 +1262,37 @@ def test_a_good_read_restarts_the_unreadable_count(monkeypatch, tmp_path):
     assert outcomes[::2] == ["past"] * 5
 
 
-def test_a_card_unreadable_three_ticks_running_halts_naming_it(monkeypatch, tmp_path):
-    outcomes, _ = _unreadable_ticks(monkeypatch, tmp_path, [True] * run.UNREADABLE_LIMIT)
-    assert outcomes[::2] == ["past"] * (run.UNREADABLE_LIMIT - 1) + [True]
+def test_a_card_unreadable_for_a_minute_in_a_row_halts_naming_it(monkeypatch, tmp_path):
+    """The rule for an unreadable card is WALL TIME, not a tick count: at a two-minute poll
+    three ticks would be six minutes of a card nobody can read. Two consecutive ticks
+    spanning STALL_AFTER_S stop it instead — and ONE failed tick is still a transient."""
+    calls = _tick_harness(monkeypatch, tmp_path, PARKED)
+    monkeypatch.setattr(run, "log", lambda msg: None)
+    # A streak another test left behind (its own fake clock) must not age this one.
+    run.STATE.unreadable_since.clear()
+    run.STATE.unreadable_ticks.clear()
+    run.STATE.halted["reason"] = None
+    now = [1000.0]
+    monkeypatch.setattr(run.time, "time", lambda: now[0])
+    outcomes = []
+
+    def one_tick():
+        _flaky_show(monkeypatch, calls, [True] * 50)   # every read in the tick fails
+        calls.clear()
+        try:
+            outcomes.append(run.tick())
+        except _PastPromotion:
+            outcomes.append("past")
+
+    one_tick()
+    assert outcomes == ["past"], outcomes
+    assert not run.STATE.halted["reason"]              # one tick is skipped, not a stop
+    now[0] += run.STALL_AFTER_S + 1                    # a minute later, still unreadable
+    one_tick()
+    assert outcomes == ["past", True], outcomes
     reason = run.STATE.halted["reason"]
     assert "could not read card C2" in reason and "database is locked" in reason
-    assert not [a for calls in outcomes[1::2] for a in calls if a[0] == "unblock"]
+    assert not [a for a in calls if a[0] == "unblock"]
 
 
 def test_the_deadman_ignores_unreadable_cards(monkeypatch):
@@ -1207,30 +1310,23 @@ def test_the_deadman_ignores_unreadable_cards(monkeypatch):
 
 # ---- the Hermes board itself removed under a driver ------------------------
 
-def test_a_removed_board_after_a_finished_run_exits_quietly(monkeypatch):
-    halts, lines = [], []
-    monkeypatch.setattr(run, "BOARD", "b1")
-    monkeypatch.setattr(run, "log", lines.append)
-    monkeypatch.setattr(run, "record_halt", halts.append)
-    gone = RuntimeError("kb ('list', '--json'): kanban: board 'b1' does not exist. Create it")
-    assert run.board_removed_exit(gone, idle=True) == 0
-    assert not halts and "BOARD REMOVED" in lines[0]
-
-
-def test_a_removed_board_mid_run_halts_at_once_naming_it(monkeypatch):
+def test_a_removed_board_halts_at_once_naming_it(monkeypatch):
+    """A driver exits with the run it drove, so every removed board is met mid-run or before
+    the first arm: the old "the run had finished, exit 0 quietly" case went with the idle
+    loop (2026-09-28). The halt names the board and how to re-file it."""
     halts = []
     monkeypatch.setattr(run, "BOARD", "b1")
     monkeypatch.setattr(run, "log", lambda m: None)
     monkeypatch.setattr(run, "record_halt", halts.append)
-    gone = RuntimeError("kanban: board 'b1' does not exist.")
-    assert run.board_removed_exit(gone, idle=False) == 1
+    gone = RuntimeError("kb ('list', '--json'): kanban: board 'b1' does not exist. Create it")
+    assert run.board_removed_exit(gone) == 1
     assert "was removed under a live run" in halts[0] and "create-board.sh" in halts[0]
 
 
 def test_other_errors_and_other_boards_are_not_a_removal(monkeypatch):
     monkeypatch.setattr(run, "BOARD", "b1")
-    assert run.board_removed_exit(RuntimeError("timed out after 60s"), idle=True) is None
-    assert run.board_removed_exit(RuntimeError("board 'b10' does not exist"), idle=True) is None
+    assert run.board_removed_exit(RuntimeError("timed out after 60s")) is None
+    assert run.board_removed_exit(RuntimeError("board 'b10' does not exist")) is None
 
 
 # ---- a timeout names what else was running on the same model ----------------
@@ -1276,10 +1372,11 @@ def test_a_board_that_names_no_model_says_nothing_about_one(monkeypatch):
     assert run.concurrency_note(st, st["TW1: unit tests - lane 1"]) == ""
 
 
-def test_the_timeout_halt_reason_carries_the_model_note(monkeypatch):
+def test_the_timeout_halt_reason_carries_the_model_note(monkeypatch, tmp_path):
     """The whole path, not just the helper: is-even's 10:27 halt read `elapsed 720s >
     limit 720s` with no model named, though `concurrency_note` returns one for that
     board."""
+    _ledger_env(monkeypatch, tmp_path)      # a ledger write must land in the tmp run
     st = {"P1: implementation plan - lane 1":
           {"id": "t_p1", "status": "blocked", "title": "P1: implementation plan - lane 1"},
           "TW1: unit tests - lane 1":
@@ -1309,10 +1406,19 @@ def test_the_timeout_halt_reason_carries_the_model_note(monkeypatch):
 
 def test_a_message_whose_ids_vary_between_ticks_still_counts(monkeypatch, tmp_path):
     """The counter keyed on the whole MESSAGE, so a CLI error carrying a card id or a
-    number that changed every tick reset it each time and TICK_ERROR_LIMIT was never
+    number that changed every tick reset it each time and STALL_LIMIT was never
     reached (review Important 18). Same type, same shape, different ids: one loop —
     and the halt still quotes the last error verbatim."""
     _ledger_env(monkeypatch, tmp_path)
+    run.STATE.halted["reason"] = None
+    now = [1000.0]
+
+    def tick_clock():                    # 30 s between the three ticks
+        at = now[0]
+        now[0] += 30.0
+        return at
+
+    monkeypatch.setattr(run.time, "time", tick_clock)
     for n in (1, 2, 3):
         run.note_tick_outcome(ValueError(f"card t_{n}a{n} unreadable after {n * 7} s"))
     reason = run.STATE.halted["reason"]
@@ -1327,21 +1433,28 @@ def test_the_other_wording_for_a_removed_board_is_recognised(monkeypatch):
     monkeypatch.setattr(run, "BOARD", "b1")
     monkeypatch.setattr(run, "log", lambda m: None)
     monkeypatch.setattr(run, "record_halt", lambda *a, **k: None)
-    assert run.board_removed_exit(RuntimeError("Board 'b1' not found"), idle=True) == 0
-    assert run.board_removed_exit(RuntimeError("BOARD 'b1' DOES NOT EXIST"), idle=False) == 1
+    assert run.board_removed_exit(RuntimeError("Board 'b1' not found")) == 1
+    assert run.board_removed_exit(RuntimeError("BOARD 'b1' DOES NOT EXIST")) == 1
     assert run.board_removed_exit(
-        RuntimeError("board 'b1': card t_1 not found"), idle=False) is None
+        RuntimeError("board 'b1': card t_1 not found")) is None
     assert run.board_removed_exit(
-        RuntimeError("board 'b1' is fine but the workdir does not exist"), idle=False) is None
+        RuntimeError("board 'b1' is fine but the workdir does not exist")) is None
 
 
 def test_a_card_whose_record_cannot_be_read_escalates_instead_of_stalling(monkeypatch, tmp_path):
     """halt_if_exhausted and the reasonless-block scan read an unreadable card as
     healthy, and promotion — which does count unreadable reads — never visits a card
     behind a held parent: such a card stalled with nothing in the log (review Important
-    19). The exhaustion scan reads every live card each tick, so it counts, and a
-    streak of UNREADABLE_LIMIT escalates naming the card and the error."""
+    19). The exhaustion scan reads every live card each tick, so it counts, and a streak
+    that has PERSISTED (STALL_AFTER_S) stops the board naming the card and the error."""
     _ledger_env(monkeypatch, tmp_path)
+    # A streak another test left behind (its own fake clock) must not age this one: the
+    # clock here moves a minute a tick, which is what STALL_AFTER_S measures.
+    run.STATE.unreadable_since.clear()
+    run.STATE.unreadable_ticks.clear()
+    run.STATE.halted["reason"] = None
+    monkeypatch.setattr(run.time, "time",
+                        lambda: 1000.0 + (run.STALL_AFTER_S + 1) * run.STATE.tick_serial[0])
     monkeypatch.setattr(run, "kb", lambda *a: (_ for _ in ()).throw(RuntimeError(LOCKED)))
     monkeypatch.setattr(run, "lane_graph", lambda state: [])
     escalations = []
@@ -1350,9 +1463,8 @@ def test_a_card_whose_record_cannot_be_read_escalates_instead_of_stalling(monkey
                             escalations.append((cid, code, reason)),
                             run.STATE.halted.update(reason=reason)))
     st = {"C2: code - lane 2": card("C2: code - lane 2", "c")}
-    for tick in range(1, run.UNREADABLE_LIMIT):
-        run.STATE.tick_serial[0] += 1
-        assert run.halt_if_exhausted(st) is None, tick
+    run.STATE.tick_serial[0] += 1
+    assert run.halt_if_exhausted(st) is None, "the first tick only counts the streak"
     run.STATE.tick_serial[0] += 1
     reason = run.halt_if_exhausted(st)
     assert reason and "could not read card C2" in reason and "database is locked" in reason
@@ -1361,7 +1473,7 @@ def test_a_card_whose_record_cannot_be_read_escalates_instead_of_stalling(monkey
 
 def test_an_unreadable_card_is_counted_once_per_tick_whichever_scan_asks():
     """Two scans read the same card in one tick; counting both would escalate a
-    transient after two ticks instead of UNREADABLE_LIMIT."""
+    transient after two ticks instead of STALL_LIMIT."""
     run.STATE.tick_serial[0] += 1
     assert run.count_unreadable("c") == 1
     assert run.count_unreadable("c") == 1

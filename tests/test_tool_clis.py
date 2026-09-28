@@ -93,13 +93,21 @@ def test_an_existing_profile_the_cli_cannot_list_is_a_note_not_a_refusal(tmp_pat
 
 def _stub_env(tmp_path, *, home=None, silent=True):
     """A PATH whose `hermes` answers everything and says nothing — the shape of a CLI that
-    failed without an error code worth trusting."""
+    failed without an error code worth trusting.
+
+    `HERMES_HOME` is dropped, never inherited: `create-board.sh` resolves the profile root
+    as `${HERMES_HOME:-$HOME/.hermes}`, so a developer (or an agent) running the suite with
+    HERMES_HOME set pointed the script at their REAL root — it then refused a profile that
+    is on disk in this test's fake home, and the failure moved with the environment rather
+    than with the code (reproduced 2026-09-28).
+    """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     stub = bin_dir / "hermes"
     stub.write_text("#!/bin/sh\nexit 0\n" if silent else "#!/bin/sh\necho ' coder '\n")
     stub.chmod(0o755)
     env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}")
+    env.pop("HERMES_HOME", None)
     if home is not None:
         env["HOME"] = str(home)
     return env

@@ -22,7 +22,7 @@ per board under `boards/<slug>/`, driven by `driver/run.py` over `hermes kanban`
     template/board_schema.py --any-host boards/*/board.json   # validate without this host's paths
     driver/create-board.sh --board boards/<slug>
     driver/start-board.sh --slug <slug>
-    driver/arm.sh <slug> [lane]                     # the go signal from a shell (lane defaults to 1); the dashboard drag does the same
+    driver/arm.sh --slug <slug> [--lane <n>]  # the go signal from a shell (lane defaults to 1); starts the driver if none is up; the dashboard drag does the same
     driver/run-audit.py --runs boards/<slug>/runs   # a run is done only when this exits 0
     driver/reset.sh --board boards/<slug> --batch   # stop this board's driver + workers, archive its cards; deletes nothing
 

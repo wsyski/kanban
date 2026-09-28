@@ -11,12 +11,22 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ARM = os.path.join(REPO, "driver", "arm.sh")
 
 
-def _arm(tmp_path, idea_text):
+def _arm(tmp_path, idea_text, *args):
     """arm.sh copied into a scratch repo (it resolves REPO from its own path), one idea
-    file, and a `hermes` that records every call and answers `list` with no cards."""
+    file, and a `hermes` that records every call and answers `list` with no cards.
+    Default argv is the documented arm; pass args to drive the interface itself."""
     repo = tmp_path / "repo"
     (repo / "driver").mkdir(parents=True)
     shutil.copy(ARM, repo / "driver" / "arm.sh")
+    # arm.sh starts the board's driver when none is up, so the scratch repo needs the helper
+    # it asks (driver-pid.sh) and a `start-board.sh` that records being called.
+    shutil.copy(os.path.join(REPO, "driver", "driver-pid.sh"),
+                repo / "driver" / "driver-pid.sh")
+    started = tmp_path / "start-board.log"
+    (repo / "driver" / "start-board.sh").write_text(
+        "#!/usr/bin/env bash\n"
+        f"printf '%s\\n' \"$*\" >> {started}\n")
+    (repo / "driver" / "start-board.sh").chmod(0o755)
     (repo / "boards" / "b").mkdir(parents=True)
     (repo / "boards" / "b" / "lane-1.md").write_text(idea_text)
     bin_dir = tmp_path / "bin"
@@ -28,7 +38,8 @@ def _arm(tmp_path, idea_text):
                     "case \" $* \" in *' list '*) echo '[]' ;; esac\n")
     stub.chmod(0o755)
     env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}")
-    r = subprocess.run(["bash", str(repo / "driver" / "arm.sh"), "b", "1"],
+    argv = args or ("--slug", "b", "--lane", "1")
+    r = subprocess.run(["bash", str(repo / "driver" / "arm.sh"), *argv],
                        capture_output=True, text=True, env=env, timeout=30)
     return r, (log.read_text() if log.exists() else "")
 
@@ -73,3 +84,42 @@ def test_the_armed_card_is_filed_blocked_and_the_prose_says_so(tmp_path):
     # CREATES the card blocked, so the prose must not promise the other state
     assert "card in\n# `todo`" not in src, "the prose must say where the card lands"
     assert "sits in todo" not in src
+
+
+def test_the_board_is_named_with_a_flag_not_positionally(tmp_path):
+    """The old shape was `arm.sh <slug> [lane]` — the only positional board among the four
+    scripts (start-board takes `--slug`; create-board and reset take `--board <dir>`), and
+    the one line the docs printed next to `start-board.sh --slug <s>`. The refusal names
+    the flag, so old muscle memory gets corrected instead of a card filed for the wrong
+    thing."""
+    r, calls = _arm(tmp_path, "## Idea 1: x\n\n### Done means\n\ny\n", "b", "1")
+    assert r.returncode == 2, r.stdout
+    assert "unknown arg: b" in r.stderr and "--slug" in r.stderr, r.stderr
+    assert calls == "", calls
+
+
+def test_a_lane_that_is_not_a_number_is_refused(tmp_path):
+    """`--lane` is interpolated into the idea path, so it is digits only."""
+    r, calls = _arm(tmp_path, "## Idea 1: x\n\n### Done means\n\ny\n",
+                    "--slug", "b", "--lane", "1x")
+    assert r.returncode == 2, r.stdout
+    assert "lane number" in r.stderr, r.stderr
+    assert calls == "", calls
+
+
+def test_a_flag_with_no_value_is_a_usage_error(tmp_path):
+    r, calls = _arm(tmp_path, "## Idea 1: x\n\n### Done means\n\ny\n", "--slug")
+    assert r.returncode == 2, r.stdout
+    assert "needs a value" in r.stderr, r.stderr
+    assert calls == "", calls
+
+
+def test_arming_starts_the_board_when_no_driver_is_up(tmp_path):
+    """A finished board has NO driver (it exits with the run it drove), so the shell go
+    signal starts one — otherwise the card just sits blocked and nobody reads it. It is the
+    same door as start-board.sh: same lock, same refusal, a no-op when a driver is up."""
+    r, calls = _arm(tmp_path, "## Idea 1: x\n\n### Done means\n\ny\n")
+    assert r.returncode == 0, r.stderr
+    started = tmp_path / "start-board.log"
+    assert started.exists(), r.stdout
+    assert started.read_text().strip() == "--slug b", started.read_text()

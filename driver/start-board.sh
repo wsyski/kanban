@@ -32,20 +32,25 @@ driver/start-board.sh --slug <s> [--once] [--timeout-min N]
                     serve mode)
   -h, --help        this text
 
-DEFAULT IS SERVE MODE: the driver stays up and the board is driven from the
-dashboard. You write an idea into a Triage card and drag it to Todo; that is
-the "go" signal. The driver adopts the card's text into
+DEFAULT IS SERVE MODE: the driver waits for the go signal, and the board is driven
+from the dashboard. You write an idea into a Triage card and drag it to Todo; that
+is the "go" signal. The driver adopts the card's text into
 boards/<slug>/lane-<k>.md, archives the previous run, files a fresh lane set,
-and drives it. When the gates close it goes idle and waits for the next idea.
+and drives it. When the gates close the run is over and the driver EXITS: one
+driver per run, and the next idea is the next call to this script. (It used to
+idle for the next idea, which left a driver polling a finished board for ever —
+measured 2026-09-28, ~20 % of a core and ~12 processes every ~24 s, per board,
+hours after the run it had finished.)
 
 Nothing starts until you arm a card — a board created with ideas is PREFILLED,
 not running: the seeded text is an initial value you can edit first.
 
-Calling this twice is a no-op: the second call sees the driver's lock and
-exits 0. That is what makes it safe as a cron entry:
-
-  hermes --profile <p> cron add --name kanban-<slug> --schedule '* * * * *' \
-      --script driver/start-board.sh --args '--slug <slug>'
+Calling this twice is a no-op while a driver is up: the second call sees the
+driver's lock and exits 0. Do NOT put this on a `* * * * *` cron: with the driver
+exiting at the end of its run, the next minute's tick starts a fresh driver that
+waits for an idea nothing has armed yet — a resident waiter again, which is the
+thing this driver no longer is. `driver/arm.sh` starts this for you when no driver is up,
+so call it directly when you armed the card from the dashboard.
 USAGE
 }
 

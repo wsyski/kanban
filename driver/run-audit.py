@@ -502,9 +502,10 @@ def audit(runs_dir, board_dir=None):
         # same thing (the auditor was run too early), and the cause is a person
         # reading a board that is still working.
         #
-        # The refusal is about THIS RUN, never about the driver: a serve-mode driver
-        # stays up after `ALL GATES COMPLETE` by design, and a finished run audits
-        # perfectly well underneath it. A live driver is the good case here — it says the
+        # The refusal is about THIS RUN, never about the driver: a live driver here means
+        # the run is still being driven, and a finished run audits perfectly well without
+        # one (a driver exits when its run finishes — it no longer idles past `ALL GATES
+        # COMPLETE`). A live driver is the good case here — it says the
         # run will finish — so the line names the run's state and gives the driver as the
         # reason to WAIT. Naming the process first reads as "kill it to audit", which is
         # never the answer and throws away a driver that was about to write the banner.

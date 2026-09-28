@@ -337,7 +337,7 @@ for p in $REQUIRED; do
   elif printf '%s\n' "$PROFILE_LIST" | grep -q "[[:space:]]$p[[:space:]]"; then
     :   # the CLI names it — accepted, e.g. a stub in a test or a profile under another home
   else
-    echo "profile $p not available — no $HERMES_ROOT/profiles/$p, and 'hermes profile list' did not name it" >&2
+    echo "profile $p not available — no $HERMES_ROOT/profiles/$p, and 'hermes profile list' did not name $p" >&2
     exit 1
   fi
 done
@@ -534,12 +534,14 @@ PY
 cat <<EOF
 
 Next:
-  1. serve it:  driver/start-board.sh --slug $SLUG
-  2. drive it:  http://127.0.0.1:9119/kanban
+  1. arm it:    driver/arm.sh --slug $SLUG
+  2. serve it:  driver/start-board.sh --slug $SLUG
+  3. drive it:  http://127.0.0.1:9119/kanban
 
-Serving releases nothing. In the dashboard, edit the Triage card if you want a
-different idea, then DRAG IT FROM TRIAGE TO TODO — that is the go signal. The
-driver adopts the card's text into $BOARD_DIR/lane-<k>.md,
-files a fresh lane and drives it. A prefilled board is an initial value, not a
+Nothing starts until you arm a card. In the dashboard, edit the Triage card if
+you want a different idea, then DRAG IT FROM TRIAGE TO TODO — that is the go
+signal, the same one arm.sh files from the shell. The driver adopts the card's
+text into $BOARD_DIR/lane-<k>.md, files a fresh lane and drives it, and exits
+when the run's gates close. A prefilled board is an initial value, not a
 running one.
 EOF

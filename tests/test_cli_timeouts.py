@@ -44,3 +44,32 @@ def test_a_tick_that_wrote_to_the_board_is_counted(monkeypatch):
     run.kb("attach", "t_1", "/tmp/x")
     assert run.STATE.mutations[0] == 2
     assert run.POLL_BUSY < run.POLL
+
+
+def test_the_board_is_read_once_a_tick_and_re_read_after_a_write(monkeypatch):
+    """`board()` ran after every phase of the tick and most of those reads answered the same
+    question: six `hermes kanban list --json` processes a tick, each a fresh interpreter
+    (~0.25 s), measured 2026-09-28. One snapshot a tick — dropped by a WRITE, so a tick still
+    sees its own writes — and always fresh outside a tick."""
+    monkeypatch.setattr(subprocess, "run",
+                        lambda *a, **k: type("R", (), {"returncode": 0,
+                                                       "stdout": "[]", "stderr": ""})())
+    reads = []
+    real_kb = run.kb
+
+    def kb(*a, **k):
+        if a[:1] == ("list",):
+            reads.append(a)
+        return real_kb(*a, **k)
+
+    monkeypatch.setattr(run, "kb", kb)
+    monkeypatch.setattr(run, "log", lambda m: None)
+    with run.show_memo():
+        run.board()
+        run.board()
+        assert len(reads) == 1, reads                 # two reads, one CLI process
+        run.kb("unblock", "t_1")                      # a driver write
+        run.board()
+        assert len(reads) == 2, reads                 # the write dropped the snapshot
+    run.board()
+    assert len(reads) == 3, reads                     # outside a tick: always fresh

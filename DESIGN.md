@@ -225,7 +225,11 @@ how to read them.
   validates headers and manifest, adopts the text into `lane-<k>.md`, mints
   `runs/<run-id>/`, archives the previous run's cards and files a fresh lane set. The
   `specify` button is not a go signal because it rewrites the idea with an auxiliary
-  LLM before the researcher reads it.
+  LLM before the researcher reads it. **One driver per run:** when the last gate closes
+  the driver writes the summary, logs `ALL GATES COMPLETE` and exits. Idling for the
+  next idea instead polls a finished board for ever (measured 2026-09-28: two drivers,
+  ~20 % of a core each and ~12 `hermes` processes every ~24 s, 8 h and 9 h after the
+  runs they had finished). The next idea is the next `start-board.sh`.
 - **Refile clears per-run state first** (opened lanes, timers, drift findings,
   announced gates), before filing — filing can fail, and the next tick must not treat
   the new run's lanes as already open, carry the last run's drift into this run's
@@ -390,7 +394,7 @@ newest block event, and `run.should_repromote` decides what to do:
 | `timeout` | reason contains `TIMEOUT:`, the block the driver sets at a runtime ceiling (`stop_a_timeout`) | `stop` | never promoted away. Only a review sends work back | "a ceiling is not a review; a human resets the board" |
 | `driver` | reason starts `HALTED:`, the block the driver puts on a card it halted for (`driver_block`) | `stop` | never promoted away. A restart reads this block as the driver's stop, never as the worker's | "blocked by the driver when it halted" |
 | `other` | the newest block event has no reason (`hermes kanban block <id>` with no words; the driver always gives one) | `stop` | escalates at the top of the tick, wherever the card sits, like `judge_budget`: nobody can interpret it, and a card held behind a verdict would otherwise wait unseen. A card whose record cannot be read has no block event and is not halted on | "blocked without a reason (by a human or a worker)" |
-| `unreadable` | the card's `show --json` failed (`card_record` notes the error in `_READ_ERROR`; a good read clears it): a CLI timeout or "database is locked" | `skip` | leaves the card for this tick: no unblock, no escalation, not stuck, not a reasonless block. A failed read is not remembered by the per-tick memo, so the next tick reads again. `UNREADABLE_LIMIT` (3) promotion ticks in a row unreadable escalates and halts; a good read restarts the count | log `<code>: could not read its card (…)` once per streak, then "could not read card <code> (<error>)" |
+| `unreadable` | the card's `show --json` failed (`card_record` notes the error in `_READ_ERROR`; a good read clears it): a CLI timeout or "database is locked" | `skip` | leaves the card for this tick: no unblock, no escalation, not stuck, not a reasonless block. A failed read is not remembered by the per-tick memo, so the next tick reads again. `STALL_LIMIT` (3) promotion ticks in a row unreadable stops the card and halts; a good read restarts the count | log `<code>: could not read its card (…)` once per streak, then "could not read card <code> (<error>)" |
 
 Why a worker's stop gets exactly one re-promotion:
 
@@ -432,37 +436,55 @@ re-promotes anyway and logs that it stopped waiting.
 
 ### Stall classes
 
-Every halt goes through `run.record_halt`: a `BOARD HALTED: …` log line,
-`runs/<run-id>/halt.txt`, and one notice. Through `run.escalate`, the card also gets an
-`ESCALATION: …` comment where there is a card to put it on. The ledger keeps that
-comment to one per key, across restarts too. The driver then exits.
+EVERY stall gets the same treatment, whatever its reason — a quota wall, a dead worker, an
+upstream outage, a provider that never answered, a worker's own loop, an unreadable card, a
+repeated tick error, a spent budget: `run.stall_halt()` blocks the card marked
+`HALTED: <signature> — <why>` (so the engine stops re-spawning it), comments one
+`ESCALATION: …` carrying the recovery steps, and halts — `BOARD HALTED: …`,
+`runs/<run-id>/halt.txt`, one notice — and the driver exits 1. The reason only NAMES the
+stall; it never picks the treatment.
 
-| stall | detected by | driver action | message |
+What differs is the COUNT, and only where the engine makes it differ:
+
+- a stall the engine retries BY ITSELF is one failure `STALL_LIMIT` (3) times IN A ROW on
+  that card. A `completed` event breaks the streak: two failures an hour apart with a run
+  that finished in between are not a stall.
+- the two the driver counts in TICKS rather than in runs or events — an unreadable card and a
+  repeated tick error — use the same rule in WALL TIME (`STALL_AFTER_S`, 60 s): the same
+  failure in a row for a minute, never a single tick. A count alone stopped meaning a
+  duration when the poll went to two minutes (three ticks was ~1 min at `POLL=20`, ~6 min at
+  `POLL=120`, measured 2026-09-28).
+- a stall where the attempt spent its whole budget (a ceiling, retries spent) cannot be
+  retried at all, so its first occurrence is the stop.
+- silence is not a failure: a gate waiting on a person is counted in wall time
+  (`GATE_WAIT_S`), and the deadman notices stuck cards without halting.
+
+| stall (the signature the halt names) | detected by | counted | the halt says |
 |---|---|---|---|
-| a card attempt failed (`gave_up`: retries spent, a crash, a failed spawn) | `halt_if_exhausted` → `_exhaustion_event` | comments `BOARD HALTED:` on the card and halts. The reason says "provider-starved" when the attempt's log holds ≥3 upstream lines | the event's error |
-| a **reclaim** of a dead worker (`pid N not alive`, `exited with code`, `killed by signal` in the event's error) | `halt_if_exhausted` → `worker_moved_on` | halts only when NO `spawned`/`heartbeat`/`completed` event is newer than the reclaim — the dispatcher owns the retry, so a reclaim with movement since is liveness, not content. Content failures (protocol violation, a spent retry budget) still halt | the event's error |
-| a provider-starved attempt: `gave_up` with ≥3 `runs_util.UPSTREAM_ERROR` lines since the attempt's offset, and an exit that never called `kanban_complete`/`kanban_block` (reason `protocol violation`, or `trigger_outcome` `crashed`) | `halt_if_exhausted`, `provider_hits` | **re-queues once** (`requeue_provider_starved`): marks the attempt, unblocks, and records `requeue` with its time. An exhaustion event at or before that time is ignored, and any later failure halts | comment `RE-QUEUED (once): …`, log `re-queued <code> once` |
-| timeout (`timed_out`) | `halt_if_exhausted` → `stop_a_timeout` | blocks the card with `TIMEOUT: … hard failure`, because the dispatcher would put it back at `ready`, then halts. Never re-queued | `BOARD HALTED:` on the card |
-| rate-limit wall: `RATE_LIMIT_LIMIT` (3) closed runs in a row ending `rate_limited` | `card_stall` | `driver_block` `HALTED: …` (promoting a `todo` card first, so the block is accepted), then escalates | "provider quota wall" |
-| stale reclaim: `RECLAIM_LIMIT` (2) `reclaimed` events whose payload is not `manual` (an operator's `reclaim`) | `card_stall` | same | "its claim was reclaimed n times" |
-| dependency loop: a second `dependency_wait` with the parents done | `card_stall` | same | "its own worker blocked it twice, the last time with `--kind dependency`" |
-| a worker blocked its card a second time | promotion: `should_repromote` → `stop` | escalates | `stop_reason`, quoting the worker's words |
-| a goal loop spent its turn budget | the top-of-tick scan for `JUDGE_BUDGET_BLOCK_MARK` | escalates | `stop_reason` + `judge_log_hint` |
-| a blocked card whose newest block event has no reason | the same top-of-tick scan, `is_reasonless_block` | escalates | "blocked without a reason (by a human or a worker)" |
-| a blocked card promotion reaches could not be read `UNREADABLE_LIMIT` (3) ticks running | promotion: `should_repromote` → `skip`, counted in `_UNREADABLE_TICKS` | escalates. Fewer ticks only skip the card, so a transient CLI failure never halts a healthy board | "could not read card <code> (<last error>)" |
-| the engine escalated an assigned card to Triage | `escalated_to_triage` | escalates | `triage_halt_reason` |
-| a lane card sits in `review` or `scheduled` (statuses no lane uses, reached only through `request-review`, which the worker contract forbids, or by hand) | the tick's status scan | escalates | "a status no lane uses" |
-| a lane card was archived or removed by hand (a card the lane's own options do not drop) | `missing_lane_card`: `list --json` omits archived cards, so the children wait on a parent that reads as not done | escalates on the first live card after it, or halts when there is none | "… is no longer on the board" |
-| a lane root was filed against a different run | `open_lane` → `lane_paths_agree`, checked before anything is archived, linked or written | escalates on the root at once and never releases it | "filed against a different run than runs/current names" |
-| a gate whose parents are all done keeps giving the same `waiting:` message for `GATE_WAIT_S` (10 min) | the gate loop, `gate_wait_reason` | escalates under the key `<gate>-wait`, so this halt never uses up the gate's rework-exhaustion comment | "verdict unreadable" (Gp/Gc), "the gate's input will not appear by itself" (Gi) |
-| rework rounds exhausted | `rework_rounds` | escalates on the gate or plan card | [rework loops](#rework-loops) |
-| a blocked card whose block reason carries `ESCALATION` | `halt_if_exhausted` | halts | the block reason |
-| the Hermes board itself no longer exists (`board '<slug>' does not exist`) | `board_removed_exit`, before the tick-error count | a finished, serving run: exits 0 with `BOARD REMOVED`, no halt. Mid-run: halts at once | "was removed under a live run" |
-| the tick raised the same exception `TICK_ERROR_LIMIT` (3) times running | `note_tick_outcome`: a good tick or a different exception restarts the count | halts | the exception |
-| `runs/current` names a run with no lane card and no idea card to arm, or with lane cards but no P card | `empty_run_reason` (a lane is counted by its P card) | halts | the reason plus `RESET_STEPS`, because the armed idea card is already archived |
-| the run directory is gone under a live run | `run_directory_is_gone` | halts, writing halt.txt to `runs/` | "run directory disappeared" |
-| the driver died without a halt | `run-audit.py`: no halt, no finish banner, no live pid in `runs/driver.lock` | nothing is running | E1 "the driver died without a halt or the finish banner … restart it with start-board.sh" |
-| two or more cards `is_stuck`, with no halt | `deadman_check` | sends a notice once per distinct stuck set. No halt | `DEADMAN` line, `deadman.txt`, Telegram |
+| rate-limit wall — the card's runs keep ending `rate_limited` | `card_stall`, trailing run outcomes | 3 in a row; any run ending another way breaks it | "provider quota wall — n rate-limited runs in a row; the engine retries it every cooldown and counts no failure" |
+| stale claim — the worker stopped heartbeating and the engine returned the card to `ready` | `card_stall` → `since_last_completion` | 3 in a row with no `completed` since (an operator's own `reclaim` does not count) | "stale claim — the claim was reclaimed n times in a row with no run completing" |
+| worker loop — the card's worker blocked it twice with `--kind dependency`, which `_route_block` re-queues by itself | `card_stall` | the engine's own re-queue is the card's one re-promotion; the second block is the stop | "worker loop — its own worker blocked it twice, the last time with `--kind dependency` (…)" |
+| provider storm — the attempt died on upstream 4xx/5xx without ever calling `kanban_complete`/`kanban_block` | `halt_if_exhausted` → `provider_hits` | **re-queued once, in the open**; whatever fails after it is the streak | "RE-QUEUED (once): …" on the card, then the halt for the next failure |
+| dead worker — `pid N not alive` / `exited with code` / `killed by signal` in the event's error | `halt_if_exhausted` → `worker_moved_on` | not a stall when a `spawned`/`heartbeat`/`completed` event is newer (the dispatcher owns that retry) | the event's error |
+| retries spent, a failed spawn, a crash the engine gave up on (`gave_up`) | `halt_if_exhausted` → `_exhaustion_event` | the breaker will not re-dispatch the card, so the first is the stop | "retries spent — <card>: <error>" (+ "— provider-starved (n upstream 4xx/5xx in the worker log)") |
+| ceiling (`timed_out`) | `halt_if_exhausted` → `stop_a_timeout` | the attempt spent its whole runtime budget; a timed-out card is not retried (user rule, 2026-09-12) | "ceiling — <card>: <error>" |
+| unreadable card — `show --json` keeps failing | promotion's `skip` and the exhaustion scan → `count_unreadable` | the same failure in a row for `STALL_AFTER_S` (60 s) — at least two ticks, counted once per tick; a good read restarts it | "unreadable card — n ticks in a row could not read card <code> (<error>)" |
+| the tick itself keeps raising the same exception | `note_tick_outcome`, on the masked signature | the same failure in a row for `STALL_AFTER_S` (60 s) — at least two ticks; a good or different tick restarts it | "tick error — the tick raised the same exception n times running (…)" |
+| a worker blocked its own card a second time | promotion: `should_repromote` → `stop` | the card's one re-promotion is spent | `stop_reason`, quoting the worker's words |
+| a goal loop spent its turn budget | the top-of-tick scan for `JUDGE_BUDGET_BLOCK_MARK` | a second budget would fail the same way | `stop_reason` + `judge_log_hint` |
+| a blocked card whose newest block event has no reason | the same top-of-tick scan, `is_reasonless_block` | first | "blocked without a reason (by a human or a worker)" |
+| a blocked card whose block reason carries `ESCALATION` | `halt_if_exhausted` | first | the block reason |
+| the engine escalated an assigned card to Triage | `escalated_to_triage` | first | `triage_halt_reason` |
+| a lane card sits in `review` or `scheduled` (statuses no lane uses, reached only through `request-review`, which the worker contract forbids, or by hand) | the tick's status scan | first | "a status no lane uses" |
+| a lane card was archived or removed by hand (a card the lane's own options do not drop) | `missing_lane_card`: `list --json` omits archived cards, so the children wait on a parent that reads as not done | first; escalated on the first live card after it | "… is no longer on the board" |
+| a lane root was filed against a different run | `open_lane` → `lane_paths_agree`, before anything is archived, linked or written | never released, escalated at once | "filed against a different run than runs/current names" |
+| a gate whose parents are all done keeps giving the same `waiting:` message | the gate loop, `gate_wait_reason` | `GATE_WAIT_S` (10 min) of SILENCE, not a failure count | "verdict unreadable" (Gp/Gc), "the gate's input will not appear by itself" (Gi) |
+| rework rounds exhausted | `rework_rounds` | the board's `max-reworks` | [rework loops](#rework-loops) |
+| the Hermes board itself no longer exists (`board '<slug>' does not exist`) | `board_removed_exit`, before the tick-error count | mid-run, or before the first arm: the first occurrence | "was removed under a live run" |
+| `runs/current` names a run with no lane card and no idea card to arm, or with lane cards but no P card | `empty_run_reason` (a lane is counted by its P card) | first | the reason plus `RESET_STEPS`, because the armed idea card is already archived |
+| the run directory is gone under a live run | `run_directory_is_gone` | first | "run directory disappeared" |
+| the driver died WITHOUT a halt | `run-audit.py`: no halt, no finish banner, no live pid in `runs/driver.lock` | nothing is running | E1 "the driver died without a halt or the finish banner … restart it with start-board.sh" |
+| two or more cards `is_stuck`, with no halt | `deadman_check` | sends a notice once per distinct stuck set. **No halt** | `DEADMAN` line, `deadman.txt`, Telegram |
 
 Where a row's reasoning is not obvious from the table:
 
@@ -621,7 +643,7 @@ Each is current behaviour, with what to do about it.
   once it is out of `triage` and unassigned (`armed_ideas`), which the dashboard offers
   as the panel's `→ ready` button or a drag to Todo — but `hermes kanban promote` refuses
   a `triage` card, and so do `block` and `schedule`, so no subcommand can make that
-  gesture. `driver/arm.sh <slug> [lane]` reaches the state the other way round: it
+  gesture. `driver/arm.sh --slug <slug> [--lane <n>]` reaches the state the other way round: it
   archives the board's seeded Triage card and creates an unassigned card in `blocked`
   whose body is the lane's idea in the shape `file_ideas` writes — `blocked` because a
   `ready` card is claimed by the dispatcher (`kanban.default_assignee`) and WORKED while

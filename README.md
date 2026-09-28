@@ -66,7 +66,7 @@ What the template consists of:
 | `driver/file_lanes.py` | filing: `hermes kanban create`, the idea cards, the run-id mint |
 | `driver/create-board.sh` | board instantiation |
 | `driver/start-board.sh` | driver launch |
-| `driver/arm.sh` | the go signal from a shell: files the idea as a `blocked`, unassigned card |
+| `driver/arm.sh` | the go signal from a shell: files the idea as a `blocked`, unassigned card, and starts the board's driver if none is up |
 | `driver/reset.sh` | archive the cards, unstage leftovers, stop this board's driver |
 | `driver/driver-pid.sh` | the live-driver question `reset.sh` and `create-board.sh` both ask |
 | `driver/run.py` | the driver |
@@ -161,8 +161,11 @@ Create and serve:
     hermes kanban boards switch <s>           # create registers the board but does NOT
                                               # make it current — without this the cards
                                               # file and no worker ever spawns
-    driver/start-board.sh --slug <s>         # serves; releases nothing yet
-    driver/arm.sh <s> [lane]                 # the go signal — prefer it to the drag, see below
+    driver/arm.sh --slug <s> [--lane <n>]    # the go signal — prefer it to the drag, see below.
+                                             # It starts the driver too when none is up, which
+                                             # is the usual case: a driver exits with the run
+                                             # it drove (see below)
+    driver/start-board.sh --slug <s>         # the driver alone: for arming in the dashboard
 
 `driver/create-board.sh --help` is authoritative (including the empty board you get
 with `--slug`/`--title` instead of `--board`). There is no import step: `lane-1.md` is
@@ -178,14 +181,17 @@ driver has written into is never reused: paste its id into `start-board.sh` inst
 
 ### The main loop is the dashboard
 
-`start-board.sh` serves: the driver stays up and **releases nothing**. You drive the
-board from `http://127.0.0.1:9119/kanban`:
+`start-board.sh` serves: the driver waits for the go signal and **releases nothing**. You
+drive the board from `http://127.0.0.1:9119/kanban`:
 
 1. Write the idea into the board's Triage card — edit it right there.
 2. **Drag it from Triage to Todo.** That is the go signal — a shell makes the same one with
-   `driver/arm.sh <slug> [lane]`, which creates an unassigned card carrying the idea
-   (`armed_ideas` reads either, because what it tests is that an unassigned card has left
-   Triage). **When `kanban.default_assignee` names a profile, prefer `arm.sh`:** the
+   `driver/arm.sh --slug <slug> [--lane <n>]`, which creates an unassigned card carrying
+   the idea (`armed_ideas` reads either, because what it tests is that an unassigned card
+   has left Triage). A driver has to be up to see the drag, and it exits when its run
+   finishes, so start it first — and again for every idea after that (a card armed while
+   nothing drives just waits).
+   **When `kanban.default_assignee` names a profile, prefer `arm.sh`:** the
    dispatcher assigns an unassigned `ready` card and spawns a worker on it within seconds,
    and `armed_ideas` then skips it (it ignores any card with an assignee), so the lane never
    opens. `arm.sh` files its card `blocked`, which the dispatcher never claims.
@@ -194,11 +200,86 @@ board from `http://127.0.0.1:9119/kanban`:
    a fresh lane set, and drives it. If validation fails it files nothing and comments
    the findings on the card — fix the text there and the next tick re-reads it.
 4. Act on the gates as they open — or, on an auto-gated board, watch them close. When
-   the last closes the driver goes idle and waits for the next idea.
+   the last closes the run is over and **the driver exits with it** — a driver is a batch
+   job, not a daemon, and one left up polls a finished board for ever. The next idea is
+   the next `driver/start-board.sh --slug <slug>`; until you run it there is nothing
+   serving the board.
 
 A new idea in the card starts a new run. A board created with idea files is
 **prefilled, not running**: the seeded text is an initial value you can rewrite before
 arming.
+
+**When a run ends: three scenarios.** The driver is a batch job — it exits when the run it
+drove finishes, and it exits on a halt too. So "what now" has three answers, and the first
+thing to read is always the end of `boards/<s>/runs/driver.log`.
+
+**1. The run finished — you have another idea.** The board keeps its cards and its `runs/`
+while nothing drives it, and another idea is another run on the same board:
+
+1. Write it: `$EDITOR boards/<s>/lane-1.md` — or, with a driver already up, edit the
+   board's Triage card in the dashboard.
+2. One command: `driver/arm.sh --slug <s>`. It files the go signal AND starts the board's
+   driver when none is up (a finished board has none — the driver exited with its run), so
+   this is the whole "next idea" gesture. Arming from the dashboard instead? Then start the
+   driver yourself: `driver/start-board.sh --slug <s>`, and prefer `arm.sh` when
+   `kanban.default_assignee` names a profile (the race in item 2 above).
+3. The driver adopts the text, archives the previous run's cards, mints a fresh
+   `runs/<run-id>/`, files a fresh lane set and drives it; the gates behave as in the
+   first run. Repeat from 1 for the idea after that.
+
+Nothing is reset between runs: `runs/current` names the run the board is on (the finished
+one, until the next idea is adopted), no run directory is ever reused or deleted, and
+`driver/reset.sh --board boards/<s> --batch` is for abandoning a board, not for the next
+idea.
+
+**2. The board halted.** Something the lane could not get past stopped the driver — a
+provider quota wall (an exhausted token pool), a worker that kept dying, an upstream
+outage, a card that spent its runtime ceiling, an unreadable card, the same tick error
+three times. EVERY stall gets the same treatment, whatever the reason: the card is blocked,
+the reason is commented on it, and the board halts ([DESIGN.md: stall classes](DESIGN.md#stall-classes)).
+What you find:
+
+- no driver running (`driver/start-board.sh` starts one; the left-behind lock is taken over),
+- `boards/<s>/runs/<run-id>/halt.txt` with the reason, and `BOARD HALTED: …` in the log,
+- an `ESCALATION: …` comment on the card, carrying the recovery steps,
+- that card blocked as `HALTED: <the stall> — <why>` — the DRIVER's block, not the worker's,
+- one notice (`runs/deadman.txt`, and Telegram when it is configured).
+
+Then, in this order — the same recovery for every halt:
+
+1. Read the reason: `runs/<run-id>/halt.txt`, then the full log.
+2. Fix the cause: the provider/key/token pool, the endpoint or the board's
+   `model`/`provider` pin, the ceiling the card hit, whatever made a card unreadable.
+3. Release the driver's own block, with the driver still down:
+   `hermes kanban --board <s> unblock <id>`. The driver never releases a `HALTED:` block, and
+   a card the halt left SHORT OF DONE stops the next run the same way — let it reach done
+   first (a `done` card keeps its history without re-halting).
+4. Start the driver: `driver/start-board.sh --slug <s>`. It rejoins the SAME run and reopens
+   every card's retry budget — your restart is the "try again" decision.
+5. Only if the run cannot continue, reset it:
+   `driver/reset.sh --board boards/<s> --batch; hermes kanban boards rm <s>; driver/create-board.sh --board boards/<s>; driver/start-board.sh --slug <s>`
+
+Do NOT drag the halted card to Done, block it or archive it: that releases the lane without
+the work, or stops it again.
+
+**3. Goal mode, and the judge LLM blocked the card.** Goal mode is the board option
+`goal-cards`: the auxiliary `goal_judge` LLM reads the worker's claim before its card may
+complete, so a judge that cannot answer wedges every card it is armed for. It reaches a halt
+in one of two shapes, and the recovery is scenario 2's:
+
+- **the judge ran out of road** — the worker card is blocked with `Goal-mode worker exhausted
+  its turn budget`, and the driver stops it. The message names the usual cause: a failing
+  goal judge, whose failure reads as `continue`, and points at
+  `~/.hermes/profiles/<assignee>/logs/agent.log` for `goal judge: API call failed`.
+- **the judge's own API failed** — those lines are counted as upstream errors, so the
+  attempt is a provider storm: one re-queue in the open, then the next failure halts.
+
+Fix the judge (its provider/model — `auxiliary.goal_judge`; a managed pin wins over the
+board's own model), then recover exactly as in scenario 2. `goal-cards` is read at FILING
+time, so turning goal mode off means re-creating the board — restarting the driver does not.
+And a judge is only ever armed on the cards `goal-cards` lists, never on a review or a gate:
+a judge can push a card whose success case is *blocking* into completing, which would
+silently open the gate that card guards.
 
 Do **not** use the dashboard's `specify` button to promote the card: it rewrites your
 idea with an auxiliary LLM before the researcher reads it. Drag it.
@@ -262,12 +343,13 @@ Re-create a board after engine changes:
     driver/reset.sh --board boards/<slug> --batch  # stop driver + workers, archive cards, unstage
     hermes kanban boards rm <slug>                  # reset archives cards, not the board
     driver/create-board.sh --board boards/<slug>
-    driver/start-board.sh --slug <slug>            # then arm it: driver/arm.sh <slug>
+    driver/arm.sh --slug <slug>                     # the go signal; starts the driver too
 
 Run `reset.sh` first, not `boards rm` alone: `create-board.sh` refuses (exit 6) while the
-board's driver is still running, because a serving driver reads a half-filed run as a
-failed filing and halts. A driver whose run had finished exits by itself when its board is
-removed (`BOARD REMOVED` in `driver.log`); mid-run, a removed board halts it at once.
+board's driver is still running, because a driver reads a half-filed run as a failed filing
+and halts. A driver only ever meets a removed board mid-run (a finished board has no driver
+— it exited with its run), and then it halts at once: `was removed under a live run` in
+`driver.log`.
 
 ### How it flows (diagram)
 
@@ -614,8 +696,11 @@ by every board — nothing scenario-specific to write per idea. To run new work:
 2. Create the board (§3): `driver/create-board.sh --board boards/<s>`.
 3. Make it current: `hermes kanban boards switch <s>` — creating registers the board but
    does **not** make it current, and the dispatcher follows the current board.
-4. `driver/start-board.sh --slug <s>` launches the driver; arm it with `driver/arm.sh <s>`
-   (or drag the Triage card — see §3 for the `default_assignee` race).
+4. Arm it: `driver/arm.sh --slug <s>` — that also starts the board's driver, so there is
+   nothing else to do. (Arming by dragging the Triage card instead — see §3 for the
+   `default_assignee` race — needs `driver/start-board.sh --slug <s>` after it.)
+   The driver exits when the run it drove finishes — see "A finished board, and the next
+   idea" above for the run after this one.
 
 Only touch `template/card-bodies/` or `template/lanes.py` when the card graph itself must
 change (a new role, a new gate) — that changes every board, not just one idea. See

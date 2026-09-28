@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Arm a served board from a shell. Prints what it did; starts nothing itself.
+# Arm a board from a shell: file the go-signal card, then make sure the board is driven.
 #
 # The driver's go signal is an unassigned card that is OUT of Triage (run.py
 # `armed_ideas`). The dashboard makes that state with the panel's `→ ready` button or a
@@ -13,22 +13,54 @@
 #     ---
 #     <boards/<slug>/lane-<N>.md>
 #
-# Usage: driver/arm.sh <slug> [lane]        (lane defaults to 1)
+# Usage: driver/arm.sh --slug <slug> [--lane <n>]        (lane defaults to 1)
 #
-# The board must be SERVING (driver/start-board.sh --slug <slug>), or the card just
-# sits blocked and nobody reads it. Arming the same lane twice is NOT caught anywhere:
+# The board is named with --slug, like start-board.sh; `--board` is for the scripts that
+# take a board DIRECTORY (create-board.sh, reset.sh), and no script here takes the board
+# as a positional argument.
+#
+# The driver reads this card while it runs, so this script starts the board's driver too
+# when none is up (start-board.sh, the same lock and the same refusal): the ONE command for
+# a new idea. A card armed while nothing drives it would only wait — a driver exits with the
+# run it drove, so a board whose last run finished has none.
+# Arming the same lane twice is NOT caught anywhere:
 # armed_ideas returns one entry per armed card and adopt_and_refile writes one
 # lane-<k>.md per entry, the last one winning — a second idea for a lane silently
 # replaces the first at refile time. Arm a lane once.
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 
-SLUG=${1:-}
-LANE=${2:-1}
-if [ -z "$SLUG" ]; then
-  echo "usage: driver/arm.sh <slug> [lane]" >&2
-  exit 2
-fi
+usage() {
+cat <<'USAGE'
+driver/arm.sh --slug <slug> [--lane <n>]
+
+  --slug <s>   board slug (required)
+  --lane <n>   lane to arm (default 1)
+
+Files that lane's idea as the board's go-signal card, then starts the board's driver if none
+is up — the ONE command for a new idea:
+
+  driver/arm.sh --slug <s>
+USAGE
+}
+
+need() { [ "$#" -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }; }
+
+SLUG= LANE=1
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --slug) need "$@"; SLUG=$2; shift 2 ;;
+    --lane) need "$@"; LANE=$2; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "unknown arg: $1 — the board is named with --slug" >&2
+       usage >&2; exit 2 ;;
+  esac
+done
+[ -n "$SLUG" ] || { echo "arm.sh: --slug is required" >&2; usage >&2; exit 2; }
+# Digits only: the lane is interpolated into the idea path below (lane-<n>.md).
+case "$LANE" in
+  ''|*[!0-9]*) echo "arm.sh: --lane wants a lane number, got '$LANE'" >&2; exit 2 ;;
+esac
 IDEA="$REPO/boards/$SLUG/lane-$LANE.md"
 if [ ! -f "$IDEA" ]; then
   echo "arm.sh: no idea at $IDEA" >&2
@@ -75,3 +107,12 @@ done
 # `armed_ideas` reads it when the body carries the RAW IDEA marker.
 hermes kanban --board "$SLUG" create "$TITLE" --body "$BODY" --created-by arm.sh \
   --initial-status blocked
+
+# The go-signal card needs a driver to read it: a board whose last run finished has none (a
+# driver exits with the run it drove), and a card nobody reads looks exactly like a hung
+# board. start-board.sh is the same door — same lock, same refusal — so this is a no-op when
+# a driver is already up.
+. "$REPO/driver/driver-pid.sh"
+if ! live_driver_pid "$REPO/boards/$SLUG" >/dev/null; then
+  "$REPO/driver/start-board.sh" --slug "$SLUG"
+fi
