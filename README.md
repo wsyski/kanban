@@ -531,6 +531,24 @@ with the CLI:
     hermes -p coder sessions export --session-id <id> --format md [<dir>]   # default <hermes home>/session-exports
     hermes kanban --board <slug> show <task-id>                             # which card a task id is
 
+**Why no switch makes them visible.** A worker's session is created under
+`HERMES_SESSION_SOURCE=kanban`, set unconditionally by the dispatcher
+(`hermes_cli/kanban_db_dispatch.py`), and it is excluded because every human-facing listing applies
+Hermes's internal-listing deny list (`hermes_state_sessions.INTERNAL_LISTING_SOURCES`, beside `tool`
+and `oneshot`). There is no manifest or environment switch — one row per attempt would flood the
+session lists — so the CLI above is the way in. **Never rename a worker session to `Bot Chat` to
+force it into view**: that is the session-stealing bug class Bot Mode's canonical-chat registry
+exists to prevent.
+
+**Hermes still reports one, though.** `profiles.list` carries `worker_session` per profile — the
+newest *denied* row, i.e. the freshest kanban worker, with its id, source, title and `last_active`
+(`tui_gateway/methods_profiles.py`) — so a roster can show a profile as working. Desktop's Bots
+plugin reads it as `{last_active}` for its working dot, and its session menu can open an arbitrary
+session id from a bot row. Surfacing the live worker in the Bots tab is therefore a Desktop-side
+change (widen the type, add a menu item) and needs no kanban- or backend-side work. In the web
+dashboard, sessions are per profile (`/sessions?profile=coder`) and the Automation category does not
+include `kanban`, so worker runs appear under All/Chats.
+
 ## 5. Operational rules
 
 - **One driver per board.** Duplicates idle silently and interleave log output. Kill
@@ -581,6 +599,11 @@ with the CLI:
 - **Turn budgets are global, not per-profile.** `agent.max_turns` (80) in
   `~/.hermes/config.yaml` governs every kanban worker. A profile-level shadow value
   kills runs — never set `agent.max_turns` on a worker profile.
+- **A card's `--skill` resolves against the assignee's own profile.** A name that profile
+  cannot see is dropped with a log-only warning, so the card runs without the skill and
+  nothing fails loudly — the one case `create-board.sh`'s pre-flight reports for a
+  force-loaded skill (`lanes.required_skills`). Install it into the assignee profile
+  (`/skill-sync`); the profile the board was created from is irrelevant.
 - **Worker cards are turn-bounded; reviews and gates never are.** Worker cards (I, P,
   TW, C, TI and their rounds) are filed with a turn ceiling and, with `goal` on, a goal
   judge that checks the body's `DONE WHEN:` line. A goal judge on a review or gate could
