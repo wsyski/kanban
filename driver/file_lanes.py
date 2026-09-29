@@ -272,8 +272,6 @@ def file_board(board, repo, workdir, lane_count, key_prefix, max_runtime=None,
                     "--initial-status", "blocked",
                     "--idempotency-key", f"{key_prefix}-{card['id']}",
                     "--created-by", "coder", "--json"]
-            if card["skill"]:
-                args += ["--skill", card["skill"]]
             # The model this card runs on: the board's `model`/`provider`, this lane's
             # entry when the board declares an array (`models[lane]`) — a lane's own
             # header is not known yet, the idea is entered after filing, and

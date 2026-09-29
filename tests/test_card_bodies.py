@@ -161,13 +161,14 @@ def test_card_sessions_leave_their_profile_alone():
 
 
 def test_both_code_reviews_run_ocr_review():
-    """RVa and RVc force-load `ocr-review` (lanes.LANE_CARDS), so their bodies must ASK for
-    the dispatch — the worker contract permits only a dispatch the card asks for — and must
+    """RVa and RVc name the `ocr-review` skill (nothing force-loads it), so their bodies must
+    ASK for it and for the dispatch — the worker contract permits only a dispatch the card asks for — and must
     keep the verdict theirs: a finding is evidence for the card's own checks, never a
     rejection ground of its own."""
     for body in ("rva-body.txt", "rvc-body.txt"):
         text = read(body)
         assert "OCR-REVIEW" in text, body
+        assert "load the `ocr-review` skill" in text, body
         assert "EVIDENCE" in text, body
         assert "read-only" in text, body
 
@@ -630,3 +631,10 @@ def test_every_review_body_requires_the_verified_ledger():
         assert "VERIFIED:" in t, body
         assert "ACCEPTED" in t and "byte-identical" not in t, body
         assert "TICK WHAT YOU ACCEPT" in t, body
+
+
+def test_the_skills_a_card_needs_are_named_in_its_prose_not_forced():
+    """No card is filed with `--skill`: the profile's own skill list serves the model, and
+    the body says which one to load."""
+    assert "load the `writing-plans` skill" in read("p-body.txt")
+    assert "Load the `test-driven-development` skill" in read("tw-body.txt")

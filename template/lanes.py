@@ -20,16 +20,16 @@ import re
 import board_schema
 
 
-# code, card-body file, assignee, parent code (None = lane root), skill
+# code, card-body file, assignee, parent code (None = lane root)
 LANE_CARDS = [
-    ("I",   "i-body.txt",   "researcher", None,  None),
-    ("Gi",  "gi-body.txt",  "human-gate", "I",   None),
-    ("P",   "p-body.txt",   "coder",      "Gi",  "writing-plans"),
-    ("RVp", "rvp-body.txt", "coder",      "P",   None),
-    ("Gp",  "gp-body.txt",  "human-gate", "RVp", None),
-    ("TW",  "tw-body.txt",  "coder",      "Gp",  "test-driven-development"),
-    ("C",   "c-body.txt",   "coder",      "Gp",  None),
-    ("RVa", "rva-body.txt", "coder",      "C",   "ocr-review"),
+    ("I",   "i-body.txt",   "researcher", None),
+    ("Gi",  "gi-body.txt",  "human-gate", "I"),
+    ("P",   "p-body.txt",   "coder",      "Gi"),
+    ("RVp", "rvp-body.txt", "coder",      "P"),
+    ("Gp",  "gp-body.txt",  "human-gate", "RVp"),
+    ("TW",  "tw-body.txt",  "coder",      "Gp"),
+    ("C",   "c-body.txt",   "coder",      "Gp"),
+    ("RVa", "rva-body.txt", "coder",      "C"),
     # The integration level is CODER work, not tester work: an end-to-end run is in
     # effect a review OF the whole deliverable, so the errors it uncovers are
     # main-code errors — and they may sit anywhere, including code the earlier review
@@ -38,9 +38,9 @@ LANE_CARDS = [
     # role, on its second pass, fixes what it just proved wrong. The JUDGEMENT stays
     # independent: RVc reviews the tree the gate receives (its check (e)), so the card
     # that authored the tests and the fixes never certifies them.
-    ("TI",  "ti-body.txt",   "coder",     "RVa", None),
-    ("RVc", "rvc-body.txt", "coder",      "TI",  "ocr-review"),
-    ("Gc",  "gc-body.txt",  "human-gate", "RVc", None),
+    ("TI",  "ti-body.txt",   "coder",     "RVa"),
+    ("RVc", "rvc-body.txt", "coder",      "TI"),
+    ("Gc",  "gc-body.txt",  "human-gate", "RVc"),
 ]
 
 # The graph is a chain — each card's parent is the card filed before it — with ONE
@@ -165,14 +165,6 @@ def goal_args(code, cards=(), max_turns=None):
     return ["--goal", "--goal-max-turns", str(turns)]
 
 
-def skill_for(code):
-    """The skill a card of this code is filed with — rework rounds reuse it."""
-    for row in LANE_CARDS:
-        if row[0] == code:
-            return row[4]
-    raise KeyError(code)
-
-
 def assignee_for(role, assignees=None):
     """The hermes profile that works a role — the board's `assignees` remapping if
     it names this role, else the role's own name.
@@ -223,36 +215,13 @@ def required_profiles(assignees=None, refinement=True, unit_tests=True,
                                            unit_tests=unit_tests,
                                            refinement=refinement)}
     out = set()
-    for code, _body, role, _parent, _skill in LANE_CARDS:
+    for code, _body, role, _parent in LANE_CARDS:
         if code not in codes:
             continue
         if role in NO_PROFILE_ROLES and role not in remap:
             continue
         out.add(assignee_for(role, remap))
     return sorted(out)
-
-
-def required_skills(assignees=None, refinement=True, unit_tests=True,
-                    integration_tests=True):
-    """{profile: [skill, ...]} — every skill this board force-loads, under the profile
-    that has to hold it.
-
-    create-board.sh's pre-flight asks this for the reason it asks required_profiles: a
-    card whose skill is missing from its profile, or switched off there, still files and
-    still runs. It just runs WITHOUT the skill — the plan card without the plan format,
-    a review card without ocr-review — and nothing says so until a review reads worse
-    than the last one. A missing profile stops a board; a missing skill only degrades it,
-    so this is a note at creation rather than a refusal.
-    """
-    codes = {c["code"] for c in lane_cards(1, integration_tests=integration_tests,
-                                           unit_tests=unit_tests,
-                                           refinement=refinement)}
-    out = {}
-    for code, _body, role, _parent, skill in LANE_CARDS:
-        if not skill or code not in codes:
-            continue
-        out.setdefault(assignee_for(role, assignees or {}), set()).add(skill)
-    return {profile: sorted(skills) for profile, skills in sorted(out.items())}
 
 
 def max_reworks(cfg=None):
@@ -376,7 +345,7 @@ def lane_cards(lane, integration_tests=True, unit_tests=True, assignees=None,
         declared_parents["C"] = ("TW",)
     cards = []
     prev_id = None
-    for code, body, assignee, _parent_code, skill in rows:
+    for code, body, assignee, _parent_code in rows:
         declared = declared_parents.get(code)
         if declared:
             parents = [f"{p}{lane}" for p in declared if p in codes]
@@ -390,7 +359,6 @@ def lane_cards(lane, integration_tests=True, unit_tests=True, assignees=None,
             "role": assignee,
             "assignee": assignee_for(assignee, assignees),
             "parents": parents,
-            "skill": skill,
         })
         prev_id = f"{code}{lane}"
     return cards

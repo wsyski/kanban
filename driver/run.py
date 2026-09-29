@@ -1131,11 +1131,6 @@ def _round_settings(lane):
     return runtime, render
 
 
-def _skill_args(code):
-    skill = lanes.skill_for(code)
-    return ["--skill", skill] if skill else []
-
-
 def _full_verdict_pointer(verdict_card_id):
     if not verdict_card_id:
         return ""
@@ -1464,7 +1459,7 @@ def file_revision(state, lane, round_no, findings, base="P", reviewer_prefix="RV
                           _full_verdict_pointer(verdict_card_id))
     args = _create_args(rev_title, rbody, rev_assignee,
                         rework_key("rev", base, lane, round_no), runtime,
-                        _skill_args(base) + _goal_args(rev_assignee, base)
+                        _goal_args(rev_assignee, base)
                         + card_model_args(base, lane))
     rev_id = json.loads(kb(*args))["id"]
     # Recorded, not just filed: a board option edited between this round's filing
@@ -3502,7 +3497,7 @@ def file_code_revision(state, lane, round_no, findings, owner="C", max_rounds=2,
                           _full_verdict_pointer(verdict_card_id))
     args = _create_args(rev_title, rbody, role,
                         rework_key("rev", owner, lane, round_no), runtime,
-                        _skill_args(owner) + _goal_args(role, owner)
+                        _goal_args(role, owner)
                         + card_model_args(owner, lane))
     rev_id = json.loads(kb(*args))["id"]
     # Recorded, not just filed: a board option edited between this round's filing

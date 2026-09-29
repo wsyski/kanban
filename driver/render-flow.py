@@ -42,7 +42,7 @@ SHORT = {"I": "refine idea", "Gi": "GATE — human accepts idea", "P": "plan",
          "C": "implement", "RVa": "review", "TI": "integration tests",
          "RVc": "final review", "Gc": "GATE — human commits code"}
 WHO = {code: "human" if assignee == "human-gate" else assignee
-       for code, _body, assignee, _parent, _skill in lanes.LANE_CARDS}
+       for code, _body, assignee, _parent in lanes.LANE_CARDS}
 
 
 def _esc(text):

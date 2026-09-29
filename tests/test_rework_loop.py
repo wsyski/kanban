@@ -239,7 +239,7 @@ def test_revision_rounds_are_rendered_like_filed_cards(monkeypatch, board_env):
         assert _arg(c, "--workspace") == f"dir:{run.WORKDIR}"
         assert _arg(c, "--max-runtime") == "7m"
     rev_plan = next(c for c in created if c[1].startswith("P1-rev-1"))
-    assert _arg(rev_plan, "--skill") == "writing-plans"
+    assert "--skill" not in rev_plan
     rev_tw = next(c for c in created if c[1].startswith("TW1-rev-1"))
     assert _arg(rev_tw, "--assignee") == "coder"
     rev_ti = next(c for c in created if c[1].startswith("TI1-rev-1"))

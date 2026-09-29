@@ -306,7 +306,7 @@ def wait_for(cid, title, timeout_s):
 def run_one(code, lane, rev, rr, title, prior, trigger, slug, run_name, live):
     stubs = file_stubs(prior)
     prior_state = {c["title"]: c for c in prior}
-    _, body_file, role, _, _ = CARD_ROWS[code]
+    _, body_file, role, _ = CARD_ROWS[code]
     cfg = run.manifest()
     body = card_render.render_body(body_file, repo=run.REPO, board=slug,
                                    kanban_board=run.BOARD, workdir=run.WORKDIR, lane=lane,
@@ -335,7 +335,7 @@ def run_one(code, lane, rev, rr, title, prior, trigger, slug, run_name, live):
         links = [stubs[p] for p in parents if p in stubs]
     runtime = cfg.get("max-runtime") or file_lanes.DEFAULT_MAX_RUNTIME
     extra = ((run.card_model_args(code, lane) if rr else
-              run._skill_args(code) + run._goal_args(role, code)
+              run._goal_args(role, code)
               + run.card_model_args(code, lane)) + ["--initial-status", "blocked"])
     key = f"{run.BOARD}-{run_name}-card-{title.split(':')[0]}"
     # Blocked and parentless, then linked — file_board's order: a card created with

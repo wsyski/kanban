@@ -801,11 +801,12 @@ include `kanban`, so worker runs appear under All/Chats.
 - **Turn budgets are global, not per-profile.** `agent.max_turns` (80) in
   `~/.hermes/config.yaml` governs every kanban worker. A profile-level shadow value
   kills runs — never set `agent.max_turns` on a worker profile.
-- **A card's `--skill` resolves against the assignee's own profile.** A name that profile
-  cannot see is dropped with a log-only warning, so the card runs without the skill and
-  nothing fails loudly — the one case `create-board.sh`'s pre-flight reports for a
-  force-loaded skill (`lanes.required_skills`). Install it into the assignee profile
-  (`/skill-sync`); the profile the board was created from is irrelevant.
+- **Cards name skills, they never force them.** No card is filed with `--skill`; the body
+  says which skill to load (`writing-plans`, `test-driven-development`, `ocr-review`) and
+  the model loads it from its own profile's list. A skill the profile cannot see makes the
+  card run without it and nothing fails loudly, so `create-board.sh` notes a missing `ocr`
+  or `ocr-review`. Install the skill for the assignee profile (`/skill-sync`); the profile
+  the board was created from is irrelevant.
 - **Worker cards are turn-bounded; reviews and gates never are.** Worker cards (I, P,
   TW, C, TI and their rounds) are filed with a turn ceiling and, with `goal` on, a goal
   judge that checks the body's `DONE WHEN:` line. A goal judge on a review or gate could

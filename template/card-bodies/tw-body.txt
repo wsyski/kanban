@@ -1,4 +1,4 @@
-UNIT TESTS — lane <N>. Write the tests the plan at <PLAN> specifies, and run them: this card produces the lane's evidence that the behaviour holds.
+UNIT TESTS — lane <N>. Write the tests the plan at <PLAN> specifies, and run them: this card produces the lane's evidence that the behaviour holds. Load the `test-driven-development` skill from your skill list for how to write a test that proves something; the order of work is this card's, not the skill's.
 
 FINISH: a failing test is a finished card, not a blocker. Once every [TW] step is written, run the suite, name every failing test and what its failure shows in your result, and complete; the implementation review decides what happens next. A plan step you believe is wrong is a finding for that result, never a reason to block or to keep looping.
 

@@ -390,7 +390,6 @@ def test_a_re_review_files_under_its_revision_with_only_the_review_pin(tmp_path,
     new = next(i for i, c in fake.cards.items() if c["title"].startswith("RVa1-r2:"))
     stub = next(i for i, c in fake.cards.items() if c["title"].startswith("C1-rev-1:"))
     assert "--parent" not in create and ("link", stub, new) in fake.calls
-    assert lanes.skill_for("RVa")                     # the base review force-loads one
     assert "--skill" not in create and "--goal" not in create
     assert "RE-REVIEW ROUND 2 of" in create[create.index("--body") + 1]
 
