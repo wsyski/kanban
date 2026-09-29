@@ -123,6 +123,28 @@ def test_a_board_owned_work_directory_has_no_foreign_index(monkeypatch, tmp_path
     assert run.foreign_staged() == []
 
 
+def test_a_commit_to_the_engine_repo_is_not_drift_of_its_ignored_work_dir(monkeypatch, tmp_path):
+    """boards/<slug>/work/ is gitignored inside this repo, so `rev-parse` names THIS repo
+    and its HEAD moves whenever the operator commits driver/ or README changes."""
+    kanban = _repo(tmp_path, name="kanban")
+    work = kanban / "boards" / "b" / "work"
+    work.mkdir(parents=True)
+    rundir = kanban / "boards" / "b" / "runs" / "r1"
+    rundir.mkdir(parents=True)
+    monkeypatch.setattr(run, "REPO", str(kanban))
+    monkeypatch.setattr(run.STATE, "run_dir", str(rundir))
+    monkeypatch.setattr(run, "WORKDIR", str(work))
+    monkeypatch.setattr(run, "log", lambda m: None)
+    monkeypatch.setattr(run, "staged_files", lambda: [])
+    run.STATE.drift.clear()
+    run.record_workdir_facts()
+    (kanban / "README.md").write_text("operator's own commit\n")
+    git(kanban, "add", "README.md")
+    git(kanban, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "two")
+    git(kanban, "checkout", "-q", "-b", "feature/x")
+    assert run.workdir_drift() == []
+
+
 def test_each_drift_is_logged_once_not_once_per_tick(monkeypatch, tmp_path):
     wd = _repo(tmp_path)
     _external_run(monkeypatch, tmp_path, wd)

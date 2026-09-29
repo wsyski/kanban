@@ -1593,6 +1593,14 @@ def expected_workdir_facts():
         return {}
 
 
+def _board_owned(exp):
+    """The work directory resolves to THIS repo: a gitignored `boards/<slug>/work/`
+    with no history of its own. The repo's HEAD and branch move with the operator's
+    ordinary commits to `driver/` and `template/` and say nothing about the work."""
+    repo = os.path.abspath(exp["repo"])
+    return repo == os.path.abspath(REPO) or repo.startswith(os.path.abspath(REPO) + os.sep)
+
+
 def foreign_staged():
     """Staged paths in the work directory's repo that are NOT this board's.
 
@@ -1609,8 +1617,7 @@ def foreign_staged():
     exp = expected_workdir_facts()
     if not exp.get("repo"):
         return []
-    if os.path.abspath(exp["repo"]).startswith(os.path.abspath(REPO) + os.sep) or \
-            os.path.abspath(exp["repo"]) == os.path.abspath(REPO):
+    if _board_owned(exp):
         return []
     staged = [ln for ln in git_at(WORKDIR, "diff", "--cached", "--name-only")
               .splitlines() if ln.strip()]
@@ -1632,6 +1639,8 @@ def workdir_drift(state=None):
         return []
     now = workdir_facts()
     out = []
+    if _board_owned(exp):
+        return out
     if now.get("branch") and exp.get("branch") and now["branch"] != exp["branch"]:
         out.append(f"the work directory moved from branch {exp['branch']} to "
                    f"{now['branch']} while this run was live — a gate's recorded "
