@@ -64,6 +64,88 @@ copies the fixture board `tests/integration/fixtures/greet/` to a temp dir and r
 `board.json` names the local model, so an integration run never reaches a cloud provider.
 `tests/test_fixture_run.py` checks the fixture itself for free.
 
+### Running one card
+
+`run-card.py` writes into the run it is given, so work on a copy (and save the work tree):
+
+```bash
+cp -r boards/greet/runs/run-20260927-000000 boards/greet/runs/run-20260927-000000-try1
+
+# review the plan again; prints one JSON report as the LAST stdout line, exits 0 only if
+# the card finished and its verdict is readable the way the driver reads it
+driver/run-card.py --run boards/greet/runs/run-20260927-000000-try1 --card RVp1
+
+# a plan revision round (needs a REJECT from RVp1 in that run), then its re-review
+driver/run-card.py --run boards/greet/runs/run-20260927-000000-try1 --card P1-rev-1
+driver/run-card.py --run boards/greet/runs/run-20260927-000000-try1 --card RVp1-r2
+
+# a code card of lane 2, keeping the one-card board to inspect it afterwards
+driver/run-card.py --run boards/<slug>/runs/<run>-try1 --card C2 --keep
+
+# just the report's verdict
+driver/run-card.py --run ... --card RVp1 | tail -1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["verdict"])'
+```
+
+The LLM-gated tests do the same on a fresh copy of `tests/integration/fixtures/greet/`.
+They need `hermes` on `$PATH`, a running gateway and the local model `swift15-27b` on
+`llama-swap`:
+
+```bash
+KANBAN_LLM_TESTS=1 ./test.sh -rs                              # every LLM case (minutes each)
+KANBAN_LLM_TESTS=1 ./test.sh -rs -k planted                   # the planted-defect review only
+KANBAN_LLM_TESTS=1 ./test.sh -rs -k revision_round            # P1-rev-1 closes its findings
+KANBAN_LLM_TESTS=1 KANBAN_RUN_CARD_REPEAT=1 ./test.sh -rs -k different   # two reviews differ
+KANBAN_LLM_TESTS=1 KANBAN_RUN_CARD_TIMEOUT=3600 ./test.sh -k planted     # per-run timeout (s)
+```
+
+`./test.sh` always runs the whole suite, so `-k` narrows it.
+
+### Running the LLM tests on GitHub
+
+The `kanban-engine` workflow's `llm` job runs them on a self-hosted runner on the workstation that
+has the local model. It never runs on push or PR: start it from Actions → kanban-engine → *Run
+workflow*, tick `llm`, and optionally give a `-k` filter (`gh workflow run kanban-engine -f llm=true
+-f k=planted`).
+
+One-time setup on the workstation (repo → Settings → Actions → Runners → *New self-hosted
+runner* prints the exact commands and a short-lived token):
+
+```bash
+mkdir ~/actions-runner && cd ~/actions-runner
+# download and extract the runner package the settings page gives you, then:
+./config.sh --url https://github.com/wsyski/kanban --token <TOKEN> --labels kanban-llm
+./run.sh                       # foreground; or: sudo ./svc.sh install && sudo ./svc.sh start
+```
+
+The runner's environment needs `hermes` on `$PATH`, the gateway reachable, `llama-swap`
+serving `swift15-27b`, and an interpreter with pytest (`pip install pytest`, or set
+`PYTHON=<path>` in the runner's `.env`). The runner executes whatever the workflow says, so
+keep the repository private or restrict who can trigger workflows.
+
+### Running that job locally
+
+On the workstation, the `llm` job is one command, so run it by hand without GitHub. This is
+exactly what the job's step runs, from a checkout of the repo:
+
+```bash
+KANBAN_LLM_TESTS=1 KANBAN_RUN_CARD_REPEAT=1 ./test.sh -rs                # the whole job
+KANBAN_LLM_TESTS=1 KANBAN_RUN_CARD_REPEAT=1 ./test.sh -rs -k planted     # with the `k` input
+```
+
+Check the prerequisites first: `hermes --version`, the gateway answering, `llama-swap`
+serving `swift15-27b`, and `./test.sh` (no LLM variables) passing.
+
+To run the workflow file itself, [`act`](https://github.com/nektos/act) can execute a job on
+the host instead of in a container. This route is not verified here:
+
+```bash
+act workflow_dispatch -j llm -W .github/workflows/ci.yml \
+    -P self-hosted=-self-hosted --input llm=true --input k=planted
+```
+
+Or start the real job on your registered runner from any machine with `gh`:
+`gh workflow run kanban-engine -f llm=true -f k=planted`, then `gh run watch`.
+
 What the template consists of:
 
 | file | role |

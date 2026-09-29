@@ -1,4 +1,4 @@
-name: engine
+name: kanban-engine
 
 # The same commands the README's receipts name, so CI and a human run one thing. The suite
 # is seconds, and the diagram check is what catches a card-graph edit that forgot its
@@ -10,6 +10,15 @@ on:
   # Actions → "Run workflow" → pick any branch: a refactor branch wants the same suite
   # before it is merged, and that is exactly when a push trigger cannot help.
   workflow_dispatch:
+    inputs:
+      llm:
+        description: "Also run the LLM-gated integration tests on the self-hosted runner"
+        type: boolean
+        default: false
+      k:
+        description: "pytest -k filter for the LLM job, e.g. planted (empty = every case)"
+        type: string
+        default: ""
 
 jobs:
   suite:
@@ -41,3 +50,21 @@ jobs:
           for b in boards/*/board.json; do
             python3 template/board_schema.py --any-host "$b"
           done
+
+  # Needs the workstation's local model (swift15-27b via llama-swap) and the `hermes` CLI,
+  # which no hosted runner has. Manual only: a self-hosted runner must never execute a
+  # pull request's code. Register the runner with the `kanban-llm` label (README).
+  llm:
+    if: github.event_name == 'workflow_dispatch' && inputs.llm
+    runs-on: [self-hosted, linux, kanban-llm]
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: LLM-gated integration tests
+        env:
+          KANBAN_LLM_TESTS: "1"
+          KANBAN_RUN_CARD_REPEAT: "1"
+          KFILTER: ${{ inputs.k }}
+        run: |
+          if [ -n "$KFILTER" ]; then ./test.sh -rs -k "$KFILTER"; else ./test.sh -rs; fi
