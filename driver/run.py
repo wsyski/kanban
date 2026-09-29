@@ -2272,7 +2272,9 @@ def _gate_action(state, title, kind, lane):
                     "(NO CHANGE)")
         at_gate = os.path.relpath(
             os.path.join(STATE.snap_dir, f"lane-{lane}-workdir-at-gate.md"), REPO)
-        evidence = (f"{what}, verdict PASS; workdir at gate: {at_gate}; "
+        # The verdict leads: run-summary.json keeps only the head of this string, and a
+        # long list of written files ahead of it cut "PASS" off (a false E4).
+        evidence = (f"verdict PASS, {what}; workdir at gate: {at_gate}; "
                     f"to commit in: {commit_target()}")
         if title not in STATE.announced:
             log(f"GATE {title.split(':')[0]} evidence: {evidence}; "
