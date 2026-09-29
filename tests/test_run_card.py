@@ -469,3 +469,15 @@ def test_a_code_revision_body_equals_the_one_the_driver_files(tmp_path, monkeypa
                              "RVa", 1, 2)
     assert filed[1] == "BASE\n" + run.rereview_text("code", rr["round_no"], rr["max_rounds"],
                                                     final_review=rr["final_review"])
+
+
+def test_wait_for_returns_when_the_card_settles_and_times_out_otherwise(monkeypatch):
+    monkeypatch.setattr(rc, "POLL_S", 0)
+    monkeypatch.setattr(run, "record_timing", lambda st: None)
+    seen = iter([{"T": {"status": "running"}}, {"T": {"status": "done"}}])
+    monkeypatch.setattr(rc, "_only", lambda cid: next(seen))
+    assert rc.wait_for("t_1", "T", 60)[0] == "done"
+    monkeypatch.setattr(rc, "_only", lambda cid: {"T": {"status": "running"}})
+    assert rc.wait_for("t_1", "T", -1)[0] == "timed out"
+    monkeypatch.setattr(rc, "_only", lambda cid: {})
+    assert rc.wait_for("t_1", "T", 60)[0] == "missing"

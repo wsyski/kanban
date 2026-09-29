@@ -314,6 +314,21 @@ def manifest():
 WORKDIR = manifest().get("default-workdir") or os.path.join(BOARD_DIR, "work")
 
 
+def configure(board, board_dir, run_dir):
+    """Aim this module at another board's files: kb() and <BOARD> at `board`, every path
+    at `board_dir` and the run `run_dir` (a run under board_dir/runs). driver/run-card.py
+    is the caller; it sets BOARD apart from BOARD_DIR, which main() never does."""
+    global BOARD, BOARD_DIR, BOARD_CFG, IDEAS_DIR, RUNS_ROOT, CURRENT_RUN, WORKDIR
+    BOARD = board
+    BOARD_DIR = board_dir
+    BOARD_CFG = os.path.join(board_dir, "board.json")
+    IDEAS_DIR = board_dir
+    RUNS_ROOT = os.path.dirname(run_dir)
+    CURRENT_RUN = os.path.join(RUNS_ROOT, "current")
+    WORKDIR = manifest().get("default-workdir") or os.path.join(board_dir, "work")
+    use_run(os.path.basename(run_dir))
+
+
 
 def board_lane_count(state):
     n = 0

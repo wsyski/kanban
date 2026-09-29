@@ -98,7 +98,8 @@ KANBAN_LLM_TESTS=1 KANBAN_RUN_CARD_REPEAT=1 ./test.sh -rs -k different   # two r
 KANBAN_LLM_TESTS=1 KANBAN_RUN_CARD_TIMEOUT=3600 ./test.sh -k planted     # per-run timeout (s)
 ```
 
-`./test.sh` always runs the whole suite, so `-k` narrows it.
+`./test.sh` always runs the whole suite, so `-k` narrows it. `TEST_PATHS=tests/integration
+./test.sh -rs` collects only that directory (the `llm` job does this).
 
 ### Running the LLM tests on GitHub
 
@@ -120,7 +121,9 @@ mkdir ~/actions-runner && cd ~/actions-runner
 The runner's environment needs `hermes` on `$PATH`, the gateway reachable, `llama-swap`
 serving `swift15-27b`, and an interpreter with pytest (`pip install pytest`, or set
 `PYTHON=<path>` in the runner's `.env`). The runner executes whatever the workflow says, so
-keep the repository private or restrict who can trigger workflows.
+keep the repository private or restrict who can trigger workflows. The `llm` job also
+declares `environment: kanban-llm`: add required reviewers to that environment (Settings →
+Environments) and every run waits for an approval before it touches the workstation.
 
 ### Running that job locally
 

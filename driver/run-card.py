@@ -124,6 +124,11 @@ def done_before(run_dir, title):
     return list(newest.values())
 
 
+def _titled(cards):
+    """The cards as the driver's readers take them: by title, in done order."""
+    return {c["title"]: dict(c, completed_at=i + 1) for i, c in enumerate(cards)}
+
+
 # Per loop, as driver.rework_rounds reads it: the reviewer whose newest verdict decides,
 # the final-review code whose verdict counts too, and what a trigger looks like.
 LOOPS = {"plan": ("RVp", None, "a REJECT from RVp{l}"),
@@ -137,7 +142,7 @@ def revision_trigger(prior, code, lane, rev):
     production would escalate instead of filing the round."""
     kind = REV_KIND[code]
     reviewer, final, want = LOOPS[kind]
-    state = {c["title"]: dict(c, completed_at=i + 1) for i, c in enumerate(prior)}
+    state = _titled(prior)
     card, text = run.latest_verdict_card(state, lane, reviewer, final_code=final)
     name = f"{code}{lane}-rev-{rev}"
     if card is not None and not (card.get("result") or "").strip():
@@ -188,7 +193,7 @@ def rereview_trigger(prior, code, lane, rr):
                          f"{'P' if kind == 'plan' else 'C/TW/TI'}{lane}-rev-<n> for it to re-review")
     rev_card, round_no = revs[-1]
     before = [c for c in prior if c["id"] != rev_card["id"]]
-    state = {c["title"]: dict(c, completed_at=i + 1) for i, c in enumerate(before)}
+    state = _titled(before)
     if kind == "code" and rr != round_no + 1:
         raise SystemExit(f"{code}{lane}-r{rr}: the newest code revision is round {round_no}, "
                          f"so its re-review is RVa{lane}-r{round_no + 1}")
@@ -223,6 +228,7 @@ def check_result(code, text, scratch):
     return checks
 
 
+HERMES_BIN = shutil.which("hermes") or "hermes"
 POLL_S = 10
 GRACE_S = 300          # past --max-runtime: the dispatcher's own kill lands first
 
@@ -236,9 +242,10 @@ def hermes(*args, env=None, timeout=120):
     e = runs_util.cli_env()
     for k in [k for k in e if k.startswith("PYTEST")] + ["HERMES_HOME", "GIT_DIR"]:
         e.pop(k, None)
+    e["HERMES_BIN"] = HERMES_BIN
     e.update(env or {})
     try:
-        p = subprocess.run(["hermes", *args], capture_output=True, text=True, env=e,
+        p = subprocess.run([HERMES_BIN, *args], capture_output=True, text=True, env=e,
                            timeout=timeout)
     except (OSError, subprocess.TimeoutExpired) as exc:
         return 1, str(exc)
@@ -255,19 +262,6 @@ def stop_worker(card_id):
     except (OSError, subprocess.TimeoutExpired) as e:
         print(f"could not stop the worker of {card_id} ({e}) — stop it by hand: "
               f"pkill -f 'work kanban task {card_id}'", file=sys.stderr)
-
-
-def point_driver(kanban_board, board_dir, run_dir):
-    """Aim run.py at two boards: kb() and <BOARD> at the one-card board, every path at
-    the real board and run."""
-    run.BOARD = kanban_board
-    run.BOARD_DIR = board_dir
-    run.BOARD_CFG = os.path.join(board_dir, "board.json")
-    run.IDEAS_DIR = board_dir
-    run.RUNS_ROOT = os.path.dirname(run_dir)
-    run.CURRENT_RUN = os.path.join(run.RUNS_ROOT, "current")
-    run.WORKDIR = run.manifest().get("default-workdir") or os.path.join(board_dir, "work")
-    run.use_run(os.path.basename(run_dir))
 
 
 def file_stubs(prior):
@@ -291,6 +285,22 @@ def file_stubs(prior):
 
 def _only(card_id):
     return {t: c for t, c in run.board().items() if c["id"] == card_id}
+
+
+def wait_for(cid, title, timeout_s):
+    """Poll the one-card board until the card settles or `timeout_s` passes.
+
+    Returns (status, one-card state). "timed out" leaves the worker to main's finally."""
+    deadline = time.time() + timeout_s
+    while True:
+        time.sleep(POLL_S)
+        st = _only(cid)
+        run.record_timing(st)
+        status = st[title]["status"] if title in st else "missing"
+        if status in ("done", "blocked", "archived", "missing"):
+            return status, st
+        if time.time() > deadline:
+            return "timed out", st
 
 
 def run_one(code, lane, rev, rr, title, prior, trigger, slug, run_name, live):
@@ -342,21 +352,9 @@ def run_one(code, lane, rev, rr, title, prior, trigger, slug, run_name, live):
     run.mark_attempt(st[title])
     run.kb("unblock", cid)
     run.record_chain_start(st[title], lane)
-    rc_, out = hermes("kanban", "--board", run.BOARD, "dispatch", "--max", "1",
-                      env={"HERMES_BIN": shutil.which("hermes") or "hermes"})
+    rc_, out = hermes("kanban", "--board", run.BOARD, "dispatch", "--max", "1")
     print(f"dispatch: {out.strip().splitlines()[-1] if out.strip() else rc_}", file=sys.stderr)
-    deadline = time.time() + (board_schema.duration_seconds(runtime) or 3600) + GRACE_S
-    status = "?"
-    while True:
-        time.sleep(POLL_S)
-        st = _only(cid)
-        run.record_timing(st)
-        status = st[title]["status"] if title in st else "missing"
-        if status in ("done", "blocked", "archived", "missing"):
-            break
-        if time.time() > deadline:
-            status = "timed out"      # main's finally stops the worker
-            break
+    status, st = wait_for(cid, title, (board_schema.duration_seconds(runtime) or 3600) + GRACE_S)
     card = st.get(title) or {}
     scratch = os.path.join(run.STATE.run_dir, "scratch", cid)
     text, checks = card.get("result") or "", {}
@@ -393,7 +391,7 @@ def main(argv=None):
     slug = os.path.basename(board_dir)
     driver_lock.take(runs_root, "a driver or another run-card holds this board — stop it")
     kanban_board = f"{slug}-card-{a.card.lower()}-{time.strftime('%Y%m%d-%H%M%S')}"
-    point_driver(kanban_board, board_dir, os.path.join(runs_root, run_name))
+    run.configure(kanban_board, board_dir, os.path.join(runs_root, run_name))
     title = card_title(code, lane, rev, rr)
     prior = done_before(run.STATE.run_dir, title)
     trigger = (revision_trigger(prior, code, lane, rev) if rev else
