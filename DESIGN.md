@@ -752,20 +752,47 @@ later failure and label every later halt.
   a REJECT with no round filed (F6 — what
   an invisible stall looks like). `--history` counts reviews and reworks.
 
-## run-card: one card on a one-card board
+## run-card (`driver/run-card.py`)
 
-`driver/run-card.py` runs one card of an existing run and records it into that run.
+Runs ONE card of an existing run on a throwaway one-card board and records it into that run.
+Entry: `driver/run-card.py --run <board>/runs/<run> --card <CODE><lane>[-rev-<n>|-r<k>] [--keep]`.
+User docs: README "Running one card".
 
-- **A one-card board, not a bare `hermes chat`.** The completion protocol and the `kanban_*` tools exist only under `HERMES_KANBAN_TASK`, which the dispatcher sets for a card's worker.
-- **Stubs.** Reviewers and C read upstream *attachments* through kanban, so every card done before the one under test is filed as a stub carrying its result and hand-off files. Stubs are unblocked before they are completed, the order the engine's auto-gate completes a parked card in (`_gate_action`).
-- **Two boards in one process.** `run.BOARD` names the one-card board, which every `kb()` call and `<BOARD>` (`render_body(kanban_board=)`) use; every path names the real board and run. The records' `board` field therefore names the one-card board.
-- **The driver's writers and readers are called, not copied**: `_create_args`, `mark_attempt`, `record_chain_start`, `record_timing`, `attach_hand_offs`, `record_chain_done`, `revision_body`, `rereview_text`. A verdict is read through `latest_verdict_card`, so an unprobed RVp PASS fails a run-card run exactly as it holds a real gate.
-- **The lock.** The harness writes the board's work tree and run records, so it takes `driver_lock` on the board; a live driver stops it before anything is filed.
-- **The worker is stopped explicitly.** A dispatcher-spawned worker outlives its board and its driver (`reset.sh` stops one the same way, with `pkill`); one left running would write into the run after the lock is released. This holds on every exit path, with or without `--keep`.
-- **What `run-audit.py` sees on a harness-touched run.** The new card's `attempt` offset points at a worker log on the one-card board, and `boards rm --delete` removes that log; the card is also absent from the real board's `list`. Expect audit findings: a run-card run is a test, not a finished run.
-- **Limits.**
-  - A revision cannot be triggered by a verdict completed summary-only: the run keeps 400 characters of a summary, and the board that holds the rest is gone.
-  - Other `board.json` options (`max-runtime`, goal, skills) are read when a card is filed. The harness files right before starting, so all of them are live; production re-reads only the model pair at start (`repin_before_release`).
+Invariants — break one and the harness tests a different card than production runs:
+
+- **Board split.** `run.BOARD` = the one-card board (every `kb()` call, `<BOARD>` via
+  `render_body(kanban_board=)`). Every path = the real board and run. Set both only through
+  `run.configure(board, board_dir, run_dir)`. Consequence: records' `board` field names the
+  one-card board.
+- **Reuse the driver, never copy it.** Filing, records and verdict reading go through
+  `_create_args`, `mark_attempt`, `record_chain_start`, `record_timing`, `attach_hand_offs`,
+  `record_chain_done`, `revision_body`, `rereview_text`, `latest_verdict_card`. A new card
+  composition belongs in `run.py` first; run-card calls it.
+- **Stubs.** Every card done before the card under test is filed on the one-card board with
+  its result and hand-off attachments (reviewers and C read upstream attachments through
+  kanban). File blocked → unblock → complete (`_gate_action` order).
+- **Filing order.** The card under test is filed blocked and parentless, then `link`ed
+  (`--parent` makes a card `todo` and refuses the block; `file_board` does the same).
+- **Verdicts.** Read via `latest_verdict_card` (probe rule, summary-only fallback); exit 0
+  only if `status == done` and every `check_result` check holds. Report = last stdout line
+  (one JSON object).
+- **Triggers.** A revision runs only if the run holds its trigger within `max-reworks`
+  (`revision_trigger`); a re-review only after its done revision (`rereview_trigger`).
+  Refuse before creating a board. Gates are refused.
+- **Lock.** `driver_lock.take(runs_dir)` before anything is filed; a live driver aborts it.
+- **Teardown.** `finally`: `stop_worker(card_id)` (`pkill -f "work kanban task <id>"`, as
+  `reset.sh`) on every path including `--keep`, then `boards rm --delete` unless `--keep`.
+  A dispatcher-spawned worker outlives its board and driver.
+
+Known limits:
+
+- A revision cannot be triggered by a summary-only verdict (the run keeps 400 characters of
+  it; the board holding the rest is gone) — refused by name.
+- `run-audit.py` reports findings on a run-card-touched run: the card's `attempt` offset
+  points at a log removed with the board, and the card is absent from the real board's
+  `list`. A run-card run is a test, not a finished run.
+- Board options other than the model pair are read at filing time; production re-reads only
+  the model pair at start (`repin_before_release`).
 
 ## Known traps
 
