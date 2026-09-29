@@ -3,12 +3,10 @@
 The two ideas are one problem in two shapes: lane 1 a CLI (`roman-cli/`) that evaluates
 one roman numeral from stdin, lane 2 a spec-first Spring Boot REST API
 (`roman-service/`) that consumes lane 1's rule. It is the one shipped two-lane board, so
-it is where lane chaining (`Gc1 → I2`) is exercised; lane 2 alone has integration tests
-(`"integration-tests": [false, true]`).
+it is where lane chaining (`Gc1 → I2`) is exercised; the levels each lane carries are set in `board.json`.
 
 Both lanes build inside this board's work directory, `boards/roman-evaluator-java/work/`;
-the modules, their POMs and their tests all live under that one path. `max-runtime` is
-20 minutes per card and `max-reworks` is 3.
+the modules, their POMs and their tests all live under that one path.
 
 The work directory is never cleared, so a second run finds `roman-cli/` and
 `roman-service/` from the last one and treats them as the previous version to improve.

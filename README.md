@@ -16,25 +16,27 @@ Design, driver internals, known traps and timing: **[DESIGN.md](DESIGN.md)**.
 
 ## The boards
 
-Six board directories ship as runnable examples. The table says what each one *is*;
+Seven board directories ship as runnable examples. The table says what each one *is*;
 how its runs went is not kept here — the runs describe themselves (§4).
 
-| board | idea | lanes | gates, per-card ceiling |
-|---|---|---|---|
-| `is-even` | one Python function (`is_even`) and its tests — the cheap smoke board, no build tool, no dependencies. Was `minimal-development` until 2026-09-13. It runs on the profiles' cloud models with the goal judge on `C` only (the canary for the judge after a `hermes update`); its README says how to point it at the local rig, and records the local-model runs | 1 | auto, 25 min |
-| `roman-evaluator-js` | a browser page: `roman-evaluator.html`, a DOM-free parsing module with unit tests, `run.sh`, two launch modes | 1 | auto, 30 min |
-| `roman-evaluator-java` | the same problem twice: a roman CLI (`roman-cli/`) then a spec-first Spring Boot service (`roman-service/`) consuming lane 1's rule; needs JDK 17, Maven, a warm `~/.m2` | 2 | auto, 20 min |
-| `portfolio-engineering` | a GPW small-cap research pipeline built into the Hermes `trader` profile (external `default-workdir`) | 1 | Gi auto; Gp/Gc human, 60 min (default) |
-| `blade-workspace` | implements a committed plan, task by task, in an **external** repository (`default-workdir`): refinement, unit and integration tests on, the goal judge on `C` and `TI` only | 1 | Gi auto; Gp/Gc human, 60 min |
-| `arena-federated-search` | the same shape against a second **external** repository: a Maven/Spring Boot multi-module service whose plan is all `mvn … test`, so unit tests are on and integration tests off (no `TI`/`RVc`); the goal judge on `C` only | 1 | Gi auto; Gp/Gc human, 60 min |
+| board | idea |
+|---|---|
+| `is-even` | one Python function (`is_even`) and its tests — the cheap smoke board, no build tool, no dependencies. Its README records the local-model runs |
+| `roman-evaluator-js` | a browser page: `roman-evaluator.html`, a DOM-free parsing module with unit tests, `run.sh`, two launch modes |
+| `roman-evaluator-java` | the same problem twice: a roman CLI (`roman-cli/`) then a spec-first Spring Boot service (`roman-service/`) consuming lane 1's rule; needs JDK 17, Maven, a warm `~/.m2` |
+| `roman-evaluator-liferay-client-ext` | a Liferay custom element client extension (roman evaluator widget on the portal's own React and Clay), built with webpack in a minimal Liferay workspace; needs JDK 17, Gradle, `node`, `yarn` |
+| `portfolio-engineering` | a GPW small-cap research pipeline built into the Hermes `trader` profile (external `default-workdir`) |
+| `blade-workspace` | implements a committed plan, task by task, in an **external** repository (`default-workdir`) |
+| `arena-federated-search` | the same shape against a second **external** repository: a Maven/Spring Boot multi-module service whose plan is all `mvn … test` |
 
-Every shipped board pins its review cards (`RVp`, `RVa`, `RVc` and their rework rounds)
-to a different model from the one that did the work — `"model_override":
-"deepseek-v4.1-flash"`, `"provider_override": "opencode-go"` — so the review model is
-independent of the author. Every other card runs its profile's own model: `"model"` /
-`"provider"` are the board's WORK model, filed on every card and overridable per lane
-from an idea header, and the pin wins over them on the reviews. Neither key has a default,
-so a board that wants either says so.
+Lanes, gates, per-card ceilings, models and test levels are each board's `board.json`
+(`template/board_schema.py --schema` lists the options); the READMEs do not repeat them.
+
+`"model"` / `"provider"` are a board's WORK model, filed on every card and overridable per
+lane from an idea header; `"model_override"` / `"provider_override"` pin the review cards
+(`RVp`, `RVa`, `RVc` and their rework rounds) to a different model so the review is
+independent of the author, and the pin wins over the work model on the reviews. Every other
+card runs its profile's own model. No key has a default, so a board that wants one says so.
 
 The engine is **one layer and the driver**. `template/` holds what the driver imports —
 the card graph, the option declaration, the body renderer, the board lock, the card bodies

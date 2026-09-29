@@ -1,15 +1,10 @@
 # is-even — the cheap board
 
-Current run configuration, read off `board.json`: every card the driver files uses the
-work model `swift15-27b` on `llama-swap`, and no `model_override`/`provider_override`
-is pinned, so the review cards run that same local model. Gates `Gi`, `Gp`, and `Gc`
-are automatic, `sequential` is off, the per-card ceiling is `20m`, the work directory
-is `boards/is-even/work/` (cleared before each run) — an UNtracked path on purpose:
-`boards/*/work/` is gitignored, because a board's output belongs to the target
-project rather than to this repository, so the cards stage nothing and report
-`GIT ABSENT — nothing staged` — and `"goal-cards": ["C"]` puts
-the goal judge on the implementation card only. Local-model measurements below describe
-earlier runs, not the current model selection.
+The work directory `boards/is-even/work/` is cleared before each run. It is an UNtracked
+path on purpose: `boards/*/work/` is gitignored, because a board's output belongs to the
+target project rather than to this repository, so the cards stage nothing and report
+`GIT ABSENT — nothing staged`. Options live in `board.json`; the measurements below are
+evidence about models and the engine, not the board's configuration.
 
 The smallest idea that still travels the whole lane. It exercises the machinery — arm
 an idea, watch the researcher refine it, see the three gates, the staged work and a
@@ -17,38 +12,21 @@ timing report — for as close to nothing as a full run can cost. Run it after a
 to `template/` or `driver/`, and before trusting a real board.
 
 Everything about the idea is chosen for speed: one function, four test cases, no build
-tool, no dependencies, no ambiguity for any card to resolve. `integration-tests` is
-false, so when the lane opens `TI` and `RVc` are archived and `Gc` is linked to `RVa`:
-9 live cards.
+tool, no dependencies, no ambiguity for any card to resolve.
 
 Toolchain: Python 3 and pytest. Which interpreter on this machine has pytest is the
 researcher's to find — a worker's `python3` may not.
 
-## Options, and why
+## Local-model evidence, and why
 
-- `"auto-gates": ["Gi", "Gp", "Gc"]` — all three gates are the driver's; it completes each on
-  its own evidence and commits nothing. To keep a gate for a person, name the ones to hold
-  instead: `"auto-gates": []` stops the run at every gate, and the holder answers with a `PASS`
-  comment on the gate card (README, "Answering a gate from the card").
-- `"max-runtime": "25m"` — a ceiling, not a target: a cloud run needs about 4m a card, and the
-  local rig needs the larger number (**`"qwen38-27b"` loads cold for ~48 s on the 24 GB rig and
-  decodes at ~26 t/s**, and the 2026-09-15 attempts hit a 10m ceiling exactly —
-  `elapsed 601s > limit 600s`). On an idea
-  this small a card that needs longer is doing work the
-  idea does not ask for, so the ceiling also checks the card bodies. A timed-out card is a
-  hard failure: the driver halts the board, and only a review that REJECTS sends work
-  back.
-- `"max-reworks": 2` — rounds should be cheap here.
-- `"model_override": "deepseek-v4.1-flash"`, `"provider_override": "opencode-go"` — as on
-  every shipped board, the review cards (`RVp`, `RVa` and their rounds) run on a
-  different model from the coder's default, so the review model is independent of the author. This is the cheap place to see the pin working.
-- `"model": "deepseek-v4.1-flash"`, `"provider": "opencode-go"` — the WORK model: every card the
-  board files uses it, the reviews excepted (they carry the pin above); `"provider"` is not
-  optional, because a bare model is resolved against the profile's provider. **The local-rig
-  variant swaps this pair for `"model": "qwen38-27b"` on `"provider": "llama-swap"`** — the board is
-  the worked example of the option, and the four local runs above measure it. For a cloud-only run
-  with the profiles' own models, delete both keys: nothing is then filed. Note the ceiling above:
-  the local runs needed more than `"10m"`.
+- **Timing ceilings.** A cloud run needs about 4m a card, and the local rig needs far more:
+  **`qwen38-27b` loads cold for ~48 s on the 24 GB rig and decodes at ~26 t/s**, and the
+  2026-09-15 attempts hit a 10m ceiling exactly — `elapsed 601s > limit 600s`. On an idea this
+  small a card that needs longer is doing work the idea does not ask for, so the ceiling also
+  checks the card bodies. A timed-out card is a hard failure: the driver halts the board, and
+  only a review that REJECTS sends work back.
+- **A work model needs its provider.** A bare model name is resolved against the profile's
+  provider, so a local model is always named together with `llama-swap`.
 - **Four local-model runs, one cause: the hand-off, not the work.** `swift15-27b` (2026-09-13)
   and `qwen38-27b` (2026-09-15, three attempts) each filed and dispatched correctly — the worker
   really ran `hermes -p researcher --cli … -m <model> --provider llama-swap` — and each wrote a
@@ -85,16 +63,16 @@ researcher's to find — a worker's `python3` may not.
   requests serialised in the one slot (completions grew 1m05 → 1m25 → 3m22 as they queued), and
   **both timed out at 1202s** — a hard failure that halts the board. A card's ceiling is wall time,
   so two cards on one slot need roughly twice it. `swift15-27b` runs `--parallel 2` (262144 context
-  per session) and is the local model this lane shape fits. The alternative on a single-slot model
-  is `"unit-tests": false`, which drops `TW` and leaves one worker card live at a time.
+  per session) and fits this lane shape. The alternatives on a single-slot model are running the
+  lane sequentially or dropping the unit-test card, either of which leaves one worker card live at a time.
 - **Proven 2026-09-16** (run `run-20260916-104755`, `qwen38-27b` on an EMPTY work tree):
     `I1` 5.0 min, `P1` 23.2 min, `TW1` 2.6 min (4 tests staged, suite red — `ModuleNotFound`),
     `C1` 2.7 min (`is_even.py`, 4 passed), `RVp1`/`RVa1` PASS on the cloud review pin, the three
     gates auto-completed. Audit **0 errors, 0 warnings**; wall 40.4 min, agent 34.8 min. Three
     INFO notes only: the model left `__pycache__` in `work/`, so it did not honour the contract's
     `PYTHONDONTWRITEBYTECODE`. What made it work: the driver attaches the hand-offs (seven, none
-    lost), `"sequential": true` kept `TW1` and `C1` out of each other's way in qwen's single slot,
-    and `"max-runtime": "25m"` — `P1` used 23.2 of it, so 12m and 20m would both have halted the
+    lost), a sequential lane kept `TW1` and `C1` out of each other's way in qwen's single slot,
+    and a 25m card ceiling — `P1` used 23.2 of it, so 12m and 20m would both have halted the
     board. The rig's configuration is in the KnowledgeBase note
     `docs/large-language-models/llama-server-configuration.md`.
 - **2026-09-19 — two local runs on this engine: both complete a lane, and the attach hand-off that
@@ -110,19 +88,13 @@ researcher's to find — a worker's `python3` may not.
     3-57 s, context far below the ceiling, no truncation, no OOM. Note for next time: llama-swap's
     stdout is a socket and `llama-swap.log` is written only at shutdown, so the journal is where the
     rig's log actually lives.
-- **The goal judge is not the review pin.** `model_override`/`provider_override` moves the
-  three review cards only; the goal judge is the auxiliary task `auxiliary.goal_judge`,
-  pinned machine-wide in `/etc/hermes/config.yaml` to `z-ai/deepseek-v4.1-flash` on `openrouter`,
-  so a locally-run worker still gets its claim judged by a strong model. Without that pin the
-  judge follows the worker's own model, i.e. it goes local too.
-  No `"assignees"` map: the graph names its profiles directly.
-- `"goal-cards": ["C"]` — the goal judge runs on the implementation card
-  only. Drop `goal-cards` to put it back on every worker card, which is what makes this board the
-  judge's canary after a `hermes update`. Worker cards under the judge, and because the judge is pinned
-  machine-wide to `z-ai/deepseek-v4.1-flash` on `openrouter` (see the bullet above) it stays
-  strong when the work runs locally. This is the goal-judge probe
-  ([DESIGN.md, *The goal judge*](../../DESIGN.md#the-goal-judge), probe bullet); set it
-  `false` to run the same board without a judge and without the auxiliary model.
+- **The goal judge is not the review pin.** A review-model override moves the review cards
+  only; the goal judge is the auxiliary task `auxiliary.goal_judge`, pinned machine-wide in
+  `/etc/hermes/config.yaml` to `z-ai/deepseek-v4.1-flash` on `openrouter`, so a locally-run
+  worker still gets its claim judged by a strong model. Without that pin the judge follows the
+  worker's own model, i.e. it goes local too. Because the judge stays strong when the work runs
+  locally, this board doubles as the judge's canary after a `hermes update`; see
+  [DESIGN.md, *The goal judge*](../../DESIGN.md#the-goal-judge), probe bullet.
 
 ## Running it
 

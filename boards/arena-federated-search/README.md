@@ -50,25 +50,22 @@ Beyond the template's own (§2 of the root README — profiles, one dispatcher l
 
 ## Lane shape
 
-`"refinement": true` and `"unit-tests": true` in the manifest with no per-lane header
-overriding them, and **`"integration-tests": false`**: the lane files without `TI` and `RVc`
-and opens as `I Gi P RVp Gp TW C RVa Gc` — nine cards, three human gates. That level is off
-because the plan has nothing for it to run: all nine of its `Run:` steps are
-`mvn -pl federation-liferay -am … test`, it touches no Postman collection, and this project's
-integration tests are `newman` collections that need a running service instance plus a live
-Arena portal — a dependency the plan deliberately does not carry. `RVc` goes with `TI`
-because the final review reviews the integration level; `RVa` still reviews the tree the
-gate receives, and it waits on `TW` and `C` together.
+Which levels the lane carries is set in `board.json`. This board runs without the
+integration level (no `TI`, no `RVc`) because the plan has nothing for it to run: all nine of
+its `Run:` steps are `mvn -pl federation-liferay -am … test`, it touches no Postman
+collection, and this project's integration tests are `newman` collections that need a running
+service instance plus a live Arena portal — a dependency the plan deliberately does not
+carry. `RVc` goes with `TI` because the final review reviews the integration level; `RVa`
+still reviews the tree the gate receives, and it waits on `TW` and `C` together.
 
 The plan gate releases `TW` and `C` together: `TW` writes the plan's tests (the spike test
 that stays in `LiferaySiteResolverTest`, `TestConfig`'s pinned `RestClient`,
 `LiferayEntityHandlerTest`) while `C` writes the handlers beside them, each staging its own
-files. `"goal-cards": ["C"]` with `"goal-max-turns": 80`: the goal judge
-runs on the implementation card only (there is no `TI` here), where a long attempt is most
-likely to end a turn without calling `kanban_complete`. The ceiling equals
-`agent.max_turns`, so the card loses no turns to it. The judge reads only the card's text,
-and a spent turn budget or a `blocked` verdict still ends the card's single attempt — if it
-does, set `"goal-cards": []` and re-create the board.
+files. The goal judge runs on the implementation card only (there is no `TI` here), where a
+long attempt is most likely to end a turn without calling `kanban_complete`; the ceiling
+is chosen equal to `agent.max_turns`, so the card loses no turns to it. The judge reads only
+the card's text, and a spent turn budget or a `blocked` verdict still ends the card's single
+attempt — if it does, empty `goal-cards` in `board.json` and re-create the board.
 
 The plan is the specification and the card adds nothing to it. `### Done means` is what the
 code gate judges — every checkbox ticked in the plan file itself, every `mvn … test` the
@@ -92,9 +89,8 @@ See §3 of the root README for the loop; the board-specific commands are:
     driver/start-board.sh --slug arena-federated-search    # serves; releases nothing
     driver/run-audit.py --runs boards/arena-federated-search/runs   # 0/0 is the pass
 
-`create-board.sh` files eleven parked cards — the complete `LANE_CARDS` set — and the
-driver prunes `TI1`/`RVc1` down to the nine-card lane when the lane opens (see *Lane
-shape*). The board is IT-complete at filing; the integration level is dropped at arm.
+`create-board.sh` files the complete `LANE_CARDS` set as parked cards, and the driver
+prunes the levels `board.json` turns off when the lane opens (see *Lane shape*).
 
 **The go signal is the arm card.** Serve mode releases nothing on its own. Arm lane 1
 from a shell — this is the reliable gesture and the one to use:
@@ -116,7 +112,7 @@ that card and run `arm.sh` — `block`/`unblock` alone do not clear its assignee
 Never the dashboard's `specify` button: it rewrites the idea with an auxiliary LLM before
 the researcher reads it.
 
-`"auto-gates": ["Gi"]`, so the plan and code gates stop the run and nothing downstream moves
+Gates not listed in `auto-gates` (`board.json`) stop the run and nothing downstream moves
 until a person completes the card (see §6 of the root README for gate discipline):
 
 - `Gi` — read `refined.md` against this idea; the result's first word is `PASS:` (opens
@@ -145,10 +141,10 @@ repository keeps the board's changes is decided with its own git.
 
 ## Timing
 
-`max-runtime` is 60 minutes per card and `max-reworks` is 4. Measured on this host
-(2026-09-15, warm 76 GB `~/.m2`): the plan's heaviest command,
+The per-card ceiling (`max-runtime` in `board.json`) is sized for card generation, not for
+Maven. Measured on this host (2026-09-15, warm 76 GB `~/.m2`): the plan's heaviest command,
 `mvn -pl federation-liferay,federated-search-service -am test`, is **33 s** with
 `BUILD SUCCESS` and every affected module's tests green — so the ceiling exists for card
 generation across 25 steps, not for Maven. The standalone `-Dtest=…` runs the plan repeats
-are a fraction of that. `"auto-gates": ["Gi"]`, so the plan and code gates wait for a person: this
+are a fraction of that. The plan and code gates are meant to wait for a person: this
 board stages into another repository, and committing there is that repository's decision.

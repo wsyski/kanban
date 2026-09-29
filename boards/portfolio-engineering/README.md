@@ -12,13 +12,13 @@ diff, reviewers read `git diff --cached` in that repo, and the gate commit lands
 profile's own history — the same authorization chain as every other board, in a
 different repository.
 
-**Gates are human** (`"auto-gates": ["Gi"]` — the idea gate excepted): each gate waits for a person, who decides
-what the profile's history receives.
+**Gates are meant to be human** (`auto-gates` in `board.json`): a gate that is not
+auto-completed waits for a person, who decides what the profile's history receives.
 
-**The goal judge runs on the implementation card only** (`"goal-cards": ["C"]`,
-`"goal-max-turns": 80`): `C` is the long card most likely to end a
-turn without calling `kanban_complete`, and the ceiling equals `agent.max_turns`, so it
-loses no turns to the judge. `I`, `P` and `TW` complete on their own evidence.
+**The goal judge is meant for the implementation card** (`goal-cards`, `goal-max-turns` in
+`board.json`): `C` is the long card most likely to end a turn without calling
+`kanban_complete`, and the ceiling is chosen equal to `agent.max_turns`, so it loses no
+turns to the judge. `I`, `P` and `TW` complete on their own evidence.
 
 ## Two human preconditions
 

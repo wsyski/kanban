@@ -53,24 +53,21 @@ it with what you found rather than work around it.
 
 ## Lane shape
 
-`"refinement": true`, `"unit-tests": true` and `"integration-tests": true` in the manifest,
-with no per-lane header overriding any of them, so the lane files complete and opens as
-`I Gi P RVp Gp TW C RVa TI RVc Gc`: the plan gate releases `TW` and `C` together, `TW`
-writes the plan's unit tests while `C` writes the implementation beside it, and `TI` and
-`RVc` stay because the plan's integration steps and the Postman collection are exactly what
-a reviewer has to re-run. The unit-tests level is on deliberately: the plan's own steps are
+The lane carries every level (levels are set in `board.json`): the plan gate releases `TW`
+and `C` together, `TW` writes the plan's unit tests while `C` writes the implementation
+beside it, and `TI` and `RVc` are kept because the plan's integration steps and the Postman collection are exactly what
+a reviewer has to re-run. The unit-tests level is kept deliberately: the plan's own steps are
 *write the failing test, run it, make it pass*, and `c-body.txt` treats tests as the TW
 card's — *never edit the TW card's tests* — so archiving `TW` would leave the plan's
 unit-test steps with no owner and demand a green suite from a card whose `DONE WHEN` line
-says a green suite is not part of its finish. `"goal-cards": ["C", "TI"]`
-and `"goal-max-turns": 80`: the goal judge runs on the implementation and integration cards
-only, where a long attempt is most likely to end a turn without calling `kanban_complete`,
+says a green suite is not part of its finish. The goal judge runs on the implementation
+and integration cards only, where a long attempt is most likely to end a turn without calling `kanban_complete`,
 and nudges the worker to finish instead of losing the card. `I`, `P` and `TW` complete on
-their own evidence. The ceiling is 80, the same as `agent.max_turns`, so a goal card gets
+their own evidence. The ceiling is chosen equal to `agent.max_turns`, so a goal card gets
 no fewer turns than a card without the judge. The cost stays: the judge reads only the
 card's text (title + body cut at 2000 characters, plus the claim), and a spent turn budget
-or a `blocked` verdict still ends that card's single attempt — if it does, set `"goal-cards": []`
-and re-create the board. `boards/is-even` remains the post-`hermes update` canary
+or a `blocked` verdict still ends that card's single attempt — if it does, empty `goal-cards` in
+`board.json` and re-create the board. `boards/is-even` remains the post-`hermes update` canary
 for the judge's transport.
 
 The plan is the specification and the card adds nothing to it: it names
@@ -106,8 +103,8 @@ whether that repository keeps the board's changes is decided with its own git.
 
 ## Timing
 
-`max-runtime` is 60 minutes per card, and `max-reworks` is 4: these cards work a real
-codebase with its own build, and an integration step that has to stand up Tomcat and
-Elasticsearch is not a 10-minute card. `"auto-gates": ["Gi"]`, so the plan and code gates wait for a
+The per-card ceiling and rework budget (`board.json`) are generous on purpose: these cards
+work a real codebase with its own build, and an integration step that has to stand up Tomcat
+and Elasticsearch is not a short card. The plan and code gates are meant to wait for a
 human — this board stages into someone else's repository, and committing there is that
 repository's decision.

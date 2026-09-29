@@ -9,10 +9,9 @@ actually present; a missing runtime stops the lane at the researcher card with a
 install recommendation — nothing is installed.
 
 The page's behaviour — a row per evaluation, the alert, Reset — needs a human with a
-browser: no card here drives one, and `--dump-dom` cannot check it. The board is
-auto-gated, so the driver completes each gate once its evidence is satisfied and no card
-waits on a person. The page check is therefore the OPERATOR's, after the run, before
-committing the staged work; the driver commits nothing.
+browser: no card here drives one, and `--dump-dom` cannot check it. Gates that
+`board.json` auto-completes wait on no person, so the page check is the OPERATOR's, after
+the run, before committing the staged work; the driver commits nothing.
 
 ## Running it
 

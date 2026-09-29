@@ -52,17 +52,15 @@ planner's probe re-derives every value it takes from there. The driver appends t
 DEVIATIONs a run's code review accepted once its code gate passes; edit a line that turns
 out wrong.
 
-**Reviews run on a different model from the work.** Cards run on `swift15-27b`
-(llama-swap); the plan and code reviews on `deepseek-v4.1-flash` (OpenCode Go,
-`model_override`/`provider_override` in `board.json`). Run 1's deepseek reviews built the
-plan's files and found its defects; run 2, reviewed by the author's own model, passed a
-plan whose defects then cost the code card 107 minutes (2026-09-26/28). OpenCode Go timed
-out during run 1; a halt on it is recovered like any other halt.
+**Reviews should run on a different model from the work.** Run 1's reviews on a different
+model built the plan's files and found its defects; run 2, reviewed by the author's own
+model, passed a plan whose defects then cost the code card 107 minutes (2026-09-26/28).
+OpenCode Go timed out during run 1; a halt on it is recovered like any other halt.
 
 Cards build and test only. **Deploying is the operator's step**, because it writes into
-the portal bundle outside the work directory. **Every gate is a human decision**
-(`auto-gates: []`): the driver announces `GATE READY` on Gi, Gp and Gc and waits for a
-`PASS` or `REWORK:` comment. `work/` is not tracked in this repository — it is the
+the portal bundle outside the work directory. Which gates wait for a human is `auto-gates`
+in `board.json`; a held gate announces `GATE READY` and waits for a `PASS` or `REWORK:`
+comment. `work/` is not tracked in this repository — it is the
 product, for the target project; the in-portal check happens after the run, before the
 work is copied there. The driver commits nothing.
 
