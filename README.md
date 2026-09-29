@@ -592,6 +592,111 @@ missing and exits 2, rather than reading its log alone and reporting a phantom "
 died". A run with no `state.json` is still a kanban run however it ended, and still gets
 audited: a halted one reports E1 and E4 and exits 1.
 
+### Auditing a run
+
+`driver/run-audit.py` is the check that says whether a run passed. It reads the run's
+records and never changes anything. Run it from the repo root.
+
+**The whole flow, for the `is-even` board:**
+
+```bash
+driver/start-board.sh --slug is-even             # or driver/arm.sh --slug is-even
+tail -f boards/is-even/runs/driver.log           # watch; stop with Ctrl-C when the banner shows
+#   ... [hh:mm:ss] ALL GATES COMPLETE ...
+driver/run-audit.py --runs boards/is-even/runs   # audit the current run
+echo $?                                          # 0 = passed
+```
+
+Audit only after the run ends. Before that the auditor is correct to fail it — it cannot
+tell "still working" from "broken" until the driver has written its end state.
+
+**Which run it audits.**
+
+| you pass | it audits |
+|---|---|
+| `--runs boards/<slug>/runs` | the run `runs/current` names (the latest) |
+| `--runs boards/<slug>/runs/<run-id>` | that one run — every earlier run is kept for this |
+
+`--board <dir>` overrides the board directory (default: the parent of `runs/`); you only need
+it for a run copied out of its board. `--json` prints `{findings, rows, stats}` for scripts
+and returns the same exit code.
+
+**Exit codes.**
+
+| code | meaning |
+|---|---|
+| `0` | run finished, no errors, no warnings (notes do not fail it) |
+| `1` | at least one `ERROR` or `WARNING` — the run did not pass |
+| `2` | the directory is not a kanban run (`state.json` without `run-summary.json`); nothing is audited |
+
+**Reading a clean report:**
+
+```
+$ driver/run-audit.py --runs boards/is-even/runs
+0 error(s), 0 warning(s)
+doc chain: 0 finding(s) over 11 card(s)
+reviews: RVp1 APPROVE, RVa1 APPROVE
+cards
+  I1         20:11 -> 20:15      4.02 min
+  Gi1        20:15 -> 20:15      0.00 min
+  P1         20:15 -> 20:24      8.51 min
+  ...
+wall 47.3 min, agent 41.9 min, overhead 5.4 min; per-card ceiling 25m
+```
+
+The first line is the verdict (`, N note(s)` is appended when there are notes). `doc chain`
+counts E3 findings — cards whose inputs or outputs do not line up. `reviews:` lists what the
+review cards decided. The card table shows each card's start, finish and agent minutes,
+marks a card `OVER CEILING` when it exceeded the board's `max-runtime`, and shows
+`+N staged` when a card left files staged in git. The last line is wall time, summed agent
+time and the difference (driver overhead); `overlap` appears when two cards ran at once.
+(The output above is illustrative; your numbers and card list will differ.)
+
+**Reading a failing report.** Each finding is `SEVERITY CODE: text`. Fix the cause, run the
+board again, audit again; the loop ends when the audit exits 0.
+
+| code | severity | what it means and what to do |
+|---|---|---|
+| E1 | ERROR | the run did not finish. *"has not finished yet … driver (pid N) is still working"*: wait for `ALL GATES COMPLETE`, then re-audit. *"the run halted: …"* or *"did not finish"* with no live driver: it stopped early — read `runs/<run-id>/halt.txt` and the tail of `driver.log` |
+| E2 | ERROR/WARNING | a gate was held (a human gate is waiting for you) or `driver.log` has an error line — the text quotes it |
+| E3 | ERROR | document chain broken: a card lacks the hand-off file it should have read or written; `driver/doc-chain.py --runs boards/<slug>/runs` shows the chain |
+| E4 | ERROR | `run-summary.json` or `board.json` missing/unreadable, or the summary has no gate evidence or records a gate as waiting — usually a halted or killed run |
+| E5 | WARNING | the driver restarted during the run |
+| E6, E10 | WARNING | agent minutes unknown or inconsistent for a card (the runs CLI could not report them) |
+| E7 | WARNING | a card finished with an empty result |
+| E8 | WARNING/INFO | a worker process outlived the run; stop it, or `driver/reset.sh --board boards/<slug> --batch` |
+| E9 | ERROR | the run wrote into the repo root instead of `boards/<slug>/work/` |
+| E11 | WARNING | a card's result text reports a warning |
+| E12 | ERROR/WARNING | a board card is still not done (`todo`, `running`, `blocked` …) — the board did not finish, or its cards could not be read |
+| E13 | WARNING | a card's own log contains an error line |
+| E14 | ERROR | something is staged in git that must stay unstaged (the driver never stages) |
+| E16 | INFO | build litter (`__pycache__`, `.pyc`, `.log`) left in `work/`; harmless, left alone |
+| E17 | ERROR | the work directory moved under the run (branch switch, commit, or an unrelated staged path) |
+| E18 | WARNING | a provider storm the run survived — retries that eventually worked; the count and first line are quoted |
+
+A warning alone fails the audit: a run that finished but retried through a flaky provider is
+not a pass until you have looked at it.
+
+**Recipes.**
+
+```bash
+# audit an earlier run
+driver/run-audit.py --runs boards/is-even/runs/run-20260929-201041
+
+# list runs, newest first, to find a run-id
+driver/runs-report.py --board is-even
+
+# use in a script: pass/fail only
+driver/run-audit.py --runs boards/is-even/runs >/dev/null && echo PASS || echo FAIL
+
+# machine-readable: just the findings
+driver/run-audit.py --runs boards/is-even/runs --json | python3 -c \
+  'import json,sys; [print(*f) for f in json.load(sys.stdin)["findings"]]'
+
+# the per-card timing behind "overhead"
+driver/timing-report.py --board is-even
+```
+
 **Audit every run; that is the loop's stopping rule.** `run-audit.py` exits 0 only when a
 finished run has no errors and no warnings. It reads the driver log (terminal state,
 including a driver that died: no halt, no finish banner and no live process holding

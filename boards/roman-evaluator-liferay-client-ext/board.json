@@ -5,6 +5,9 @@
   "lanes": 1,
   "integration-tests": false,
   "auto-gates": [
+    "Gi",
+    "Gp",
+    "Gc"
   ],
   "sequential": true,
   "goal-cards": [
