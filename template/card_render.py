@@ -159,7 +159,7 @@ def targets_text(targets):
     return ", ".join(os.path.expanduser(t) for t in targets)
 
 def render_body_values(*, repo, board, workdir, lane, targets=(), run_id=None,
-                       run_root=None):
+                       run_root=None, kanban_board=None):
     """Every placeholder render_body resolves, and what it resolves to.
 
     Split out so the set can be READ rather than restated: a test that keeps its own
@@ -171,7 +171,7 @@ def render_body_values(*, repo, board, workdir, lane, targets=(), run_id=None,
             # before lane 1 built anything in it. The driver writes this file when
             # the lane OPENS, beside the idea snapshot and under the same guarantee.
             "<WORKDIR-STATE>": workdir_state_path(repo, board, lane, run_id, run_root),
-            "<BOARD>": board,
+            "<BOARD>": kanban_board or board,
             "<N>": str(lane),
             "<TARGETS>": targets_text(targets),
             # The run's own state, as a body names it. Deliberately NOT a lane
@@ -188,12 +188,14 @@ def render_body_values(*, repo, board, workdir, lane, targets=(), run_id=None,
             **lane_paths(repo, board, lane, run_id, run_root)}
 
 def render_body(body_file, *, repo, board, workdir, lane, targets=(), bodies_dir=None,
-                run_id=None, run_root=None):
+                run_id=None, run_root=None, kanban_board=None):
     """A card body with every placeholder resolved.
 
     The one renderer: board filing and the driver's rework rounds both call it, so
     a revision card reads the same paths as the card it revises. `<YOUR-CARD-ID>`
     is left for the worker, who learns its id from the dispatcher.
+    `kanban_board` names the board the card is filed on when it differs from the board
+    whose files the paths resolve to (driver/run-card.py).
     """
     bodies_dir = bodies_dir or os.path.join(repo, "template", "card-bodies")
     with open(os.path.join(bodies_dir, body_file)) as f:
@@ -203,7 +205,8 @@ def render_body(body_file, *, repo, board, workdir, lane, targets=(), bodies_dir
             with open(os.path.join(bodies_dir, name)) as f:
                 text = text.replace(placeholder, f.read().strip())
     values = render_body_values(repo=repo, board=board, workdir=workdir, lane=lane,
-                                targets=targets, run_id=run_id, run_root=run_root)
+                                targets=targets, run_id=run_id, run_root=run_root,
+                                kanban_board=kanban_board)
     for placeholder, value in values.items():
         text = text.replace(placeholder, value)
     return text

@@ -26,14 +26,14 @@ def _recs(tmp_path):
 def test_a_driver_unblock_records_what_the_card_was_given(monkeypatch, tmp_path):
     _env(monkeypatch, tmp_path)
     card = {"id": "t_p", "status": "ready", "title": lanes.card_title("P", 1),
-            "body": ("Plan for /repo/boards/b/runs/artifacts/lane-1/refined.md into "
-                     "/repo/boards/b/runs/artifacts/lane-1/plan.md"),
+            "body": (f"Plan for {tmp_path}/runs/artifacts/lane-1/refined.md into "
+                     f"{tmp_path}/runs/artifacts/lane-1/plan.md"),
             "started_at": 1789150000}
     run.record_chain_start(card, 1)
     rec = _recs(tmp_path)[0]
     assert rec["event"] == "start" and rec["code"] == "P1" and rec["observed"] is False
-    assert rec["inputs"] == {"REFINED": "/repo/boards/b/runs/artifacts/lane-1/refined.md",
-                             "PLAN": "/repo/boards/b/runs/artifacts/lane-1/plan.md"}
+    assert rec["inputs"] == {"REFINED": f"{tmp_path}/runs/artifacts/lane-1/refined.md",
+                             "PLAN": f"{tmp_path}/runs/artifacts/lane-1/plan.md"}
     assert rec["ts"].startswith("2026-") or rec["ts"].startswith("20")   # from started_at
 
 
@@ -58,7 +58,7 @@ def test_a_card_someone_else_released_is_still_recorded_once(monkeypatch, tmp_pa
     _env(monkeypatch, tmp_path)
     st = {lanes.card_title("I", 1): {"id": "t_i", "status": "running",
                                      "title": lanes.card_title("I", 1),
-                                     "body": "read /repo/boards/b/runs/snapshots/lane-1.md"},
+                                     "body": f"read {tmp_path}/runs/snapshots/lane-1.md"},
           lanes.card_title("P", 1): {"id": "t_p", "status": "blocked",
                                      "title": lanes.card_title("P", 1), "body": ""}}
     run.record_chain_starts(st)
@@ -66,7 +66,7 @@ def test_a_card_someone_else_released_is_still_recorded_once(monkeypatch, tmp_pa
     recs = _recs(tmp_path)
     assert [r["code"] for r in recs] == ["I1"], recs
     assert recs[0]["observed"] is True
-    assert recs[0]["inputs"] == {"IDEA": "/repo/boards/b/runs/snapshots/lane-1.md"}
+    assert recs[0]["inputs"] == {"IDEA": f"{tmp_path}/runs/snapshots/lane-1.md"}
 
 
 def _ledger_env(monkeypatch, tmp_path):
@@ -169,8 +169,7 @@ def test_chain_inputs_match_a_body_filed_under_its_own_run(monkeypatch, tmp_path
     import file_lanes
     monkeypatch.setattr(run, "REPO", str(tmp_path))
     monkeypatch.setattr(run, "BOARD", "b")
-    monkeypatch.setattr(run, "CURRENT_RUN", str(tmp_path / "current"))
-    (tmp_path / "current").write_text("r1\n")
+    monkeypatch.setattr(run.STATE, "run_dir", card_render.run_dir(str(tmp_path), "b", "r1"))
     paths = card_render.lane_paths(str(tmp_path), "b", 1, "r1")
     body = f"read {paths['<IDEA>']} then write {paths['<REFINED>']}"
     found = run.chain_inputs(body, 1)
@@ -495,3 +494,11 @@ def test_an_idea_card_that_looks_like_a_lane_card_is_not_recorded(monkeypatch, t
         "P2: implementation plan - lane 2": {"id": "t_p", "status": "running",
                                              "title": "P2: implementation plan - lane 2"}})
     assert started == [("t_p", 2)], started
+
+
+def test_chain_inputs_follow_the_run_dir_the_driver_was_pointed_at(tmp_path, monkeypatch):
+    run_dir = tmp_path / "elsewhere" / "runs" / "run-x"
+    monkeypatch.setattr(run.STATE, "run_dir", str(run_dir))
+    monkeypatch.setattr(run, "lane_refinement", lambda lane: True)
+    plan = os.path.join(str(run_dir), "artifacts", "lane-1", "plan.md")
+    assert run.chain_inputs(f"read {plan} first", 1) == {"PLAN": plan}

@@ -809,7 +809,7 @@ def test_the_frozen_note_is_in_every_rework_tail():
 # The verdict a live run actually wrote, pinned verbatim: it ticks items 1, 3 and 4 AND
 # names items 1, 4, 5 and 7 in its findings — the self-contradiction the computed freeze
 # exists to survive (2026-09-27). Paraphrasing it into a literal would have lost the case.
-LIVE_VERDICT = (pathlib.Path(__file__).parent / "integration" / "fixtures" / "recorded"
+LIVE_VERDICT = (pathlib.Path(__file__).parent / "integration" / "fixtures"
                 / "rvp-inconsistent-ledger.txt").read_text()
 
 
@@ -1196,3 +1196,35 @@ def test_the_re_review_runs_the_probe_in_full_and_scopes_only_the_paper(tmp_path
     assert "Run the probe again IN FULL" in rr and "Re-check EVERY checklist item" not in rr
     assert "run the probe on the revised plan" in rev and "Re-stage" not in rev
     assert "ACCEPTED — the review checked items 1" in rev
+
+
+@pytest.mark.parametrize("kind,lead", [("plan", "The plan review sent this back."),
+                                       ("idea", "The idea gate sent this back."),
+                                       ("code", "The review returned the work.")])
+def test_revision_body_is_base_plus_tail_plus_pointer(kind, lead):
+    sender = lead.split(" sent")[0].split(" returned")[0]
+    got = run.revision_body("BASE\n", kind, 2, 3, "F1 broken", sender, "REJECT: F1",
+                            "SRC", "POINTER\n")
+    want = ("BASE\n"
+            + run.rework_tail(2, 3, "F1 broken", lead, run.REVISION_CLOSINGS[kind],
+                              verdict_text="REJECT: F1", sources="SRC")
+            + "POINTER\n")
+    assert got == want
+
+
+def test_rereview_text_keeps_the_driver_wording():
+    plan = run.rereview_text("plan", 1, 3, rr_no=2, judged="/r/scratch/t_p/plan.md")
+    assert plan.startswith("\nRE-REVIEW ROUND 2 (after revision 1 of 3).")
+    assert "diff it against the version the previous review judged: /r/scratch/t_p/plan.md" in plan
+    assert "previous review judged" not in run.rereview_text("plan", 1, 3, rr_no=2)
+    assert run.rereview_text("idea", 1, 3).startswith("\nRE-GATE ROUND 2 of 4.")
+    code = run.rereview_text("code", 1, 2)
+    assert code.startswith("\nRE-REVIEW ROUND 2 of 3.")
+    assert "final review" not in code
+    assert "also its final" in run.rereview_text("code", 1, 2, final_review=True)
+
+
+def test_revision_closings_keep_the_driver_wording():
+    assert run.REVISION_CLOSINGS["plan"].startswith("Re-write the plan, overwrite the copy")
+    assert run.REVISION_CLOSINGS["idea"].startswith("Re-write the refined idea")
+    assert run.REVISION_CLOSINGS["code"].startswith("Where git is discovered, re-stage")

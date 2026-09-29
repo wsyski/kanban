@@ -24,6 +24,7 @@ per board under `boards/<slug>/`, driven by `driver/run.py` over `hermes kanban`
     driver/start-board.sh --slug <slug>
     driver/arm.sh --slug <slug> [--lane <n>]  # the go signal from a shell (lane defaults to 1); starts the driver if none is up; the dashboard drag does the same
     driver/run-audit.py --runs boards/<slug>/runs   # a run is done only when this exits 0
+    driver/run-card.py --run boards/<slug>/runs/<run> --card RVp1   # ONE card of that run on a one-card board; writes into the run — copy it first
     driver/reset.sh --board boards/<slug> --batch   # stop this board's driver + workers, archive its cards; deletes nothing
 
 CI (`.github/workflows/ci.yml`, on push to `main` and on every PR) runs the same commands, not a

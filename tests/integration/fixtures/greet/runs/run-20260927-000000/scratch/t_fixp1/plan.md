@@ -35,7 +35,9 @@ Files: `greet.py`
 - [ ] **Step 2 (C): the module.** Write `greet.py` with `format_greeting` and a
   `__main__` block that parses `--name` and prints `format_greeting(args.name)`.
   Run: `python3 -m greet --name Ada` prints `Hello, Ada!` (SC1).
-- [ ] **Step 3 (C): the formatting.** `format_greeting` builds the text
-  `f"Hello, {name}!"` itself (SC1).
+- [ ] **Step 3 (C): the greeting helper.** `format_greeting` calls
+  `greet.greeting(name)` to build the text (SC1).
   Run: `python3 -m greet --name Ada` prints `Hello, Ada!`.
-- [ ] **Step 4 (C): the suite passes.** Run: `python3 -m pytest -q` — all tests pass (SC2).
+- [ ] **Step 4 (C): the config file.** Create `config.ini` with the greeting format.
+  Tick: `wc -l < config.ini` prints `0`.
+  Run: `python3 -m pytest -q` — all tests pass (SC2).

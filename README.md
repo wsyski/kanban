@@ -42,18 +42,27 @@ and the role souls. `driver/` holds the kanban driver's own: `run.py` and its to
 and `.sh` entry points. `tests/` is one suite over both, run by `./test.sh`, and
 `tests/test_layer_boundary.py` is what keeps the layers apart.
 
-`tests/integration/` is the one surface the suite's walls do not cover. It is LLM-gated
-(skipped unless `KANBAN_LLM_TESTS=1`), it drives ONE real card end-to-end through a live
-model on a throwaway replay board filed outside this repo, and it runs on the **local
-model, never a cloud one** — production's own model resolution is computed and logged
-first, then overridden, so a rename that breaks resolution is still caught. Four cases:
-a fixture plan with planted defects comes back `REJECT` naming them, a revision round
-closes its findings without rewriting (measured `churn`), a live plan gets a verdict in
-shape where it lives and is left byte-identical, and the same card reviewed twice must
-not come back word-for-word the same. A case costs minutes to ~20 minutes, so it stays
-out of `./test.sh`; what it proves once is pinned as recorded fixtures
-(`tests/integration/fixtures/recorded/`) and asserted for free by
-`tests/test_recorded_replay.py` and `tests/test_replay_harness.py`.
+`driver/run-card.py --run boards/<slug>/runs/<run> --card <CODE><lane>[-rev-<n>|-r<k>]` runs
+ONE card of an existing run and nothing after it. The run directory is the card's whole
+input. The card runs on a one-card board holding stubs of the cards done before it, which
+carry their results and hand-off files, on the model `board.json` names at that moment. It
+writes into the run exactly what the full board would: hand-offs, artifacts, the work tree,
+and the driver's records (`cards/`, `chain.jsonl`, `verdicts.jsonl`, `timing.jsonl`). It
+overwrites what the card overwrites, so copy the run (`runs/<run>-try1`) and save the work
+tree first. On the copy, any input can be edited by hand. A revision card (`P1-rev-1`,
+`C1-rev-1`, …) runs only when the run holds the REJECT (or Gi REWORK) that triggers it,
+within the board's `max-reworks`. A re-review (`RVp1-r2`, `RVa1-r2`) runs only when the run
+holds the done revision it follows. Gates are refused. It exits 0 only when the card
+finished and the driver can read its finish — a review's verdict is read as the driver
+reads it, probe rule included. Its worker is stopped on every exit path.
+
+`tests/integration/` is the LLM-gated surface (skipped unless `KANBAN_LLM_TESTS=1`). It
+copies the fixture board `tests/integration/fixtures/greet/` to a temp dir and runs
+`run-card.py` on it: the planted-defect plan must come back `REJECT` from RVp1, and
+`P1-rev-1` must close the findings without rewriting the plan
+(`KANBAN_RUN_CARD_REPEAT=1` also checks that two reviews differ). The fixture's
+`board.json` names the local model, so an integration run never reaches a cloud provider.
+`tests/test_fixture_run.py` checks the fixture itself for free.
 
 What the template consists of:
 
@@ -73,6 +82,7 @@ What the template consists of:
 | `template/card-bodies/` | what each card tells its worker |
 | `template/roles/` | the profiles' SOULs |
 | `driver/run-audit.py` | the per-run auditor (§4) |
+| `driver/run-card.py` | one card of an existing run, on a one-card board |
 | `driver/doc-chain.py` | what each card was given and produced |
 | `driver/render-flow.py` | the diagrams, checked against `LANE_CARDS` |
 | `driver/runs_util.py` | `runs/` and the ledger, read by the auditor and the driver |

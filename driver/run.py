@@ -1194,6 +1194,76 @@ def rework_tail(round_no, max_rounds, findings, lead, closing, verdict_text=None
             + f"{FROZEN_NOTE} {closing}\n")
 
 
+REVISION_CLOSINGS = {
+    "plan": ("Re-write the plan, overwrite the copy in your scratch directory (stage "
+             "nothing), run the probe on the revised plan, and complete with a change "
+             "summary and the probe's tally."),
+    "idea": ("Re-write the refined idea, overwrite the copy in your scratch directory "
+             "(stage nothing), and complete with a change summary."),
+    "code": ("Where git is discovered, re-stage your files; re-write your "
+             "patch file, and complete with a result that says what changed "
+             "and names every test still failing."),
+}
+
+
+def revision_body(base_body, kind, round_no, max_rounds, findings, sender, verdict_text,
+                  sources, pointer):
+    """A revision card's body: the base card's, the round's tail, the verdict pointer.
+
+    One composition for the driver's filers and driver/run-card.py, which files the same
+    round on a one-card board — a second copy of these strings is how the two would come
+    to test different cards."""
+    lead = (f"{sender} returned the work." if kind == "code"
+            else f"{sender} sent this back.")
+    return (base_body
+            + rework_tail(round_no, max_rounds, findings, lead, REVISION_CLOSINGS[kind],
+                          verdict_text=verdict_text, sources=sources)
+            + pointer)
+
+
+def rereview_text(kind, round_no, max_rounds, rr_no=None, judged=None, final_review=False):
+    """What a re-review (plan, code) or re-gate (idea) card gets after its base body.
+
+    Shared with driver/run-card.py for the same reason as revision_body."""
+    if kind == "plan":
+        # A re-review is a verdict card like the review it repeats: told to act
+        # "as a gate-holder", it could complete without PASS/REJECT and hold Gp
+        # forever with no further round filed.
+        # The PROBE runs in full every round — the round-2 build defects of 2026-09-26
+        # sat in regions no revision had touched. The PAPER checks are what is scoped:
+        # re-opening an accepted item the diff never touched is how a loop stops
+        # converging.
+        return (f"\nRE-REVIEW ROUND {rr_no} (after revision {round_no} of {max_rounds}). The "
+                f"plan was revised after a REJECT; the findings are on the parent revision card. Run the "
+                f"probe again IN FULL on the revised plan — a defect can sit in a region "
+                f"the revision never touched. On paper, re-check the items the findings "
+                f"named and whatever the revision changed"
+                + (f" (diff it against the version the previous review judged: {judged})"
+                   if judged else "")
+                + f"; an item the previous review ACCEPTED stands unless the change "
+                f"touches what it judged. Put the verdict first in the result field: "
+                f"PASS: or REJECT:.\n")
+    if kind == "idea":
+        return (f"\nRE-GATE ROUND {round_no + 1} of {max_rounds + 1}. A previous gate-holder "
+                f"sent the work back with the findings on the parent revision card. Verify "
+                f"they are addressed, then complete this card exactly as a gate-holder would.\n")
+    text = (f"\nRE-REVIEW ROUND {round_no + 1} of {max_rounds + 1}. The previous review's "
+            f"REJECT left findings on the parent revision card. Re-derive every check in this "
+            f"body against the tree as it stands NOW (and the staged index, where git is "
+            f"discovered), run the suite yourself, and put the "
+            f"verdict first in the result field: PASS: or REJECT:.\n")
+    if final_review:
+        # An RVc REJECT is re-reviewed by this card alone; without this the
+        # lane's final review (full suite, staged set) would never be repeated.
+        text += ("This lane has integration tests, so this re-review is also its final "
+                 "review: run the FULL suite — unit and integration — from a clean run, and "
+                 "check the staged set and the success criteria as the final review does. "
+                 "That includes the final review's check (c): the integration tests exercise "
+                 "real behaviour, not mocks of the thing under test — a mocked collaborator "
+                 "is the defect this round is most likely to have repeated.\n")
+    return text
+
+
 def rework_churn(diff_text):
     """(added, removed) from a revision's own patch file — hunk lines only."""
     added = removed = 0
@@ -1373,17 +1443,10 @@ def file_revision(state, lane, round_no, findings, base="P", reviewer_prefix="RV
     gate_id = card_id(state, lanes.card_title(gate_code, lane))
     runtime, render = _round_settings(lane)
 
-    rbody = render(rev_body_file)
     judged = judged_version(state, lane, base)
-    closing = ("Re-write the plan, overwrite the copy in your scratch directory (stage "
-               "nothing), run the probe on the revised plan, and complete with a change "
-               "summary and the probe's tally." if kind == "plan" else
-               "Re-write the refined idea, overwrite the copy in your scratch directory "
-               "(stage nothing), and complete with a change summary.")
-    rbody += rework_tail(round_no, max_rounds, findings, f"{sender} sent this back.",
-                         closing, verdict_text=verdict_text,
-                         sources=revision_sources(judged, verdict_card_id))
-    rbody += _full_verdict_pointer(verdict_card_id)
+    rbody = revision_body(render(rev_body_file), kind, round_no, max_rounds, findings,
+                          sender, verdict_text, revision_sources(judged, verdict_card_id),
+                          _full_verdict_pointer(verdict_card_id))
     args = _create_args(rev_title, rbody, rev_assignee,
                         rework_key("rev", base, lane, round_no), runtime,
                         _skill_args(base) + _goal_args(rev_assignee, base)
@@ -1393,29 +1456,8 @@ def file_revision(state, lane, round_no, findings, base="P", reviewer_prefix="RV
     # and its release still has to reach the card (repin_before_release).
     STATE.pinned[rev_id] = tuple(card_model_args(base, lane))
 
-    rrbody = render(rr_body_file)
-    if kind == "plan":
-        # A re-review is a verdict card like the review it repeats: told to act
-        # "as a gate-holder", it could complete without PASS/REJECT and hold Gp
-        # forever with no further round filed.
-        # The PROBE runs in full every round — the round-2 build defects of 2026-09-26
-        # sat in regions no revision had touched. The PAPER checks are what is scoped:
-        # re-opening an accepted item the diff never touched is how a loop stops
-        # converging.
-        rrbody += (f"\nRE-REVIEW ROUND {rr_no} (after revision {round_no} of {max_rounds}). The "
-                   f"plan was revised after a REJECT; the findings are on the parent revision card. Run the "
-                   f"probe again IN FULL on the revised plan — a defect can sit in a region "
-                   f"the revision never touched. On paper, re-check the items the findings "
-                   f"named and whatever the revision changed"
-                   + (f" (diff it against the version the previous review judged: {judged})"
-                      if judged else "")
-                   + f"; an item the previous review ACCEPTED stands unless the change "
-                   f"touches what it judged. Put the verdict first in the result field: "
-                   f"PASS: or REJECT:.\n")
-    else:
-        rrbody += (f"\nRE-GATE ROUND {round_no + 1} of {max_rounds + 1}. A previous gate-holder "
-                   f"sent the work back with the findings on the parent revision card. Verify "
-                   f"they are addressed, then complete this card exactly as a gate-holder would.\n")
+    rrbody = render(rr_body_file) + rereview_text(
+        kind, round_no, max_rounds, rr_no=rr_no if kind == "plan" else None, judged=judged)
     # A re-review IS a review, so the review pin travels with it: without this a rework
     # round would silently drop back to the worker's default model.
     rr_args = _create_args(rr_title, rrbody, rr_assignee,
@@ -2748,7 +2790,7 @@ def chain_inputs(body, lane):
     # every card as having been given no documents at all.
     given = {role.strip("<>"): path for role, path
              in card_render.lane_paths(REPO, BOARD, lane,
-                                      _read_current_run()).items() if path in body}
+                                      run_root=STATE.run_dir).items() if path in body}
     # A body is rendered from ONE file per code for EVERY lane shape, so the plan
     # card's text always mentions the refined idea — it names the raw one as the
     # contract when the lane runs no refinement. What the card was GIVEN is the
@@ -3429,14 +3471,9 @@ def file_code_revision(state, lane, round_no, findings, owner="C", max_rounds=2,
         return  # already filed
     gate_id = card_id(state, lanes.card_title("Gc", lane))
     runtime, render = _round_settings(lane)
-    rbody = render(body_file)
-    rbody += rework_tail(round_no, max_rounds, findings, f"{sender} returned the work.",
-                         "Where git is discovered, re-stage your files; re-write your "
-                         "patch file, and complete with a result that says what changed "
-                         "and names every test still failing.",
-                         verdict_text=verdict_text,
-                         sources=revision_sources(None, verdict_card_id))
-    rbody += _full_verdict_pointer(verdict_card_id)
+    rbody = revision_body(render(body_file), "code", round_no, max_rounds, findings,
+                          sender, verdict_text, revision_sources(None, verdict_card_id),
+                          _full_verdict_pointer(verdict_card_id))
     args = _create_args(rev_title, rbody, role,
                         rework_key("rev", owner, lane, round_no), runtime,
                         _skill_args(owner) + _goal_args(role, owner)
@@ -3448,21 +3485,9 @@ def file_code_revision(state, lane, round_no, findings, owner="C", max_rounds=2,
     # The tree this round starts from, so its churn is measured against it when it is
     # done (rework_churn_line) — without an index there is no other base to diff.
     snapshot_lane_files(state, lane, rev_title.split(":")[0])
-    rrbody = render("rva-body.txt")
-    rrbody += (f"\nRE-REVIEW ROUND {round_no + 1} of {max_rounds + 1}. The previous review's "
-               f"REJECT left findings on the parent revision card. Re-derive every check in this "
-               f"body against the tree as it stands NOW (and the staged index, where git is "
-               f"discovered), run the suite yourself, and put the "
-               f"verdict first in the result field: PASS: or REJECT:.\n")
-    if state.get(lanes.card_title("RVc", lane)):
-        # An RVc REJECT is re-reviewed by this card alone; without this the
-        # lane's final review (full suite, staged set) would never be repeated.
-        rrbody += ("This lane has integration tests, so this re-review is also its final "
-                   "review: run the FULL suite — unit and integration — from a clean run, and "
-                   "check the staged set and the success criteria as the final review does. "
-                   "That includes the final review's check (c): the integration tests exercise "
-                   "real behaviour, not mocks of the thing under test — a mocked collaborator "
-                   "is the defect this round is most likely to have repeated.\n")
+    rrbody = render("rva-body.txt") + rereview_text(
+        "code", round_no, max_rounds,
+        final_review=bool(state.get(lanes.card_title("RVc", lane))))
     # The re-review judges the revision: same pins as the review it repeats.
     rr_args = _create_args(rr_title, rrbody, "coder",
                            rework_key("rr", "C", lane, round_no + 1), runtime,

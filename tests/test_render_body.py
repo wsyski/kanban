@@ -122,3 +122,19 @@ def test_a_workdir_reached_through_a_symlink_is_still_the_boards_own(tmp_path):
     link = tmp_path / "link-to-work"
     os.symlink(board / "work", link)
     assert "PREVIOUS RUN" in card_render.workdir_state(str(link), str(board))
+
+
+def test_board_placeholder_can_name_another_kanban_board(tmp_path):
+    values = card_render.render_body_values(
+        repo=REPO, board="real", workdir=str(tmp_path), lane=1,
+        run_id="run-1", run_root=str(tmp_path / "runs" / "run-1"),
+        kanban_board="real-card-rvp1-x")
+    assert values["<BOARD>"] == "real-card-rvp1-x"
+    assert values["<TOOLCHAIN_FACTS>"] == card_render.toolchain_facts_path(REPO, "real")
+    assert values["<PLAN>"].startswith(str(tmp_path / "runs" / "run-1"))
+
+
+def test_board_placeholder_defaults_to_the_board(tmp_path):
+    values = card_render.render_body_values(
+        repo=REPO, board="real", workdir=str(tmp_path), lane=1, run_id="run-1")
+    assert values["<BOARD>"] == "real"

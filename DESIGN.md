@@ -752,6 +752,21 @@ later failure and label every later halt.
   a REJECT with no round filed (F6 — what
   an invisible stall looks like). `--history` counts reviews and reworks.
 
+## run-card: one card on a one-card board
+
+`driver/run-card.py` runs one card of an existing run and records it into that run.
+
+- **A one-card board, not a bare `hermes chat`.** The completion protocol and the `kanban_*` tools exist only under `HERMES_KANBAN_TASK`, which the dispatcher sets for a card's worker.
+- **Stubs.** Reviewers and C read upstream *attachments* through kanban, so every card done before the one under test is filed as a stub carrying its result and hand-off files. Stubs are unblocked before they are completed, the order the engine's auto-gate completes a parked card in (`_gate_action`).
+- **Two boards in one process.** `run.BOARD` names the one-card board, which every `kb()` call and `<BOARD>` (`render_body(kanban_board=)`) use; every path names the real board and run. The records' `board` field therefore names the one-card board.
+- **The driver's writers and readers are called, not copied**: `_create_args`, `mark_attempt`, `record_chain_start`, `record_timing`, `attach_hand_offs`, `record_chain_done`, `revision_body`, `rereview_text`. A verdict is read through `latest_verdict_card`, so an unprobed RVp PASS fails a run-card run exactly as it holds a real gate.
+- **The lock.** The harness writes the board's work tree and run records, so it takes `driver_lock` on the board; a live driver stops it before anything is filed.
+- **The worker is stopped explicitly.** A dispatcher-spawned worker outlives its board and its driver (`reset.sh` stops one the same way, with `pkill`); one left running would write into the run after the lock is released. This holds on every exit path, with or without `--keep`.
+- **What `run-audit.py` sees on a harness-touched run.** The new card's `attempt` offset points at a worker log on the one-card board, and `boards rm --delete` removes that log; the card is also absent from the real board's `list`. Expect audit findings: a run-card run is a test, not a finished run.
+- **Limits.**
+  - A revision cannot be triggered by a verdict completed summary-only: the run keeps 400 characters of a summary, and the board that holds the rest is gone.
+  - Other `board.json` options (`max-runtime`, goal, skills) are read when a card is filed. The harness files right before starting, so all of them are live; production re-reads only the model pair at start (`repin_before_release`).
+
 ## Known traps
 
 Each is current behaviour, with what to do about it.

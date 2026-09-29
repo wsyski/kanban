@@ -7,7 +7,7 @@ later as "both had to change". So the check is on imports, and the file lists ar
 out by hand: a new module has to be classified deliberately, and this test fails loudly
 until it is.
 
-`doc-chain.py`, `run-audit.py`, `render-flow.py`, `runs-report.py` and `timing-report.py`
+`doc-chain.py`, `run-audit.py`, `run-card.py`, `render-flow.py`, `runs-report.py` and `timing-report.py`
 have hyphens in their names and are loaded by path, so they never appear as imports — they
 are still classified, because their OWN imports are what the first test checks.
 """
@@ -20,7 +20,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # and the board lock.
 TEMPLATE_FILES = ["board_schema", "card_render", "driver_lock", "lanes", "probe"]
 # The kanban driver's own.
-DRIVER_FILES = ["doc-chain", "file_lanes", "render-flow", "run", "run-audit",
+DRIVER_FILES = ["doc-chain", "file_lanes", "render-flow", "run", "run-audit", "run-card",
                 "runs-report", "runs_util", "timing-report"]
 
 

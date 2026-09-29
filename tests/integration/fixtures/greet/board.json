@@ -1,0 +1,9 @@
+{
+  "$schema": "../../../../template/board.schema.json",
+  "slug": "greet",
+  "lanes": 1,
+  "model": "swift15-27b",
+  "provider": "llama-swap",
+  "max-runtime": "30m",
+  "max-reworks": 3
+}
