@@ -348,12 +348,31 @@ for p in $REQUIRED; do
 done
 
 # The review cards ask for the `ocr-review` skill by name and run `ocr` for scope. Neither
-# is forced on the card, so a profile that cannot see the skill (or a host without `ocr`)
-# degrades the review quietly: say so here, as a note, never a refusal.
+# is forced on the card, so a profile that cannot see the skill (disabled, or not synced
+# yet) or a host without `ocr` degrades the review quietly: say so here, as a note, never a
+# refusal. `skills list` answers for what the profile has ENABLED; the hub file is read
+# only when the CLI says nothing. The name is matched as a prefix because the table
+# truncates a name that outgrows its column.
 command -v ocr >/dev/null 2>&1 || \
   echo "note: ocr is not on PATH — the review cards fall back to git for scope" >&2
-[ -f "$HOME/.agents/skills/ocr-review/SKILL.md" ] || \
+REVIEW_PROFILE=$(python3 - "$REPO" "$BOARD_DIR" <<'PYEOF'
+import json, os, sys
+repo, board_dir = sys.argv[1:3]
+sys.path.insert(0, os.path.join(repo, "template"))
+import lanes
+manifest = os.path.join(board_dir, "board.json")
+cfg = json.load(open(manifest)) if os.path.exists(manifest) else {}
+print(lanes.assignee_for("coder", cfg.get("assignees")))
+PYEOF
+) || exit 1
+REVIEW_SKILLS=$(hermes -p "$REVIEW_PROFILE" skills list --enabled-only </dev/null 2>/dev/null || true)
+if [ -n "$REVIEW_SKILLS" ]; then
+  printf '%s\n' "$REVIEW_SKILLS" | grep -q "ocr-re" || \
+    echo "note: profile $REVIEW_PROFILE has no enabled skill 'ocr-review' — the review cards" \
+         "run without it. Run /skill-sync in that profile." >&2
+elif [ ! -f "$HOME/.agents/skills/ocr-review/SKILL.md" ]; then
   echo "note: the ocr-review skill is not in ~/.agents/skills — the review cards run without it" >&2
+fi
 
 # Which model judges the goal-mode cards. Not a board option: it is each worker
 # profile's resolved `auxiliary.goal_judge` (a managed /etc/hermes pin wins), and no

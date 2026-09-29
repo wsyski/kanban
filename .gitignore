@@ -24,6 +24,9 @@ __pycache__/
 boards/*/runs/
 boards/*/work/
 
+# Verdict texts captured by hand from real runs; nothing reads them.
+tests/integration/verdicts/
+
 # IDE
 .idea/
 .classpath

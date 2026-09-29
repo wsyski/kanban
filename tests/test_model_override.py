@@ -419,6 +419,21 @@ def test_the_pre_flight_refuses_a_remap_to_a_profile_that_is_not_there(tmp_path)
     assert "profile senior not available" in out, out
 
 
+def test_the_pre_flight_notes_a_review_profile_without_ocr_review(tmp_path):
+    """The review cards ask for `ocr-review` by name, so a profile that cannot see it runs
+    them without it and nothing else says so."""
+    code, out = _run_create(tmp_path, _board_dir(tmp_path), ["coder", "researcher"],
+                            skills=("writing-plans",))
+    assert "profile coder has no enabled skill 'ocr-review'" in out, out
+    assert "/skill-sync" in out, out
+    assert "not available" not in out, out      # a note, never the refusal
+
+
+def test_the_pre_flight_is_quiet_when_the_review_profile_has_ocr_review(tmp_path):
+    code, out = _run_create(tmp_path, _board_dir(tmp_path), ["coder", "researcher"])
+    assert "no enabled skill" not in out, out
+
+
 def test_a_released_card_is_pointed_at_the_board_it_reads_now(monkeypatch):
     """A board option edited while a lane waits has to reach the next CARD, not only the
     next run: a card is claimed on the model it holds, so a route the operator has since
