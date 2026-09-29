@@ -80,3 +80,7 @@ review's `scratch/<card>/review.md`.
   (R1 RVp1-r3 #1).
 - A secret scan over `work/` matches the lock files (`js-tokens`,
   `@csstools/css-tokenizer`): scope it to hand-written files (R1 RVp1-r2 #7, RVp1-r3 #1).
+
+## run-20260929-211109 — accepted at the code gate 2026-09-29
+
+- lane 1: Task 3 Step 2: the plan said build.gradle carries subprojects { node { download = false } } -> I wrote subprojects { ext { nodeDownload = false } }, because build 1 with the plan's form shows the extension's downloadNode RAN and the extension build ran on the downloaded Node v20.12.2 / yarn 1.13.0 (not the host's v22.22.2 / yarn 1.22.22) — the NodeExtension reads the project property nodeDownload (NodeExtension.java:31) and the node { download = false } closure configures a throwaway object created before NodePlugin.apply() (NodePlugin.java:90-91), so it is inert; the ext-property form is what the extension reads (after-run: extension downloadNode SKIPPED, packageRunBuild/packageRunTest via host node, T4S4 via host yarn v1.22.22) (accepted by RVa1)

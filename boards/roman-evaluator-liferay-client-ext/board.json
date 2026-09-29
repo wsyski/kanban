@@ -9,7 +9,7 @@
     "Gp",
     "Gc"
   ],
-  "sequential": true,
+  "sequential": false,
   "goal-cards": [
     "C"
   ],
