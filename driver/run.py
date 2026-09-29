@@ -4563,6 +4563,10 @@ def finish_run():
     except Exception as e:     # the facts are the next run's; never this run's banner
         log(f"NOTICE: toolchain facts not recorded ({type(e).__name__}: {e})")
     try:
+        publish_docs(board())
+    except Exception as e:     # the record is for the human; never this run's banner
+        log(f"NOTICE: docs not published ({type(e).__name__}: {e})")
+    try:
         prune_probe_trees()
     except Exception as e:     # disk hygiene; never this run's banner
         log(f"NOTICE: probe trees not pruned ({type(e).__name__}: {e})")
@@ -4673,6 +4677,84 @@ def append_toolchain_facts(state):
     log(f"toolchain facts: {len(entries)} DEVIATION(s) recorded in "
         f"{os.path.relpath(path, REPO)}")
     return len(entries)
+
+
+def _doc_slug(text, fallback):
+    """A file-name slug from a plan's `# <Feature> Implementation Plan` heading."""
+    m = re.search(r"^#\s+(.+?)\s*$", text or "", re.M)
+    title = re.sub(r"\s*(implementation plan|plan)\s*$", "", m.group(1), flags=re.I) if m else ""
+    return re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:60] or fallback
+
+
+def _publish_doc(path, text):
+    """Write `text` at `path`, or beside it as `-2`, `-3`… when another document holds
+    that name. Identical content is already published (a restarted driver finishing the
+    same run), so nothing is written."""
+    stem, ext = os.path.splitext(path)
+    n = 1
+    while os.path.exists(path):
+        with open(path, encoding="utf-8") as fh:
+            if fh.read() == text:
+                return None
+        n += 1
+        path = f"{stem}-{n}{ext}"
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    return path
+
+
+def publish_docs(state):
+    """Publish what a passed run decided and why into the work directory's `docs/`, in
+    the superpowers layout: `docs/superpowers/plans/`, `docs/superpowers/specs/` and
+    `docs/reviews/`, every file named `YYYY-MM-DD-<feature>…`.
+
+    COPIES. The hand-offs stay under runs/ — the document chain, run-audit E14 and the
+    per-card paths depend on them — and the cards never write to `docs/`: work/ holds
+    what the idea asks a human to receive, and this record is the driver's. Only a run
+    whose code gate passed publishes, and only the final plan, refined idea and newest
+    review verdicts, not every rework round. Returns the paths written."""
+    written = []
+    docs = os.path.join(WORKDIR, "docs")
+    today = datetime.date.today().isoformat()
+    lanes = board_lane_count(state)
+    run_id = _read_current_run() or "unknown-run"
+    for lane in range(1, lanes + 1):
+        _, gc = title_of_prefix(state, f"Gc{lane}:")
+        if not gc or gc.get("status") != "done":
+            continue
+        paths = card_render.lane_paths(REPO, BOARD, lane, run_root=STATE.run_dir)
+        try:
+            with open(paths["<PLAN>"], encoding="utf-8") as fh:
+                plan = fh.read()
+        except OSError:
+            plan = None
+        slug = _doc_slug(plan, run_id) + (f"-lane-{lane}" if lanes > 1 else "")
+        name = f"{today}-{slug}"
+        if plan is not None:
+            written.append(_publish_doc(
+                os.path.join(docs, "superpowers", "plans", f"{name}.md"), plan))
+        try:
+            with open(paths["<REFINED>"], encoding="utf-8") as fh:
+                written.append(_publish_doc(
+                    os.path.join(docs, "superpowers", "specs", f"{name}-design.md"), fh.read()))
+        except OSError:
+            pass
+        for prefix, label in (("RVp", "plan-review"), ("RVa", "implementation-review"),
+                              ("RVc", "code-review")):
+            card, verdict = _latest_verdict_card(state, lane, prefix)
+            if not card or not (verdict or "").strip():
+                continue
+            full = os.path.join(STATE.run_dir, "scratch", str(card.get("id")), "review.md")
+            body = f"# {label.replace('-', ' ').capitalize()} — {run_id}\n\n{verdict.strip()}\n"
+            if os.path.isfile(full):
+                with open(full, encoding="utf-8") as fh:
+                    body += f"\n---\n\n{fh.read()}"
+            written.append(_publish_doc(os.path.join(docs, "reviews", f"{name}-{label}.md"), body))
+    written = [p for p in written if p]
+    if written:
+        log(f"docs: {len(written)} document(s) published under {os.path.relpath(docs, REPO)}")
+    return written
 
 
 def gate_summary_text(title, card):

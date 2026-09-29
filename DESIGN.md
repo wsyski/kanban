@@ -833,7 +833,12 @@ Each is current behaviour, with what to do about it.
   Files blocks name. Transients go under `runs/<run-id>/scratch/<card-id>/`. `<RUNS>`
   is a render value, deliberately not a lane document, so the chain never stats scratch
   as a hand-off. Caches a worker leaves in `work/` are reported as a note (E16) and left
-  in place.
+  in place. The one exception is `work/docs/`, which only the driver writes:
+  `publish_docs` copies a passed run's plan, refined idea and newest review verdicts into
+  `docs/superpowers/plans/`, `docs/superpowers/specs/` and `docs/reviews/` as
+  `YYYY-MM-DD-<feature>…`. Copies, because the chain and E14 need the hand-offs under
+  `runs/`; after the code gate, so the lane's own evidence never counts them; and never by
+  a card, whose `writing-plans` "Save plans to" path the plan card's body overrides.
 - **An IDE commit while a driver is live is suspect.** A changelist commit has no
   pathspec, so it takes whatever the run has staged — generated files into HEAD, or
   pending removals of tracked documents. Check `git log --stat` for `boards/*/work|runs`

@@ -1743,6 +1743,67 @@ def test_none_prose_a_reject_or_an_unpassed_gate_adds_no_fact(monkeypatch, tmp_p
     assert not facts.exists()
 
 
+# --- published docs: the run's plan, spec and reviews in the work directory -----------
+
+
+def _docs_env(monkeypatch, tmp_path):
+    monkeypatch.setattr(run, "REPO", str(tmp_path))
+    monkeypatch.setattr(run, "BOARD", "b")
+    monkeypatch.setattr(run, "WORKDIR", str(tmp_path / "work"))
+    monkeypatch.setattr(run, "log", lambda m: None)
+    monkeypatch.setattr(run, "_read_current_run", lambda: "run-1")
+    monkeypatch.setattr(run, "board_lane_count", lambda st: 1)
+    monkeypatch.setattr(run.STATE, "run_dir", str(tmp_path / "runs" / "run-1"))
+    art = tmp_path / "runs" / "run-1" / "artifacts" / "lane-1"
+    art.mkdir(parents=True)
+    (art / "plan.md").write_text("# Roman Evaluator Implementation Plan\n\nsteps\n")
+    (art / "refined.md").write_text("# refined\n")
+    return tmp_path / "work" / "docs"
+
+
+def _docs_state(gc="done"):
+    return {
+        "RVp1: plan review - lane 1": card("RVp1: plan review - lane 1", "rvp", status="done",
+                                           completed_at=5, result="PASS: plan probed"),
+        "RVc1: final review - lane 1": card("RVc1: final review - lane 1", "rvc", status="done",
+                                            completed_at=20, result="PASS: suite green"),
+        "Gc1: code gate - lane 1": card("Gc1: code gate - lane 1", "gc", status=gc),
+    }
+
+
+def test_a_passed_run_publishes_plan_spec_and_reviews_dated(monkeypatch, tmp_path):
+    docs = _docs_env(monkeypatch, tmp_path)
+    import datetime as real
+    class D(real.date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 9, 29)
+    monkeypatch.setattr(run.datetime, "date", D)
+    assert len(run.publish_docs(_docs_state())) == 4
+    assert (docs / "superpowers/plans/2026-09-29-roman-evaluator.md").read_text().startswith("# Roman")
+    assert (docs / "superpowers/specs/2026-09-29-roman-evaluator-design.md").is_file()
+    assert "PASS: plan probed" in (docs / "reviews/2026-09-29-roman-evaluator-plan-review.md").read_text()
+    assert (docs / "reviews/2026-09-29-roman-evaluator-code-review.md").is_file()
+
+
+def test_docs_are_published_once_and_only_after_the_code_gate(monkeypatch, tmp_path):
+    docs = _docs_env(monkeypatch, tmp_path)
+    assert run.publish_docs(_docs_state(gc="blocked")) == []
+    assert not docs.exists()
+    assert len(run.publish_docs(_docs_state())) == 4
+    assert run.publish_docs(_docs_state()) == [], "a restart finishing the same run"
+
+
+def test_a_second_run_with_the_same_feature_gets_its_own_file(monkeypatch, tmp_path):
+    docs = _docs_env(monkeypatch, tmp_path)
+    run.publish_docs(_docs_state())
+    plan = tmp_path / "runs" / "run-1" / "artifacts" / "lane-1" / "plan.md"
+    plan.write_text("# Roman Evaluator Implementation Plan\n\nrevised\n")
+    written = run.publish_docs(_docs_state())
+    assert [os.path.basename(p) for p in written if "plans" in p][0].endswith("-2.md")
+    assert len(list((docs / "superpowers/plans").iterdir())) == 2
+
+
 def test_only_the_newest_pass_of_a_review_family_carries_its_deviations(monkeypatch, tmp_path):
     """RVa PASS → RVc REJECT → a code revision → RVa-r2 PASS: the revision may have
     reverted what the first PASS accepted, so only the newest verdict counts."""
