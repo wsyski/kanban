@@ -34,7 +34,7 @@ fourth: `./test.sh` with `PYTHON` pinned, `driver/render-flow.py --check`, and e
 ## Rules
 
 - Hermes profiles are `researcher` (card I), `coder` (every other work card), `trader` (no card); gates have none. Don't add profiles for roles: give the review cards a different model (the review model) with `model_override`/`provider_override` in `board.json`. The goal judge is separate (`auxiliary.goal_judge`, DESIGN.md).
-- The driver never commits and never moves a branch. Board output lands in `boards/<slug>/work/` (tracked). The human commits it at a gate.
+- The driver never commits and never moves a branch. Board output lands in `boards/<slug>/work/`, which this repo gitignores; the human commits it at a gate only when the work directory is a repository of its own.
 - `boards/<slug>/runs/` is gitignored per-run scratch. Never delete run directories.
 - One driver per board: it takes `boards/<slug>/runs/driver.lock`. Don't re-file a board mid-run; use `driver/reset.sh`.
 - Card bodies (`template/card-bodies/`) forbid workers from creating, patching or deleting skills. Keep that clause.

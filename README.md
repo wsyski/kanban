@@ -239,7 +239,7 @@ about it lives under `template/` or `driver/`:
                               template/board.schema.json (generated), so an editor
                               validates the manifest as you write it
         lane-1.md             the idea for lane 1 — the one copy, edited in place
-        work/                 what the lane builds — tracked
+        work/                 what the lane builds — gitignored here
         runs/current          a file naming the live run
         runs/driver.log       the DRIVER's log and lock — board-level, because one
         runs/driver.lock      serve-mode driver answers many ideas
@@ -405,8 +405,8 @@ current directories resolve it and `~` is never expanded. A lane that must also 
 its workdir — into a Hermes profile, say — names those roots in `targets`: cards may
 write there, reviewers count the files as the lane's, and git never runs there.
 
-`work/` is **tracked**: the human's commit at a gate puts the deliverable in history and
-a clone carries it (only `node_modules/` and tool caches are ignored). `runs/` is
+`work/` is **gitignored** in this repo (`boards/*/work/`): a gate commit carries the
+deliverable only when the work directory is a repository of its own (`default-workdir`). `runs/` is
 gitignored per-run state, never staged, because hand-offs travel by path. A new idea
 inherits `work/` as it is, because a follow-up idea may be a fix of what the previous
 run built. The driver pins the work directory's branch and HEAD per run and reports —
@@ -864,8 +864,8 @@ human comments PASS (or completes the card) → next lane's root unblocks
 ```
 
 **The driver never commits and never moves a branch.** Nothing the idea builds enters
-history except through a gate commit, and the deliverable is tracked, so that commit
-really carries it. Each gate's result names the repository, branch and HEAD it staged
+history except through a gate commit, and where git ignores the work directory there
+is no commit to make. Each gate's result names the repository, branch and HEAD it staged
 into, and `run-summary.json` records the same as `commit_target`. You commit at your
 discretion, or not at all. `template/` and `driver/` (the engine) are committed freely by the operator
 between runs.
