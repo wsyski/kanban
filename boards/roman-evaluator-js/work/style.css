@@ -1,5 +1,0 @@
-/* Bootstrap covers the page shell, input, buttons and display rows.
-   This file holds only what Bootstrap does not cover. */
-#display {
-  min-height: 2.5rem;
-}
