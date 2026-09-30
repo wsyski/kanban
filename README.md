@@ -264,6 +264,14 @@ Create and serve:
                                              # it drove (see below)
     driver/start-board.sh --slug <s>         # the driver alone: for arming in the dashboard
 
+`start-board.sh` starts the driver and nothing else: it validates `board.json` and the
+`lane-*.md` ideas, is a no-op while this board's driver is up, and then waits for a go
+signal. `arm.sh` files that go signal (a `blocked`, unassigned card carrying
+`lane-<n>.md`) and runs `start-board.sh` when no driver is up. To start a run from a
+shell, run `arm.sh`; run `start-board.sh` alone when the idea comes from the dashboard
+drag, or to bring a driver back up. Arm a lane once — a second card for the same lane
+silently replaces the first idea at refile.
+
 `driver/create-board.sh --help` is authoritative (including the empty board you get
 with `--slug`/`--title` instead of `--board`). There is no import step: `lane-1.md` is
 filed onto the Triage card as the LIVE copy of the idea, and arming adopts the CARD and
