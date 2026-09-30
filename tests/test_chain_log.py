@@ -120,6 +120,19 @@ def test_a_review_whose_result_is_empty_takes_its_verdict_from_the_run_summary(m
     assert led and led[0]["verdict"] == "PASS" and "checklist 1-8" in led[0]["text"], led
 
 
+def test_a_finished_review_round_is_published_with_its_full_verdict(monkeypatch, tmp_path):
+    """Every round, as it lands — not only the newest, once the code gate passes."""
+    _ledger_env(monkeypatch, tmp_path)
+    verdict = "REJECT: 1. no step carries a tag. " + "x" * 700
+    st = {lanes.card_title("RVp", 1): {
+        "id": "t_rvp", "status": "done", "title": lanes.card_title("RVp", 1), "result": verdict}}
+    monkeypatch.setattr(run, "kb", lambda *a, **k: '{"events": []}')
+    seen = []
+    monkeypatch.setattr(run, "publish_review", lambda st, c, text: seen.append((c["id"], text)))
+    run.record_chain_done(st)
+    assert seen == [("t_rvp", verdict)], "the whole verdict, not the ledger's 600 characters"
+
+
 def test_a_worker_card_carries_no_verdict(monkeypatch, tmp_path):
     """'4/4 GREEN' is not a verdict, and a coder's result is not a review."""
     path = _ledger_env(monkeypatch, tmp_path)

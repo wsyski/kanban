@@ -494,3 +494,12 @@ def test_a_tracked_work_directory_keeps_the_index_evidence(tmp_path, monkeypatch
     _lane_with_patch(tmp_path, monkeypatch, work)
     assert run.card_render.git_control(str(work))[0] == "controlled"
     assert "nothing to commit here" not in run.commit_target()
+
+
+def test_the_plan_gate_publishes_the_plan_when_it_opens(held, card, monkeypatch):
+    """is-even, 2026-09-30: the plan reached work/docs only once the code gate passed."""
+    state, _ = held
+    published = []
+    monkeypatch.setattr(run, "publish_plan", lambda st, lane: published.append(lane))
+    run.gate_action(state, GP, "gp", 1)
+    assert published == [1]

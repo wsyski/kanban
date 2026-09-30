@@ -463,3 +463,31 @@ def test_dependencies_stay_for_a_reviewer_and_go_on_request(tmp_path):
     assert (out / "tree" / "node_modules" / "x" / "i.js").exists()
     _run(w, r, plan, out, "--prune-deps")
     assert not (out / "tree" / "node_modules").exists()
+
+
+def test_an_untagged_step_heading_is_a_defect_and_never_inherits_a_tag(tmp_path):
+    """is-even, 2026-09-30: five `**Step n: …**` headings with no tag. The probe ran every
+    command in the full pass, nothing in the without-C pass, and exited 0 — the plan
+    review found it and cost a round."""
+    w, r, plan, out = _setup(tmp_path)
+    plan.write_text("### Task 1: x\n- [ ] **Step 1 [C]: tagged**\n\nRun: `true`\n\n"
+                    "Step 3 runs later — prose, not a heading.\n\nRun: `echo still-C`\n\n"
+                    "- [ ] **Step 2: untagged**\n\n```txt file=a.txt\na\n```\n\nRun: `echo loose`\n")
+    files, commands = probe.parse_plan(plan.read_text())
+    assert [c["tag"] for c in commands] == ["C", "C", None], "a bare prose line is not a heading"
+    assert files[0]["tag"] is None and files[0]["where"] == "Task 1 Step 2"
+    assert _run(w, r, plan, out, "--also-without", "C") == 1
+    log = (out / "probe-log.md").read_text()
+    assert "UNTAGGED: 1 file block(s) and 1 Run command(s)" in log
+    assert "- Task 1 Step 2: file a.txt" in log and "- Task 1 Step 2: Run: echo loose" in log
+    assert "NO COMMAND in this pass" in log.split("## Pass: without-C", 1)[1]
+    assert _log(out)["untagged"] == 2
+
+
+def test_a_without_pass_with_nothing_to_run_is_named_but_not_a_failure(tmp_path):
+    w, r, plan, out = _setup(tmp_path)
+    plan.write_text("- [ ] **Step 1 [C]: only code**\n\nRun: `true`\n")
+    assert _run(w, r, plan, out, "--also-without", "C") == 0
+    log = (out / "probe-log.md").read_text()
+    assert "UNTAGGED" not in log and "NO COMMAND in this pass" in log
+    assert _log(out)["untagged"] == 0

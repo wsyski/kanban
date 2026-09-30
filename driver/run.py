@@ -2245,6 +2245,10 @@ def _gate_action(state, title, kind, lane):
                          f" makes the review's PASS count), then comment PASS or REWORK")
         elif STATE.probe_note.get((v_card or {}).get("id")):
             evidence += f"; {STATE.probe_note[v_card['id']]}"
+        try:
+            publish_plan(state, lane)
+        except OSError as e:     # the record is for the human; never the gate's verdict
+            log(f"NOTICE: plan not published ({type(e).__name__}: {e})")
     else:  # gc
         v_card, verdict_txt = latest_verdict_card(state, lane, "RVa", final_code="RVc")
         if verdict_txt is None:
@@ -3013,6 +3017,10 @@ def record_chain_done(state):
         if verdict:
             ledger({"event": "verdict", "lane": lane, "code": code, "card_id": card["id"],
                     "verdict": verdict, "attached": attached, "text": result[:600]})
+            try:
+                publish_review(state, card, result)
+            except OSError as e:  # the record is for the human; never the run's
+                log(f"NOTICE: {code} not published ({type(e).__name__}: {e})")
 
 
 def card_id_lane(title):
@@ -4723,51 +4731,135 @@ def publish_refined(state, lane, text):
     log(f"docs: refined idea published at {os.path.relpath(path, REPO)}")
 
 
+REVIEW_DOC_LABELS = {"RVp": "plan-review", "RVa": "implementation-review",
+                     "RVc": "code-review"}
+
+
+def _doc_mark(lane, what):
+    """The last line of a document the driver published for this run: how a later
+    publication of the same document finds its file again, even after a restart."""
+    return f"<!-- kanban-driver: {_read_current_run() or 'unknown-run'} lane {lane} {what} -->"
+
+
+def _publish_run_doc(path, text, mark):
+    """Publish one of this run's documents and keep it current. The `.md` in `path`'s
+    directory whose last line is `mark` is this run's copy and is replaced in place (a
+    plan revision, a restarted driver); without one, `_publish_doc` picks the name —
+    `-2`, `-3`… beside another run's file of the same feature. Returns the path written,
+    or None when this run's copy already holds `text`."""
+    body = text.rstrip("\n") + f"\n\n{mark}\n"
+    folder = os.path.dirname(path)
+    if os.path.isdir(folder):
+        for name in sorted(os.listdir(folder)):
+            p = os.path.join(folder, name)
+            if not name.endswith(".md") or os.path.islink(p) or not os.path.isfile(p):
+                continue
+            with open(p, encoding="utf-8", errors="replace") as fh:
+                current = fh.read()
+            if current.rstrip("\n").endswith(mark):
+                if current == body:
+                    return None
+                # Through a temp file: a card can write the work directory, and a symlink
+                # planted at this name must be replaced, never followed.
+                _write_atomic(p, lambda f: f.write(body))
+                return p
+    return _publish_doc(path, body)
+
+
+def _lane_plan(lane):
+    """The text of the lane's plan hand-off, or None while there is none."""
+    try:
+        paths = card_render.lane_paths(REPO, BOARD, lane, run_root=STATE.run_dir)
+        with open(paths["<PLAN>"], encoding="utf-8") as fh:
+            return fh.read()
+    except (OSError, TypeError, KeyError):
+        return None
+
+
+def _lane_doc_stem(state, lane, plan):
+    """`YYYY-MM-DD-<feature>[-lane-<n>]` for the lane's published plan and reviews — the
+    feature from the plan's heading, the run id while no plan exists."""
+    slug = _doc_slug(plan, _read_current_run() or "unknown-run")
+    if board_lane_count(state) > 1:
+        slug += f"-lane-{lane}"
+    return f"{datetime.date.today().isoformat()}-{slug}"
+
+
+def publish_plan(state, lane):
+    """Copy the lane's plan to `docs/superpowers/plans/` when its plan gate opens (the
+    plan review's PASS), so it is on disk while the lane builds — not only once the code
+    gate passes. Kept current in place: a later plan revision replaces it."""
+    plan = _lane_plan(lane)
+    if plan is None:
+        return None
+    written = _publish_run_doc(os.path.join(WORKDIR, "docs", "superpowers", "plans",
+                                            f"{_lane_doc_stem(state, lane, plan)}.md"),
+                               plan, _doc_mark(lane, "plan"))
+    if written:
+        log(f"docs: plan published at {os.path.relpath(written, REPO)}")
+    return written
+
+
+def publish_review(state, card, verdict):
+    """Copy one finished review round to `docs/reviews/` the moment it lands — every
+    round, not only the newest: `YYYY-MM-DD-<feature>-<label>-r<round>.md`, the verdict
+    first and the reviewer's review.md under it. A round is the `-r<n>` of its code
+    (`RVp1` is round 1, `RVp1-r2` round 2)."""
+    title = card.get("title") or ""
+    code = title.split(":")[0]
+    m = re.match(r"^(RVp|RVa|RVc)(\d+)(?:-r(\d+))?$", code)
+    if not m or not (verdict or "").strip():
+        return None
+    lane, rnd = int(m.group(2)), int(m.group(3) or 1)
+    label = REVIEW_DOC_LABELS[m.group(1)]
+    stem = _lane_doc_stem(state, lane, _lane_plan(lane))
+    body = (f"# {label.replace('-', ' ').capitalize()} round {rnd} — "
+            f"{_read_current_run() or 'unknown-run'} ({code})\n\n{verdict.strip()}\n")
+    full = os.path.join(STATE.run_dir, "scratch", str(card.get("id")), "review.md")
+    if os.path.isfile(full):
+        with open(full, encoding="utf-8", errors="replace") as fh:
+            body += f"\n---\n\n{fh.read()}"
+    written = _publish_run_doc(os.path.join(WORKDIR, "docs", "reviews",
+                                            f"{stem}-{label}-r{rnd}.md"),
+                               body, _doc_mark(lane, code))
+    if written:
+        log(f"docs: {code} published at {os.path.relpath(written, REPO)}")
+    return written
+
+
 def publish_docs(state):
-    """Publish what a passed run decided and why into the work directory's `docs/`, in
-    the superpowers layout: `docs/superpowers/plans/` and `docs/reviews/`, every file
-    named `YYYY-MM-DD-<feature>…` (the refined idea lands earlier, in `specs/`, when its
-    gate opens: `publish_refined`).
+    """The end-of-run catch-up of what the run decided and why, in the work directory's
+    `docs/` in the superpowers layout. Each document is published as it happens — the
+    refined idea when the idea gate opens (`publish_refined`, `specs/`), the plan when
+    the plan gate opens (`publish_plan`, `plans/`), every review round when it finishes
+    (`publish_review`, `reviews/`) — so this only re-publishes, for each lane whose code
+    gate passed, the final plan and every finished review round: a driver restarted
+    mid-run may have missed one, and one it already has is left as it is.
 
     COPIES. The hand-offs stay under runs/ — the document chain, run-audit E14 and the
     per-card paths depend on them — and the cards never write to `docs/`: work/ holds
-    what the idea asks a human to receive, and this record is the driver's. Only a run
-    whose code gate passed publishes, and only the final plan and newest review
-    verdicts, not every rework round. Returns the paths written."""
+    what the idea asks a human to receive, and this record is the driver's. Returns the
+    paths written."""
     written = []
-    docs = os.path.join(WORKDIR, "docs")
-    today = datetime.date.today().isoformat()
-    lanes = board_lane_count(state)
-    run_id = _read_current_run() or "unknown-run"
-    for lane in range(1, lanes + 1):
+    for lane in range(1, board_lane_count(state) + 1):
         _, gc = title_of_prefix(state, f"Gc{lane}:")
         if not gc or gc.get("status") != "done":
             continue
-        paths = card_render.lane_paths(REPO, BOARD, lane, run_root=STATE.run_dir)
-        try:
-            with open(paths["<PLAN>"], encoding="utf-8") as fh:
-                plan = fh.read()
-        except OSError:
-            plan = None
-        slug = _doc_slug(plan, run_id) + (f"-lane-{lane}" if lanes > 1 else "")
-        name = f"{today}-{slug}"
-        if plan is not None:
-            written.append(_publish_doc(
-                os.path.join(docs, "superpowers", "plans", f"{name}.md"), plan))
-        for prefix, label in (("RVp", "plan-review"), ("RVa", "implementation-review"),
-                              ("RVc", "code-review")):
-            card, verdict = _latest_verdict_card(state, lane, prefix)
-            if not card or not (verdict or "").strip():
-                continue
-            full = os.path.join(STATE.run_dir, "scratch", str(card.get("id")), "review.md")
-            body = f"# {label.replace('-', ' ').capitalize()} — {run_id}\n\n{verdict.strip()}\n"
-            if os.path.isfile(full):
-                with open(full, encoding="utf-8") as fh:
-                    body += f"\n---\n\n{fh.read()}"
-            written.append(_publish_doc(os.path.join(docs, "reviews", f"{name}-{label}.md"), body))
+        written.append(publish_plan(state, lane))
+        for prefix in REVIEW_DOC_LABELS:
+            newest, newest_text = _latest_verdict_card(state, lane, prefix)
+            pat = re.compile(rf"^{prefix}{lane}(?::|-r\d+:)")
+            for title, card in sorted(state.items()):
+                if not pat.match(title) or card.get("status") != "done":
+                    continue
+                text = (card.get("result") or "").strip()
+                if not text and newest is card:
+                    text = (newest_text or "").strip()
+                written.append(publish_review(state, card, text))
     written = [p for p in written if p]
     if written:
-        log(f"docs: {len(written)} document(s) published under {os.path.relpath(docs, REPO)}")
+        log(f"docs: {len(written)} document(s) published under "
+            f"{os.path.relpath(os.path.join(WORKDIR, 'docs'), REPO)}")
     return written
 
 

@@ -18,7 +18,11 @@ What it reads from the plan (the conventions the plan checklist asks for):
   `patch=<path>` is a unified diff (`a/`/`b/` headers relative to the work directory);
 - `Run: `<command>`` on one line, or a fenced block whose info string starts with `run`
   (one command per line), is a Run command;
-- the step a block or command sits under (`Step <n> [C]`, `[TW]`, `[TI]`) is its tag.
+- the step a block or command sits under (`Step <n> [C]`, `[TW]`, `[TI]`) is its tag. One
+  under a step heading with no tag (`**Step 1: …**`, the `writing-plans` template's shape),
+  or under no step at all, is UNTAGGED: no card runs it and a without pass cannot leave it
+  out, so it is a defect of the plan (the is-even run of 2026-09-30 lost a review round to
+  five untagged headings the probe had passed).
 
 What it will not do: write outside `--out`; run a command that deploys, builds a bundle or
 a container, or names a declared target root (the operator's steps — skipped, allowed); run
@@ -44,7 +48,7 @@ background (a dev server) is killed when it exits, so a check that needs one sta
 in the same command.
 
 Exit status: 0 when the full pass is clean (every file written, no defect skip, every
-command that ran exited 0, nothing TOUCHED), 1 otherwise, 2 on a usage error. A non-zero
+command that ran exited 0, nothing TOUCHED, nothing UNTAGGED), 1 otherwise, 2 on a usage error. A non-zero
 probe is EVIDENCE for the card that ran it, never a reason to stop.
 """
 import argparse
@@ -84,6 +88,11 @@ _FENCE = re.compile(r"^(\s*)(`{3,}|~{3,})(.*)$")
 # optional list/checkbox/bold/heading markup, then `Step <n>`, then its tag.
 _STEP = re.compile(r"^\s*(?:[-*]\s*)?(?:\[[ xX]\]\s*)?(?:\*\*|#{2,6}\s*)?Step\s+(\d+)\b"
                    r"[^\[\n]*\[(TW|C|TI)\]")
+# A step heading WITHOUT a tag still starts a new step, so what follows it never inherits
+# the previous step's tag — it is UNTAGGED. Markup is required here (bold, a heading or a
+# checkbox): a bare "Step 3 runs…" line is prose, not a heading.
+_STEP_ANY = re.compile(r"^\s*(?:[-*]\s*)?(?:\[[ xX]\]\s*)?(?:\*\*|#{2,6}\s*)Step\s+(\d+)\b"
+                       r"|^\s*(?:[-*]\s*)?\[[ xX]\]\s*Step\s+(\d+)\b")
 _TASK = re.compile(r"^\s*#{2,4}\s*Task\s+(\d+)\b")
 _RUN_INLINE = re.compile(r"^\s*(?:[-*]\s*)?Run:\s*`([^`]+)`")
 _CARD_ID = re.compile(r"<[^<>\n]*card[^<>\n]*id[^<>\n]*>", re.IGNORECASE)
@@ -145,6 +154,10 @@ def parse_plan(text):
         m = _STEP.match(line)
         if m and not _FENCE.match(line):
             step, tag = m.group(1), m.group(2)
+        else:
+            m = _STEP_ANY.match(line)
+            if m and not _FENCE.match(line):
+                step, tag = m.group(1) or m.group(2), None
         m = _FENCE.match(line)
         if m:
             indent, fence, info = m.group(1), m.group(2), m.group(3).strip()
@@ -592,6 +605,14 @@ def run_commands(commands, tree, *, workdir, runs, scratch, targets, timeout, lo
     return rows
 
 
+def untagged(files, commands):
+    """Where each file block and Run command that sits under no tagged step is, in plan
+    order: `["line 40: file test_is_even.py", "Task 2 Step 2: Run: pytest …"]`."""
+    rows = [(e["where"], f"file {e['path']}") for e in files if not e["tag"]]
+    rows += [(e["where"], f"Run: {e['cmd'][:80]}") for e in commands if not e["tag"]]
+    return [f"{w}: {what}" for w, what in rows]
+
+
 def _files_table(rows):
     out = ["| step | tag | path | bytes | sha256 | note |", "|---|---|---|---|---|---|"]
     for r in rows:
@@ -678,7 +699,7 @@ def main(argv=None):
             lines += ["full-pass: " + ", ".join(
                 f"{k} {summary.get(k, 0)}" for k in
                 ("files", "files-failed", "commands", "ran", "exit0", "failed", "skipped",
-                 "skipped-defect"))]
+                 "skipped-defect", "untagged"))]
         lines += [f"complete: {'yes' if complete else 'no'}", ""]
         tmp = log_path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
@@ -710,13 +731,21 @@ def main(argv=None):
                 os.remove(p)
             else:
                 shutil.rmtree(p)
+    loose = untagged(files, commands)
+    if loose:
+        nf = sum(1 for e in files if not e["tag"])
+        body += [f"UNTAGGED: {nf} file block(s) and {len(loose) - nf} Run command(s) sit under "
+                 f"no [TW]/[C]/[TI] step heading — no card runs them, and a without pass "
+                 f"cannot leave them out. A defect of the plan: put the tag on each step's "
+                 f"heading line, after its number: `- [ ] **Step 1 [TW]: …**`.", ""]
+        body += [f"- {w}" for w in loose[:20]] + (["- …"] if len(loose) > 20 else []) + [""]
     passes = [("full", None, None)]
     if a.without:
         # The predicted FAIL: the other cards' files without this tag's, and only the
         # steps of the tags that remain — what the TW card's run would see on its own.
         passes.append((f"without-{a.without}", a.without,
                        {t for t in ("TW", "C", "TI") if t != a.without}))
-    worst = 0
+    worst = 1 if loose else 0
     # A signal the probe was started to ignore stays ignored: `nohup` ignores SIGHUP so
     # the probe outlives the terminal, and a background job ignores SIGINT.
     old_handlers = {s: signal.signal(s, _on_signal)
@@ -740,6 +769,7 @@ def main(argv=None):
             if name == "full":
                 summary["files"] = sum(1 for r in frows if r.get("written"))
                 summary["files-failed"] = sum(1 for r in frows if r.get("failed"))
+                summary["untagged"] = len(loose)
                 if summary["files-failed"]:
                     worst = 1
             write_log()
@@ -754,6 +784,12 @@ def main(argv=None):
                                  flush=lambda rows: write_log(["### Commands", ""]
                                                               + _commands_section(rows)))
             body += ["### Commands", ""] + _commands_section(crows)
+            if name != "full" and not crows:
+                body += [f"NO COMMAND in this pass: the plan has no "
+                         f"{'/'.join('[' + t + ']' for t in sorted(only_tags))} step with a "
+                         f"Run command, so nothing here shows the FAIL a [TW] step predicts. "
+                         f"On a lane that runs unit tests that is a missing [TW] step (or a "
+                         f"missing tag); on one that runs none it is expected.", ""]
             last["extra"] = []
             if name == "full":
                 summary.update(tally(crows))

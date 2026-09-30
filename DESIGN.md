@@ -835,9 +835,14 @@ Each is current behaviour, with what to do about it.
   as a hand-off. Caches a worker leaves in `work/` are reported as a note (E16) and left
   in place. The one exception is `work/docs/`, which only the driver writes:
   `publish_refined` copies the refined idea into `docs/superpowers/specs/` when the idea
-  gate opens (named by run id, overwritten on an idea rework), and `publish_docs` copies a
-  passed run's plan and newest review verdicts into `docs/superpowers/plans/` and
-  `docs/reviews/` as `YYYY-MM-DD-<feature>…`. Copies, because the chain and E14 need the
+  gate opens (named by run id, overwritten on an idea rework), `publish_plan` the plan
+  into `docs/superpowers/plans/` when the plan gate opens, and `publish_review` every
+  review round into `docs/reviews/` as it finishes (`…-plan-review-r2.md`), all named
+  `YYYY-MM-DD-<feature>…`; a run's own copy carries its mark on the last line and is
+  replaced in place by a revision or a restart, never duplicated. `publish_docs` is the
+  end-of-run catch-up of the same documents. Until 2026-09-30 the plan and the reviews
+  waited for a passed code gate, so a live run showed only the refined idea. Copies,
+  because the chain and E14 need the
   hand-offs under `runs/`; never by a card, whose `writing-plans` "Save plans to" path the plan card's body overrides.
 - **An IDE commit while a driver is live is suspect.** A changelist commit has no
   pathspec, so it takes whatever the run has staged — generated files into HEAD, or

@@ -1,7 +1,10 @@
 # is-even — the cheap board
 
-The work directory `boards/is-even/work/` is cleared before each run. It is an UNtracked
-path on purpose: `boards/*/work/` is gitignored, because a board's output belongs to the
+The work directory `boards/is-even/work/` is never cleared — not by the driver, not by
+`driver/reset.sh` — so a run finds the last run's `is_even.py` and treats it as the
+previous version to improve; delete it by hand for a blank start. `work/docs/` is the
+driver's record of each run (refined idea, plan, every review round), not a deliverable.
+The directory is an UNtracked path on purpose: `boards/*/work/` is gitignored, because a board's output belongs to the
 target project rather than to this repository, so the cards stage nothing and report
 `GIT ABSENT — nothing staged`. Options live in `board.json`; the measurements below are
 evidence about models and the engine, not the board's configuration.

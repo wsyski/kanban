@@ -1781,8 +1781,8 @@ def test_a_passed_run_publishes_plan_spec_and_reviews_dated(monkeypatch, tmp_pat
     monkeypatch.setattr(run.datetime, "date", D)
     assert len(run.publish_docs(_docs_state())) == 3
     assert (docs / "superpowers/plans/2026-09-29-roman-evaluator.md").read_text().startswith("# Roman")
-    assert "PASS: plan probed" in (docs / "reviews/2026-09-29-roman-evaluator-plan-review.md").read_text()
-    assert (docs / "reviews/2026-09-29-roman-evaluator-code-review.md").is_file()
+    assert "PASS: plan probed" in (docs / "reviews/2026-09-29-roman-evaluator-plan-review-r1.md").read_text()
+    assert (docs / "reviews/2026-09-29-roman-evaluator-code-review-r1.md").is_file()
 
 
 def test_docs_are_published_once_and_only_after_the_code_gate(monkeypatch, tmp_path):
@@ -1817,9 +1817,49 @@ def test_a_second_run_with_the_same_feature_gets_its_own_file(monkeypatch, tmp_p
     run.publish_docs(_docs_state())
     plan = tmp_path / "runs" / "run-1" / "artifacts" / "lane-1" / "plan.md"
     plan.write_text("# Roman Evaluator Implementation Plan\n\nrevised\n")
+    monkeypatch.setattr(run, "_read_current_run", lambda: "run-2")
     written = run.publish_docs(_docs_state())
     assert [os.path.basename(p) for p in written if "plans" in p][0].endswith("-2.md")
     assert len(list((docs / "superpowers/plans").iterdir())) == 2
+
+
+def test_the_plan_is_published_at_the_plan_gate_and_kept_current(monkeypatch, tmp_path):
+    """is-even, 2026-09-30: the plan and its reviews reached work/docs only once the code
+    gate passed, so a person watching a live run saw the refined idea and nothing else."""
+    docs = _docs_env(monkeypatch, tmp_path)
+    plans = docs / "superpowers" / "plans"
+    first = run.publish_plan({}, 1)
+    assert first and os.path.dirname(first) == str(plans)
+    assert run.publish_plan({}, 1) is None, "the same plan is already there"
+    plan = tmp_path / "runs" / "run-1" / "artifacts" / "lane-1" / "plan.md"
+    plan.write_text("# Roman Evaluator Implementation Plan\n\nrevised\n")
+    assert run.publish_plan({}, 1) == first, "a revision replaces this run's copy in place"
+    assert len(list(plans.iterdir())) == 1 and "revised" in open(first).read()
+    assert open(first).read().startswith("# Roman")
+
+
+def test_every_review_round_is_published_as_it_lands(monkeypatch, tmp_path):
+    docs = _docs_env(monkeypatch, tmp_path)
+    r1 = card("RVp1: plan review - lane 1", "rv1", status="done", result="REJECT: 1. untagged")
+    r2 = card("RVp1-r2: plan review round 2 - lane 1", "rv2", status="done", result="PASS: ok")
+    scratch = tmp_path / "runs" / "run-1" / "scratch" / "rv1"
+    scratch.mkdir(parents=True)
+    (scratch / "review.md").write_text("## Findings\n\nno tags\n")
+    a = run.publish_review({}, r1, r1["result"])
+    b = run.publish_review({}, r2, r2["result"])
+    assert a.endswith("-plan-review-r1.md") and b.endswith("-plan-review-r2.md")
+    text = open(a).read()
+    assert text.startswith("# Plan review round 1 — run-1 (RVp1)") and "no tags" in text
+    assert run.publish_review({}, r1, r1["result"]) is None, "a restart publishes nothing twice"
+    assert run.publish_review({}, card("P1: plan - lane 1", "p1", status="done"), "x") is None
+    st = {r1["title"]: r1, r2["title"]: r2,
+          "Gc1: code gate - lane 1": card("Gc1: code gate - lane 1", "gc", status="done")}
+    written = run.publish_docs(st)
+    assert [os.path.relpath(p, docs) for p in written] == [
+        f"superpowers/plans/{os.path.basename(a).replace('-plan-review-r1', '')}"], \
+        "the end-of-run pass adds the plan and leaves the rounds already published"
+    assert sorted(p.name for p in (docs / "reviews").iterdir()) == [
+        os.path.basename(a), os.path.basename(b)]
 
 
 def test_only_the_newest_pass_of_a_review_family_carries_its_deviations(monkeypatch, tmp_path):
