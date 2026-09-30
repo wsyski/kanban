@@ -16,7 +16,5 @@
   "max-runtime": "300m",
   "max-reworks": 8,
   "model": "swift15-27b",
-  "provider": "llama-swap",
-  "model_override": "deepseek-v4.1-flash",
-  "provider_override": "opencode-go"
+  "provider": "llama-swap"
 }

@@ -1779,9 +1779,8 @@ def test_a_passed_run_publishes_plan_spec_and_reviews_dated(monkeypatch, tmp_pat
         def today(cls):
             return cls(2026, 9, 29)
     monkeypatch.setattr(run.datetime, "date", D)
-    assert len(run.publish_docs(_docs_state())) == 4
+    assert len(run.publish_docs(_docs_state())) == 3
     assert (docs / "superpowers/plans/2026-09-29-roman-evaluator.md").read_text().startswith("# Roman")
-    assert (docs / "superpowers/specs/2026-09-29-roman-evaluator-design.md").is_file()
     assert "PASS: plan probed" in (docs / "reviews/2026-09-29-roman-evaluator-plan-review.md").read_text()
     assert (docs / "reviews/2026-09-29-roman-evaluator-code-review.md").is_file()
 
@@ -1790,8 +1789,27 @@ def test_docs_are_published_once_and_only_after_the_code_gate(monkeypatch, tmp_p
     docs = _docs_env(monkeypatch, tmp_path)
     assert run.publish_docs(_docs_state(gc="blocked")) == []
     assert not docs.exists()
-    assert len(run.publish_docs(_docs_state())) == 4
+    assert len(run.publish_docs(_docs_state())) == 3
     assert run.publish_docs(_docs_state()) == [], "a restart finishing the same run"
+
+
+def test_the_refined_idea_is_published_at_the_idea_gate_and_overwritten_on_rework(
+        monkeypatch, tmp_path):
+    docs = _docs_env(monkeypatch, tmp_path)
+    import datetime as real
+    class D(real.date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 9, 30)
+    monkeypatch.setattr(run.datetime, "date", D)
+    spec = docs / "superpowers/specs/2026-09-30-run-1-design.md"
+    run.publish_refined({}, 1, "# v1\n")
+    assert spec.read_text() == "# v1\n"
+    run.publish_refined({}, 1, "# v2\n")
+    assert spec.read_text() == "# v2\n"
+    assert len(list(spec.parent.iterdir())) == 1
+    assert not any(p.name.endswith("-design.md") for p in (docs / "superpowers").rglob("*")
+                   if "plans" in str(p)), "publish_docs no longer writes the spec"
 
 
 def test_a_second_run_with_the_same_feature_gets_its_own_file(monkeypatch, tmp_path):

@@ -2220,6 +2220,10 @@ def _gate_action(state, title, kind, lane):
             return "waiting: refined idea Findings section is empty — no environment facts to plan against"
         evidence = (f"refined idea present, all sections, "
                     f"{n_findings} finding(s) with evidence ({os.path.getsize(refined)} bytes)")
+        try:
+            publish_refined(state, lane, text)
+        except OSError as e:     # the record is for the human; never the gate's verdict
+            log(f"NOTICE: refined idea not published ({type(e).__name__}: {e})")
     elif kind == "gp":
         v_card, verdict_txt = latest_verdict_card(state, lane, "RVp")
         if verdict_txt is None:
@@ -4699,16 +4703,37 @@ def _publish_doc(path, text):
     return path
 
 
+def publish_refined(state, lane, text):
+    """Copy the lane's refined idea to `docs/superpowers/specs/` when its idea gate
+    opens, so it is on disk even for a lane that never reaches the code gate. Named by
+    run, not by feature (no plan exists yet), and overwritten in place: an idea rework
+    re-opens the gate with a new refined idea, and the accepted one is the last."""
+    lanes_n = board_lane_count(state)
+    name = (f"{datetime.date.today().isoformat()}-{_read_current_run() or 'unknown-run'}"
+            + (f"-lane-{lane}" if lanes_n > 1 else "") + "-design.md")
+    path = os.path.join(WORKDIR, "docs", "superpowers", "specs", name)
+    try:
+        with open(path, encoding="utf-8") as fh:
+            if fh.read() == text:
+                return
+    except FileNotFoundError:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    log(f"docs: refined idea published at {os.path.relpath(path, REPO)}")
+
+
 def publish_docs(state):
     """Publish what a passed run decided and why into the work directory's `docs/`, in
-    the superpowers layout: `docs/superpowers/plans/`, `docs/superpowers/specs/` and
-    `docs/reviews/`, every file named `YYYY-MM-DD-<feature>…`.
+    the superpowers layout: `docs/superpowers/plans/` and `docs/reviews/`, every file
+    named `YYYY-MM-DD-<feature>…` (the refined idea lands earlier, in `specs/`, when its
+    gate opens: `publish_refined`).
 
     COPIES. The hand-offs stay under runs/ — the document chain, run-audit E14 and the
     per-card paths depend on them — and the cards never write to `docs/`: work/ holds
     what the idea asks a human to receive, and this record is the driver's. Only a run
-    whose code gate passed publishes, and only the final plan, refined idea and newest
-    review verdicts, not every rework round. Returns the paths written."""
+    whose code gate passed publishes, and only the final plan and newest review
+    verdicts, not every rework round. Returns the paths written."""
     written = []
     docs = os.path.join(WORKDIR, "docs")
     today = datetime.date.today().isoformat()
@@ -4729,12 +4754,6 @@ def publish_docs(state):
         if plan is not None:
             written.append(_publish_doc(
                 os.path.join(docs, "superpowers", "plans", f"{name}.md"), plan))
-        try:
-            with open(paths["<REFINED>"], encoding="utf-8") as fh:
-                written.append(_publish_doc(
-                    os.path.join(docs, "superpowers", "specs", f"{name}-design.md"), fh.read()))
-        except OSError:
-            pass
         for prefix, label in (("RVp", "plan-review"), ("RVa", "implementation-review"),
                               ("RVc", "code-review")):
             card, verdict = _latest_verdict_card(state, lane, prefix)
