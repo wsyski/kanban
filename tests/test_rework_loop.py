@@ -928,7 +928,8 @@ GOOD_LOG = dict(complete="yes", mode="full", ran=3, failed=0, started=100)
 
 
 def _write_log(d, sha, complete="yes", mode="full", ran=3, failed=0, started=100, out=None,
-               files_failed=0, skipped_defect=0, commands=None, skipped=0):
+               files_failed=0, skipped_defect=0, commands=None, skipped=0, untagged=None,
+               lint=None):
     d.mkdir(parents=True, exist_ok=True)
     commands = ran + skipped if commands is None else commands
     (d / "probe-log.md").write_text(
@@ -936,7 +937,10 @@ def _write_log(d, sha, complete="yes", mode="full", ran=3, failed=0, started=100
         f"started-epoch: {started}\n\n## Pass: full\n\n"
         f"full-pass: files 2, files-failed {files_failed}, commands {commands}, ran {ran}, "
         f"exit0 {ran - failed}, failed {failed}, skipped {skipped}, skipped-defect "
-        f"{skipped_defect}\ncomplete: {complete}\n")
+        f"{skipped_defect}"
+        + (f", untagged {untagged}" if untagged is not None else "")
+        + (f", lint {lint}" if lint is not None else "")
+        + f"\ncomplete: {complete}\n")
 
 
 def _probed(tmp_path, monkeypatch, log_sha=None, plan_text="# Plan\n", **log):
@@ -1006,6 +1010,8 @@ def test_a_probe_log_of_an_earlier_plan_is_not_evidence(tmp_path, monkeypatch):
     ({"files_failed": 1}, "could not write 1"),
     ({"skipped_defect": 1, "skipped": 1}, "for a defect of the plan"),
     ({"out": "/elsewhere/probe"}, "a copied log"),
+    ({"untagged": 5}, "5 UNTAGGED"),
+    ({"lint": 2}, "2 LINT"),
 ])
 def test_a_partial_failing_or_copied_probe_is_not_evidence(tmp_path, monkeypatch, log, why):
     st = _probed(tmp_path, monkeypatch, log_sha=_sha(b"# Plan\n"), **log)

@@ -48,7 +48,8 @@ background (a dev server) is killed when it exits, so a check that needs one sta
 in the same command.
 
 Exit status: 0 when the full pass is clean (every file written, no defect skip, every
-command that ran exited 0, nothing TOUCHED, nothing UNTAGGED), 1 otherwise, 2 on a usage error. A non-zero
+command that ran exited 0, nothing TOUCHED, nothing UNTAGGED, no LINT defect — the
+rule-decidable parts of plan checklist items 1, 2, 4 and 6: `lint_plan`), 1 otherwise, 2 on a usage error. A non-zero
 probe is EVIDENCE for the card that ran it, never a reason to stop.
 """
 import argparse
@@ -605,6 +606,145 @@ def run_commands(commands, tree, *, workdir, runs, scratch, targets, timeout, lo
     return rows
 
 
+# --- lint: the checklist items a rule can decide -------------------------------------
+# Both findings of is-even's round-1 plan review (2026-09-30) were of this kind — step
+# tags and tick sentences — and cost a whole review round on a model that had passed the
+# probe. The rules are NECESSARY conditions only: a plan that passes them can still fail
+# its review, but a plan that fails one is defective whoever reads it. What needs
+# judgment (derived values, scope, a test's claim) stays the review's.
+_HEADING = re.compile(r"^\s*#{1,6}\s")
+_TOP_HEADING = re.compile(r"^\s*#{1,2}\s")
+_GIT_MECHANICS = re.compile(r"\bgit\b(?:\s+-[Cc]\s+\S+)*\s+(commit|push|stash)\b"
+                            r"|\bgit\b(?:\s+-[Cc]\s+\S+)*\s+(?:checkout\s+-b|switch\s+-c)\b")
+_CARD_MECHANICS = re.compile(r"\bhermes\s+(?:-p\s+\S+\s+)?kanban\b")
+_SPEC_LINE = re.compile(r"^\s*(?:[-*]\s*)?(?:\*\*)?Spec(?::\*\*|\*\*\s*:|:)\s*(.*)$")
+
+
+def _header_field(text, name):
+    """A header line `**Name:**`, `Name:` or a `## Name` heading."""
+    esc = re.escape(name)
+    return re.search(rf"^\s*(?:[-*]\s*)?(?:\*\*)?{esc}(?::\*\*|\*\*\s*:|:)"
+                     rf"|^\s*#{{1,6}}\s*{esc}\b", text, re.M | re.I) is not None
+
+
+def _unfenced(lines):
+    """[(index, line)] outside fenced blocks."""
+    out, fence = [], None
+    for i, line in enumerate(lines):
+        m = _FENCE.match(line)
+        if m:
+            if fence is None:
+                fence = m.group(2)
+            elif m.group(2)[0] == fence[0] and len(m.group(2)) >= len(fence) \
+                    and not m.group(3).strip():
+                fence = None
+            continue
+        if fence is None:
+            out.append((i, line))
+    return out
+
+
+def _steps(text):
+    """[{"where", "tag", "prose"}] — each step heading and its unfenced prose up to the
+    next step, task or top-level heading."""
+    lines = text.replace("\r\n", "\n").split("\n")
+    steps, task, cur = [], None, None
+    for i, line in _unfenced(lines):
+        m = _TASK.match(line)
+        if m:
+            task, cur = m.group(1), None
+            continue
+        m = _STEP.match(line)
+        n, tag = (m.group(1), m.group(2)) if m else (None, None)
+        if not m:
+            m = _STEP_ANY.match(line)
+            if m:
+                n = m.group(1) or m.group(2)
+        if n:
+            cur = {"where": f"Task {task} Step {n}" if task else f"Step {n}",
+                   "line": i + 1, "tag": tag, "prose": [line]}
+            steps.append(cur)
+            continue
+        if _TOP_HEADING.match(line):
+            cur = None
+            continue
+        if cur is not None:
+            cur["prose"].append(line)
+    for st in steps:
+        st["prose"] = "\n".join(st["prose"])
+    return steps
+
+
+def _md_section(text, name):
+    m = re.search(rf"^#+\s*{re.escape(name)}\b[^\n]*\n(.*?)(?=^#+\s|\Z)", text, re.M | re.S | re.I)
+    return m.group(1) if m else ""
+
+
+def spec_path(text):
+    """The path the plan's `Spec:` line names, or None."""
+    for line in text.replace("\r\n", "\n").split("\n"):
+        m = _SPEC_LINE.match(line)
+        if m:
+            p = re.search(r"[^\s`*'\"()]+\.md\b", m.group(1))
+            return p.group(0) if p else None
+    return None
+
+
+def lint_plan(text, files, commands):
+    """[(item, where, message)] — the plan checklist's rule-decidable defects:
+    item 1 the header, item 2 a success criterion no step names, item 4 a step with no
+    `Tick:` sentence and a path both a [TW] and a [C] step write, item 6 a Run command
+    that commits, branches, pushes, stashes or drives the board."""
+    out = []
+    text = text.replace("\r\n", "\n")
+    for name in ("Goal", "Architecture", "Tech Stack", "Spec"):
+        if not _header_field(text, name):
+            out.append((1, "header", f"no `{name}:` line"))
+    if not re.search(r"^\s*(?:#{1,6}\s*|\*\*)Global Constraints\b", text, re.M | re.I):
+        out.append((1, "header", "no Global Constraints section"))
+    if re.search(r"for agentic workers", text, re.I):
+        out.append((1, "header", "a \"For agentic workers\" line — this lane omits it"))
+    if re.search(r"^\s*#{1,6}\s*Execution Handoff\b", text, re.M | re.I):
+        out.append((1, "header", "an Execution Handoff section — this lane skips it"))
+    steps = _steps(text)
+    spec = spec_path(text)
+    if spec and os.path.isfile(spec):
+        with open(spec, encoding="utf-8", errors="replace") as fh:
+            spec_text = fh.read()
+        crit = _md_section(spec_text, "Success criteria")
+        recipe = _md_section(spec_text, "Verification recipe")
+        named = "\n".join(st["prose"] for st in steps)  # a missing tag is UNTAGGED's
+        for sc in dict.fromkeys(re.findall(r"^\s*[-*]\s*(?:\*\*)?(SC\d+)\b", crit, re.M)):
+            manual = [l for l in (crit + "\n" + recipe).split("\n")
+                      if re.search(rf"\b{sc}\b", l) and "manual at gc" in l.lower()]
+            if not manual and not re.search(rf"\b{sc}\b", named):
+                out.append((2, sc, f"{sc} is named by no step (\"covers {sc}\") "
+                                   f"and is not `manual at Gc` in the spec"))
+    elif spec:
+        out.append((1, "header", f"the Spec line names {spec}, which does not exist"))
+    for st in steps:
+        if not re.search(r"\bTick\b\s*(?:\*\*)?\s*:", st["prose"]):
+            out.append((4, st["where"], "no `Tick:` sentence — say what ticks this step's box"))
+    by_tag = {}
+    for f in files:
+        if f["tag"] in ("TW", "C"):
+            by_tag.setdefault(os.path.normpath(f["path"]), {}).setdefault(f["tag"], f["where"])
+    for path, tags in sorted(by_tag.items()):
+        if len(tags) > 1:
+            out.append((4, f"{tags['TW']} / {tags['C']}",
+                        f"`{path}` is written by a [TW] and a [C] step — the TW and C cards "
+                        f"write the tree at the same time, so their files must be disjoint"))
+    for c in commands:
+        m = _GIT_MECHANICS.search(c["cmd"])
+        if m:
+            out.append((6, c["where"], f"`{m.group(0)}` — no step commits, branches, pushes "
+                                       f"or stashes"))
+        elif _CARD_MECHANICS.search(c["cmd"]):
+            out.append((6, c["where"], "a `hermes kanban` command — no step carries card "
+                                       "mechanics"))
+    return out
+
+
 def untagged(files, commands):
     """Where each file block and Run command that sits under no tagged step is, in plan
     order: `["line 40: file test_is_even.py", "Task 2 Step 2: Run: pytest …"]`."""
@@ -699,7 +839,7 @@ def main(argv=None):
             lines += ["full-pass: " + ", ".join(
                 f"{k} {summary.get(k, 0)}" for k in
                 ("files", "files-failed", "commands", "ran", "exit0", "failed", "skipped",
-                 "skipped-defect", "untagged"))]
+                 "skipped-defect", "untagged", "lint"))]
         lines += [f"complete: {'yes' if complete else 'no'}", ""]
         tmp = log_path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
@@ -732,6 +872,13 @@ def main(argv=None):
             else:
                 shutil.rmtree(p)
     loose = untagged(files, commands)
+    lint = lint_plan(raw.decode("utf-8", "replace"), files, commands)
+    if lint:
+        body += [f"LINT: {len(lint)} defect(s) of the plan — checklist items a rule decides; "
+                 f"each is a finding as it stands, and fixed by editing the plan:", ""]
+        body += [f"- item {item}: {where}: {msg}" for item, where, msg in lint] + [""]
+    else:
+        body += ["LINT: clean (the rule-decidable parts of checklist items 1, 2, 4 and 6)", ""]
     if loose:
         nf = sum(1 for e in files if not e["tag"])
         body += [f"UNTAGGED: {nf} file block(s) and {len(loose) - nf} Run command(s) sit under "
@@ -745,7 +892,7 @@ def main(argv=None):
         # steps of the tags that remain — what the TW card's run would see on its own.
         passes.append((f"without-{a.without}", a.without,
                        {t for t in ("TW", "C", "TI") if t != a.without}))
-    worst = 1 if loose else 0
+    worst = 1 if loose or lint else 0
     # A signal the probe was started to ignore stays ignored: `nohup` ignores SIGHUP so
     # the probe outlives the terminal, and a background job ignores SIGINT.
     old_handlers = {s: signal.signal(s, _on_signal)
@@ -770,6 +917,7 @@ def main(argv=None):
                 summary["files"] = sum(1 for r in frows if r.get("written"))
                 summary["files-failed"] = sum(1 for r in frows if r.get("failed"))
                 summary["untagged"] = len(loose)
+                summary["lint"] = len(lint)
                 if summary["files-failed"]:
                     worst = 1
             write_log()

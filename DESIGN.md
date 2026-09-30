@@ -152,6 +152,27 @@ Gi(n)      ──REWORK───────→ I(n)-rev-N          → Gi(n)-r(
   running them, and the reviewer that built the files by hand (against "Item 8 is the one
   command you run") found the defects; on 2026-09-28 a reviewer that read instead passed
   a plan whose build could never succeed, and the code card paid 107 minutes for it.
+- **The probe also lints — what a rule can decide is not left to a reader.** `lint_plan`
+  checks the necessary conditions of plan checklist items 1 (header fields, Global
+  Constraints, no "For agentic workers", no Execution Handoff, a `Spec:` that exists), 2
+  (every `SCn` in the spec's Success criteria is named by some step, unless the spec marks
+  it `manual at Gc`), 4 (every step has a `Tick:` sentence; no path is written by both a
+  [TW] and a [C] step) and 6 (no Run command commits, pushes, stashes, branches or runs
+  `hermes kanban`), and `untagged` lists every file block and Run command under a step
+  heading with no tag, or under none (a tagless heading ends the step before it, so what
+  follows never inherits its tag). Both land in the log (`LINT:`, `UNTAGGED:`) and the
+  footer (`lint n`, `untagged n`), and either makes the probe exit 1. Calibrated on every
+  plan under `boards/*/runs/` on 2026-09-30: the accepted plans lint clean; the rejected
+  one gets both of its review's findings. Why: is-even's round-1 plan review
+  (2026-09-30) rejected five untagged step headings and two steps with no tick sentence —
+  the probe had passed the plan, and the round cost 13.6 minutes on the local model.
+- **The driver writes the review header.** `stamp_review_header` puts
+  `review_header` on a review card's `review.md` before attaching it: card and run,
+  verdict, plan, spec, what was judged (the plan version for RVp, the lane's patches for
+  RVa/RVc), the previous round with its verdict, and the probe log's tally with whether it
+  is of the plan as it is now. Once (a marker line), and the review bodies tell the card
+  to start at its verdict and findings. Why: the same round-1 review wrote its own header
+  and named the plan card's id as its "previous review".
 - **A plan-review PASS needs a probe log for the plan it passed.** `latest_verdict_card`
   reads a RVp PASS as `REJECT: UNPROBED PASS` unless `scratch/<card>/probe/probe-log.md`
   (read by `probe.read_log` — header fields before the first pass, the tally from the
@@ -160,8 +181,8 @@ Gi(n)      ──REWORK───────→ I(n)-rev-N          → Gi(n)-r(
   started after the card did (`started_at`, else its earliest run), records the sha256
   of the plan's bytes, says `complete: yes` (the probe rewrites the log after every
   step), ran in full mode, and shows a clean full pass: every file block written, no
-  command skipped as a defect, at least one command run (unless every one is the
-  operator's) and none failed. The sha is the live <PLAN>'s — or, when <PLAN> was edited
+  command skipped as a defect, no LINT or UNTAGGED defect, at least one command run
+  (unless every one is the operator's) and none failed. The sha is the live <PLAN>'s — or, when <PLAN> was edited
   AFTER the review finished (a person at the plan gate, as gp-body invites), the plan as
   the review saw it: the hand-off copy it judged, or the plan the driver recorded the
   log as accepted for (`runs/<run>/probe-accepted/`). An edit made before the review

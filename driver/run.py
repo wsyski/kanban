@@ -887,8 +887,8 @@ def unprobed_review(card, lane, state=None):
       its copy, a reviewer fixing <PLAN> instead of the probe's copy) is not excused;
     - it is complete (`complete: no` until the probe's last line), from a full run (not
       --files-only), with every file block written, no Run command skipped for a defect
-      of the plan, at least one command run (unless every command is the operator's —
-      a deploy, a target root) and none failed."""
+      of the plan, no LINT or UNTAGGED defect, at least one command run (unless every
+      command is the operator's — a deploy, a target root) and none failed."""
     expected = os.path.join(STATE.run_dir, "scratch", str(card.get("id")), "probe")
     log_path = os.path.join(expected, "probe-log.md")
     rel = os.path.relpath(log_path, REPO)
@@ -937,6 +937,12 @@ def unprobed_review(card, lane, state=None):
     if info.get("skipped-defect"):
         return (f"its probe skipped {info['skipped-defect']} Run command(s) for a defect of "
                 f"the plan (a placeholder, the real work directory, a blocked shape)")
+    if info.get("lint") or info.get("untagged"):
+        # The rule-decidable checklist items (probe.lint_plan) and step tags: a defect
+        # that no reading can argue away, so a PASS over it is a REJECT not yet written.
+        parts = [f"{info[k]} {k.upper()}" for k in ("lint", "untagged") if info.get(k)]
+        return (f"its probe lists {' and '.join(parts)} defect(s) of the plan — a PASS over "
+                f"them is not a verdict; REJECT with each as a finding")
     commands, ran = info.get("commands") or 0, info.get("ran") or 0
     if not commands:
         return "its probe found no Run command in the plan"
@@ -2929,6 +2935,120 @@ HANDOFF_NAMES = ("refined.md", "plan.md", "patch.diff", "patch-code.diff", "test
                  "review.md")
 
 
+REVIEW_HEADER_MARK = "<!-- review header: written by the driver from its own record -->"
+_REVIEW_CODE = re.compile(r"^(RVp|RVa|RVc)(\d+)(?:-r(\d+))?$")
+
+
+def _newest_done(state, pattern, before, exclude=None):
+    """The newest done card whose title matches `pattern` and that completed before
+    `before` — never `exclude`."""
+    pat = re.compile(pattern)
+    best, best_at = None, -1.0
+    for title, c in state.items():
+        if c is exclude or c.get("status") != "done" or not pat.match(title):
+            continue
+        at = c.get("completed_at") or 0
+        if at <= before and at > best_at:
+            best, best_at = c, at
+    return best
+
+
+def _verdict_of(card):
+    """A review card's verdict text: its result, else its closing completed run's
+    summary (a reviewer that completed with `summary` only) — "" when neither is readable."""
+    text = (card.get("result") or "").strip()
+    if text:
+        return text
+    runs = runs_util.board_runs(BOARD, card.get("id")) or []
+    closed = [r for r in runs if r.get("outcome") == "completed"]
+    return (max(closed, key=lambda r: r.get("ended_at") or 0).get("summary") or "").strip() \
+        if closed else ""
+
+
+def _verdict_word(text):
+    return ("REWORK" if is_rework(text) else verdict_token(text)) or "none recorded"
+
+
+def review_header(state, card):
+    """The facts at the top of a review card's review.md, from the driver's record rather
+    than the reviewer's: which card and run, its verdict, the plan and spec, what it
+    judged (the plan version, or the lane's patches), the previous round and the probe's
+    tally. is-even's round-1 plan review (2026-09-30) wrote its own header and named the
+    PLAN card's id as its "previous review"; a header the driver writes cannot."""
+    code = card["title"].split(":")[0]
+    m = _REVIEW_CODE.match(code)
+    fam, lane, rnd = m.group(1), int(m.group(2)), int(m.group(3) or 1)
+    label = REVIEW_DOC_LABELS[fam].replace("-", " ").capitalize()
+    paths = card_render.lane_paths(REPO, BOARD, lane, run_root=STATE.run_dir)
+    scratch = lambda cid, *name: os.path.join(STATE.run_dir, "scratch", str(cid), *name)
+    rel = lambda p: os.path.relpath(p, REPO)
+    done_at = card.get("completed_at") or float("inf")
+    spec = paths["<REFINED>"] if os.path.isfile(paths["<REFINED>"]) else paths["<IDEA>"]
+    lines = [REVIEW_HEADER_MARK, f"# {label} — lane {lane}, round {rnd} ({code})", "",
+             f"- Card: {code} `{card.get('id')}` — {_read_current_run() or 'unknown-run'}",
+             f"- Verdict: {_verdict_word(_verdict_of(card))}",
+             f"- Plan: `{rel(paths['<PLAN>'])}`",
+             f"- Spec: `{rel(spec)}`"]
+    if fam == "RVp":
+        judged = _newest_done(state, rf"^P{lane}(?::|-rev-\d+:)", done_at)
+        if judged:
+            lines.append(f"- Judged: {judged['title'].split(':')[0]} `{judged.get('id')}` — "
+                         f"`{rel(scratch(judged.get('id'), 'plan.md'))}`")
+    else:
+        patches = []
+        for base in ("TW", "C", "TI"):
+            w = _newest_done(state, rf"^{base}{lane}(?::|-rev-\d+:)", done_at)
+            if not w:
+                continue
+            names = [n for n in PATCH_NAMES if os.path.isfile(scratch(w.get("id"), n))]
+            patches.append(f"{w['title'].split(':')[0]} `{w.get('id')}` "
+                           + (", ".join(names) if names else "(no patch)"))
+        lines.append("- Patches: " + ("; ".join(patches) if patches else "none"))
+    prev = _newest_done(state, rf"^{fam}{lane}(?::|-r\d+:)", done_at, exclude=card)
+    if prev:
+        pcode = prev["title"].split(":")[0]
+        lines.append(f"- Previous round: {pcode} `{prev.get('id')}` — "
+                     f"{_verdict_word(_verdict_of(prev))} — "
+                     f"`{rel(scratch(prev.get('id'), 'review.md'))}`")
+    else:
+        lines.append("- Previous round: none — this is the first")
+    log_path = scratch(card.get("id"), "probe", "probe-log.md")
+    info = probe.read_log(log_path) if os.path.isfile(log_path) else None
+    if info is not None:
+        try:
+            now = "this plan" if info.get("sha") == _sha_file(paths["<PLAN>"]) else \
+                "NOT the plan as it is now"
+        except OSError:
+            now = "a plan that cannot be read now"
+        g = lambda k: info.get(k, 0)
+        lines.append(
+            f"- Probe: `{rel(log_path)}` — plan sha256 {str(info.get('sha'))[:12]} ({now}), "
+            f"{'complete' if info.get('complete') else 'INCOMPLETE'}, {info.get('mode')}; "
+            f"full pass: {g('files')} file(s), {g('files-failed')} failed; {g('commands')} "
+            f"command(s): {g('exit0')} exit 0, {g('failed')} failed, {g('skipped')} skipped "
+            f"({g('skipped-defect')} defect); {g('untagged')} untagged, {g('lint')} lint")
+    elif fam == "RVp":
+        lines.append(f"- Probe: none at `{rel(log_path)}`")
+    return "\n".join(lines + ["", "---", "", ""])
+
+
+def stamp_review_header(state, card):
+    """Put `review_header` on a finished review card's review.md, once: before the driver
+    attaches it, so the attached copy, the revision that reads it and the published one
+    all carry it. True when it wrote."""
+    code = card["title"].split(":")[0]
+    path = os.path.join(STATE.run_dir, "scratch", str(card.get("id")), "review.md")
+    if not _REVIEW_CODE.match(code) or os.path.islink(path) or not os.path.isfile(path):
+        return False
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        body = fh.read()
+    if not body.strip() or body.startswith(REVIEW_HEADER_MARK):
+        return False
+    header = review_header(state, card)
+    _write_atomic(path, lambda f: f.write(header + body))
+    return True
+
+
 def attach_hand_offs(state):
     """Attach every finished card's hand-off files, once each.
 
@@ -2954,6 +3074,12 @@ def attach_hand_offs(state):
             for name in want:
                 if name in have:
                     continue
+                if name == "review.md":
+                    try:
+                        stamp_review_header(state, card)
+                    except OSError as e:     # the header is for the reader; never the attach
+                        log(f"NOTICE: review header not written for "
+                            f"{card['title'].split(':')[0]} ({type(e).__name__}: {e})")
                 kb("attach", card["id"], os.path.join(d, name))
                 log(f"attached {name} to {card['title'].split(':')[0]} (driver)")
             if "-rev-" in card["title"]:
@@ -4818,7 +4944,15 @@ def publish_review(state, card, verdict):
     full = os.path.join(STATE.run_dir, "scratch", str(card.get("id")), "review.md")
     if os.path.isfile(full):
         with open(full, encoding="utf-8", errors="replace") as fh:
-            body += f"\n---\n\n{fh.read()}"
+            review = fh.read()
+        if review.startswith(REVIEW_HEADER_MARK):
+            # The driver's header already names the card, run and round: the verdict goes
+            # under it, not above a second title.
+            head, sep, rest = review.partition("\n---\n")
+            body = (f"{head}\n\n## Verdict\n\n{verdict.strip()}\n{sep}{rest}" if sep
+                    else f"{review}\n\n## Verdict\n\n{verdict.strip()}\n")
+        else:
+            body += f"\n---\n\n{review}"
     written = _publish_run_doc(os.path.join(WORKDIR, "docs", "reviews",
                                             f"{stem}-{label}-r{rnd}.md"),
                                body, _doc_mark(lane, code))

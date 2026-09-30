@@ -1862,6 +1862,85 @@ def test_every_review_round_is_published_as_it_lands(monkeypatch, tmp_path):
         os.path.basename(a), os.path.basename(b)]
 
 
+def _review_state(tmp_path):
+    st = {}
+    for title, cid, at, result in (
+            ("P1: plan - lane 1", "p1", 5, "plan"),
+            ("RVp1: plan review - lane 1", "rv1", 10, "REJECT: 1. untagged"),
+            ("P1-rev-1: plan revision round 1 - lane 1", "prev1", 15, "fixed"),
+            ("RVp1-r2: plan review round 2 - lane 1", "rv2", 20, "PASS: checklist 1-8 hold"),
+            ("TW1: tests - lane 1", "tw1", 25, "wrote tests"),
+            ("C1: code - lane 1", "c1", 26, "wrote code"),
+            ("RVa1: implementation review - lane 1", "rva1", 30, "PASS: (a)-(f) hold")):
+        st[title] = card(title, cid, status="done", completed_at=at, result=result)
+    scratch = tmp_path / "runs" / "run-1" / "scratch"
+    for cid in ("rv1", "rv2", "rva1"):
+        (scratch / cid).mkdir(parents=True)
+        (scratch / cid / "review.md").write_text(f"## Findings\n\n{cid} body\n")
+    for cid in ("tw1", "c1"):
+        (scratch / cid).mkdir(parents=True)
+        (scratch / cid / "patch.diff").write_text("+++ b/x\n")
+    plan = tmp_path / "runs" / "run-1" / "artifacts" / "lane-1" / "plan.md"
+    import hashlib
+    (scratch / "rv2" / "probe").mkdir()
+    (scratch / "rv2" / "probe" / "probe-log.md").write_text(
+        f"# Probe log\n\nplan-sha256: {hashlib.sha256(plan.read_bytes()).hexdigest()}\n"
+        f"mode: full\n\n## Pass: full\n\nfull-pass: files 2, files-failed 0, commands 3, "
+        f"ran 3, exit0 3, failed 0, skipped 0, skipped-defect 0, untagged 0, lint 1\n"
+        f"complete: yes\n")
+    return st, scratch
+
+
+def test_the_driver_writes_a_review_header_from_its_own_record(monkeypatch, tmp_path):
+    """is-even, 2026-09-30: round 1's self-written header named the PLAN card's id as its
+    previous review. The facts in the header are the driver's, not the reviewer's."""
+    _docs_env(monkeypatch, tmp_path)
+    st, scratch = _review_state(tmp_path)
+    r2 = st["RVp1-r2: plan review round 2 - lane 1"]
+    assert run.stamp_review_header(st, r2) is True
+    text = (scratch / "rv2" / "review.md").read_text()
+    assert text.startswith(run.REVIEW_HEADER_MARK)
+    assert "# Plan review — lane 1, round 2 (RVp1-r2)" in text
+    assert "- Card: RVp1-r2 `rv2` — run-1" in text and "- Verdict: PASS" in text
+    assert "- Judged: P1-rev-1 `prev1` — `runs/run-1/scratch/prev1/plan.md`" in text
+    assert "- Previous round: RVp1 `rv1` — REJECT — `runs/run-1/scratch/rv1/review.md`" in text
+    assert "(this plan), complete, full" in text and "0 untagged, 1 lint" in text
+    assert text.endswith("---\n\n## Findings\n\nrv2 body\n"), "the reviewer's text follows"
+    assert run.stamp_review_header(st, r2) is False, "once"
+    r1 = st["RVp1: plan review - lane 1"]
+    run.stamp_review_header(st, r1)
+    text = (scratch / "rv1" / "review.md").read_text()
+    assert "- Judged: P1 `p1`" in text and "- Previous round: none — this is the first" in text
+    assert "- Probe: none at `runs/run-1/scratch/rv1/probe/probe-log.md`" in text
+
+
+def test_an_implementation_review_header_names_the_lanes_patches(monkeypatch, tmp_path):
+    _docs_env(monkeypatch, tmp_path)
+    st, scratch = _review_state(tmp_path)
+    run.stamp_review_header(st, st["RVa1: implementation review - lane 1"])
+    text = (scratch / "rva1" / "review.md").read_text()
+    assert "# Implementation review — lane 1, round 1 (RVa1)" in text
+    assert "- Patches: TW1 `tw1` patch.diff; C1 `c1` patch.diff" in text
+    assert "Probe:" not in text and "Judged:" not in text
+    assert not run.stamp_review_header(st, st["C1: code - lane 1"]), "a worker's hand-off is its own"
+
+
+def test_the_header_is_on_the_file_before_it_is_attached(monkeypatch, tmp_path):
+    _docs_env(monkeypatch, tmp_path)
+    st, scratch = _review_state(tmp_path)
+    r2 = st["RVp1-r2: plan review round 2 - lane 1"]
+    seen = []
+    monkeypatch.setattr(run, "card_show", lambda cid: {"events": []})
+    monkeypatch.setattr(run, "kb", lambda *a, **k: seen.append(open(a[2]).read()))
+    monkeypatch.setattr(run.STATE, "attached", set())
+    run.attach_hand_offs({r2["title"]: r2})
+    assert len(seen) == 1 and seen[0].startswith(run.REVIEW_HEADER_MARK)
+    published = run.publish_review({}, r2, r2["result"])
+    body = open(published).read()
+    assert body.startswith(run.REVIEW_HEADER_MARK) and body.count("# Plan review") == 1
+    assert "## Verdict\n\nPASS: checklist 1-8 hold" in body and "rv2 body" in body
+
+
 def test_only_the_newest_pass_of_a_review_family_carries_its_deviations(monkeypatch, tmp_path):
     """RVa PASS → RVc REJECT → a code revision → RVa-r2 PASS: the revision may have
     reverted what the first PASS accepted, so only the newest verdict counts."""

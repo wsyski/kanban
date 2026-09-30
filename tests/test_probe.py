@@ -7,6 +7,7 @@ probe promises the cards: the plan's own text in, a log out, and nothing it runs
 touch the work directory a human receives.
 """
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -50,6 +51,17 @@ Run: `gradle deploy`
 Run: `unzip -l <archive>`
 Run: `ls /srv/target-root`
 """
+
+
+_HEADER = ("# P\n\n**Goal:** g\n\n**Architecture:** a\n\n**Tech Stack:** t\n\n"
+           "**Spec:** the raw idea\n\n## Global Constraints\n\n- none\n\n")
+
+
+def _clean(plan):
+    """A plan the linter passes: the header, and a Tick sentence under every step — for
+    tests about something else."""
+    return _HEADER + re.sub(r"^(- \[ \] \*\*Step[^\n]*)$", r"\1\n\nTick: on its output.",
+                            plan, flags=re.M)
 
 
 def _setup(tmp_path):
@@ -175,11 +187,11 @@ def test_a_patch_applies_inside_the_tree_even_under_a_git_repository(tmp_path):
     import subprocess
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     w, r, plan, out = _setup(tmp_path)
-    plan.write_text("- [ ] **Step 1 [C]: patch**\n\n"
+    plan.write_text(_clean("- [ ] **Step 1 [C]: patch**\n\n"
                     "```diff patch=src/keep.txt\n"
                     "diff --git a/src/keep.txt b/src/keep.txt\n"
                     "--- a/src/keep.txt\n+++ b/src/keep.txt\n"
-                    "@@ -1 +1 @@\n-already here\n+patched\n```\n")
+                    "@@ -1 +1 @@\n-already here\n+patched\n```\n"))
     assert _run(w, r, plan, out, "--files-only") == 0
     assert (out / "tree" / "src" / "keep.txt").read_text() == "patched\n"
     assert (w / "src" / "keep.txt").read_text() == "already here\n"
@@ -301,8 +313,8 @@ def test_git_in_the_tree_never_reaches_a_repository_above_it(tmp_path):
 def test_a_git_controlled_work_directory_gives_the_tree_its_own_repository(tmp_path):
     w, r, plan, out = _setup(tmp_path)
     subprocess.run(["git", "init", "-q", str(w)], check=True)
-    plan.write_text("- [ ] **Step 1 [C]: git**\n\nRun: `git rev-parse --show-toplevel`\n"
-                    "Run: `git status --porcelain`\n")
+    plan.write_text(_clean("- [ ] **Step 1 [C]: git**\n\nRun: `git rev-parse --show-toplevel`\n"
+                    "Run: `git status --porcelain`\n"))
     assert _run(w, r, plan, out) == 0, (out / "probe-log.md").read_text()
     log = (out / "probe-log.md").read_text()
     assert f"    {out / 'tree'}" in log and "fresh repository" in log
@@ -320,9 +332,9 @@ def test_a_file_block_that_fails_fails_the_probe(tmp_path):
 
 def test_a_patch_without_git_prefixes_applies_at_the_tree_root(tmp_path):
     w, r, plan, out = _setup(tmp_path)
-    plan.write_text("- [ ] **Step 1 [C]: patch**\n\n"
+    plan.write_text(_clean("- [ ] **Step 1 [C]: patch**\n\n"
                     "```diff patch=src/keep.txt\n--- src/keep.txt\n+++ src/keep.txt\n"
-                    "@@ -1 +1 @@\n-already here\n+patched\n```\n")
+                    "@@ -1 +1 @@\n-already here\n+patched\n```\n"))
     assert _run(w, r, plan, out, "--files-only") == 0
     assert (out / "tree" / "src" / "keep.txt").read_text() == "patched\n"
 
@@ -391,7 +403,7 @@ def test_an_ignored_hangup_stays_ignored(tmp_path):
     """`nohup` ignores SIGHUP so the probe outlives the terminal: the probe must not
     re-arm it."""
     w, r, plan, out = _setup(tmp_path)
-    plan.write_text("- [ ] **Step 1 [C]: wait**\n\nRun: `sleep 1`\n")
+    plan.write_text(_clean("- [ ] **Step 1 [C]: wait**\n\nRun: `sleep 1`\n"))
     here = os.path.dirname(os.path.abspath(__file__))
     p = subprocess.Popen([sys.executable, os.path.join(here, "..", "template", "probe.py"),
                           "--plan", str(plan), "--out", str(out), "--workdir", str(w),
@@ -406,7 +418,7 @@ def test_an_ignored_hangup_stays_ignored(tmp_path):
 
 def test_a_command_that_leaves_a_server_running_is_not_a_timeout(tmp_path):
     w, r, plan, out = _setup(tmp_path)
-    plan.write_text("- [ ] **Step 1 [C]: serve**\n\nRun: `sleep 30 & echo started`\n")
+    plan.write_text(_clean("- [ ] **Step 1 [C]: serve**\n\nRun: `sleep 30 & echo started`\n"))
     t0 = time.time()
     assert _run(w, r, plan, out, "--timeout", "10") == 0
     assert time.time() - t0 < 8
@@ -451,7 +463,7 @@ def test_an_ide_polling_git_in_the_work_directory_is_not_a_touch(tmp_path, monke
     (w / ".git").mkdir()
     (w / ".git" / "index").write_text("x")
     monkeypatch.setenv("PROBE_TEST_W", str(w))
-    plan.write_text("- [ ] **Step 1 [C]: ide**\n\nRun: `echo y > \"$PROBE_TEST_W/.git/index\"`\n")
+    plan.write_text(_clean("- [ ] **Step 1 [C]: ide**\n\nRun: `echo y > \"$PROBE_TEST_W/.git/index\"`\n"))
     assert _run(w, r, plan, out) == 0
     assert "TOUCHED" not in (out / "probe-log.md").read_text()
 
@@ -486,8 +498,60 @@ def test_an_untagged_step_heading_is_a_defect_and_never_inherits_a_tag(tmp_path)
 
 def test_a_without_pass_with_nothing_to_run_is_named_but_not_a_failure(tmp_path):
     w, r, plan, out = _setup(tmp_path)
-    plan.write_text("- [ ] **Step 1 [C]: only code**\n\nRun: `true`\n")
+    plan.write_text(_clean("- [ ] **Step 1 [C]: only code**\n\nRun: `true`\n"))
     assert _run(w, r, plan, out, "--also-without", "C") == 0
     log = (out / "probe-log.md").read_text()
     assert "UNTAGGED" not in log and "NO COMMAND in this pass" in log
     assert _log(out)["untagged"] == 0
+
+
+def _spec(tmp_path):
+    spec = tmp_path / "refined.md"
+    spec.write_text("# refined\n\n## Verification recipe\n- SC1: `pytest`\n"
+                    "- SC3: `manual at Gc` — a person looks\n\n## Success criteria\n"
+                    "- SC1: the four cases pass\n- SC2: nothing else is left\n"
+                    "- SC3: it looks right\n\n## Prior art\nnone\n")
+    return spec
+
+
+def test_the_lint_finds_what_a_rule_can_decide(tmp_path):
+    """is-even, 2026-09-30: both round-1 findings (no tags, no tick sentences) were
+    rule-decidable, and the round cost 13.6 minutes on the local model."""
+    w, r, plan, out = _setup(tmp_path)
+    spec = _spec(tmp_path)
+    plan.write_text(
+        f"# X Implementation Plan\n\n> **For agentic workers:** use a skill\n\n**Goal:** g\n\n"
+        f"**Architecture:** a\n\n**Tech Stack:** t\n\n**Spec:** `{spec}`\n\n"
+        "### Task 1: tests\n- [ ] **Step 1 [TW]: tests (covers SC1)**\n\n"
+        "```python file=test_x.py\nx = 1\n```\n\n```text\nTick: inside a fence is not one\n```\n\n"
+        "### Task 2: code\n- [ ] **Step 1 [C]: code**\n\n```python file=./test_x.py\nx = 2\n```\n\n"
+        "Run: `git -C . commit -m x`\n\nTick: on its output.\n\n"
+        "- [ ] **Step 2 [C]: board**\n\nRun: `hermes kanban --board b list`\n\n"
+        "**Tick:** on its output.\n\n## Execution Handoff\n\nnone\n")
+    lint = probe.lint_plan(plan.read_text(), *probe.parse_plan(plan.read_text()))
+    got = {(item, where) for item, where, _ in lint}
+    assert got == {(1, "header"), (2, "SC2"), (4, "Task 1 Step 1"),
+                   (4, "Task 1 Step 1 / Task 2 Step 1"), (6, "Task 2 Step 1"),
+                   (6, "Task 2 Step 2")}, lint
+    msgs = " ".join(m for _, _, m in lint)
+    assert "Global Constraints" in msgs and "agentic" in msgs and "Execution Handoff" in msgs
+    assert "SC3" not in {w for _, w, _ in lint}, "manual at Gc is covered"
+    assert _run(w, r, plan, out) == 1
+    log = (out / "probe-log.md").read_text()
+    assert f"LINT: {len(lint)} defect(s)" in log and "- item 6: Task 2 Step 1: `git -C . commit`" in log
+    assert _log(out)["lint"] == len(lint)
+
+
+def test_a_complete_plan_lints_clean_and_a_missing_spec_is_named(tmp_path):
+    w, r, plan, out = _setup(tmp_path)
+    spec = _spec(tmp_path)
+    plan.write_text(f"# X\n\n**Goal:** g\n**Architecture:** a\n**Tech Stack:** t\n"
+                    f"**Spec:** {spec}\n\n## Global Constraints\n- none\n\n"
+                    "### Task 1: x\n- [ ] **Step 1 [C]: run (covers SC1, SC2)**\n\n"
+                    "Run: `true`\n\nExpected: exit 0. Tick: on the exit status.\n")
+    assert probe.lint_plan(plan.read_text(), *probe.parse_plan(plan.read_text())) == []
+    assert _run(w, r, plan, out) == 0
+    assert "LINT: clean" in (out / "probe-log.md").read_text()
+    assert probe.lint_plan(plan.read_text().replace(str(spec), str(tmp_path / "gone.md")),
+                           [], []) == [(1, "header", f"the Spec line names "
+                                                     f"{tmp_path / 'gone.md'}, which does not exist")]
