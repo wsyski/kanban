@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(journalctl *)",
+      "Bash(./test.sh)",
+      "Bash(./test.sh *)",
+      "Bash(systemctl --user status *)",
+      "Bash(systemctl --user is-active *)",
+      "Bash(systemctl is-active *)",
+      "Bash(systemctl show *)",
+      "Bash(hermes kanban list *)",
+      "Bash(hermes kanban show *)",
+      "Bash(hermes --version)",
+      "Bash(ocr scan *)",
+      "Bash(ocr rules *)",
+      "Bash(driver/run-audit.py *)",
+      "Bash(python3 driver/render-flow.py --check)"
+    ]
+  }
+}

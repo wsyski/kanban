@@ -10,8 +10,9 @@ target/
 # `GIT ABSENT — nothing staged` instead (worker contract, GIT IS OPTIONAL).
 #
 # An installed dependency tree (node_modules/) and tool caches never belong in
-# work/ at all: node_modules/ is reproducible from a lockfile, a cache is not a
-# deliverable, and a run that leaves one in work/ fails the audit (E16).
+# work/ at all: node_modules/ is reproducible from a lockfile, and a cache is not a
+# deliverable. The audit NOTES one it finds in work/ (E16) and leaves it in place —
+# a note, never a failure, because the board deletes nothing.
 node_modules/
 .pytest_cache/
 __pycache__/
@@ -26,6 +27,10 @@ boards/*/work/
 
 # Verdict texts captured by hand from real runs; nothing reads them.
 tests/integration/verdicts/
+
+# Claude Code: settings.json is the repo's shared allow-list; the local file is
+# one person's.
+.claude/settings.local.json
 
 # IDE
 .idea/

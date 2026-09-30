@@ -38,3 +38,46 @@ driver cannot complete a `coder` card without racing the dispatcher), three-card
 rounds (P-rev → Lp-r → RVp-r), archiving the waiting RVp and relinking Gp on a lint
 REJECT, and audit / doc-chain / flow-diagram changes — about 15 files for the same saved
 round.
+
+## Save a card that times out after its work is done
+
+**Status:** deferred 2026-09-30 — one occurrence, and the next run did not repeat it.
+
+**Evidence.** is-even `run-20260930-094959`: P1 wrote a correctly tagged plan, its probe
+was clean (4 commands, 4 exit 0), and it copied the plan to its scratch at 08:26:07 UTC.
+The runtime ceiling killed it 21 s later (`elapsed 1803s > limit 1800s`), retries were
+spent, and the board halted: 30 minutes of good work lost. The next run's P1 took
+4.4 minutes on the same model, so the cause looks like model variance, not the card.
+
+**Trigger.** A second card is killed by its ceiling while its hand-off is already in
+its scratch directory and — for P — a complete, clean probe log records that hand-off's
+sha256.
+
+**Smallest version.** In the escalation path, before halting: for a P card whose
+`plan.md` hand-off exists and whose `probe-log.md` is complete, full-pass clean, lint and
+untagged 0, and records that plan's sha, complete the card as `SALVAGED: <reason>` and let
+the plan review judge the plan as usual. Only P at first; the other cards' hand-offs
+have no probe to vouch for them.
+
+## Rewrite the plan card's body as a fill-in template
+
+**Status:** deferred 2026-09-30 — start only after the plan-lint entry above has been
+measured, so the two changes can be told apart.
+
+**Why.** `p-body.txt` plus `_plan-checklist.txt` are about 18 KB, most of it paragraphs
+of 300–500 words. A local 27B model follows a literal template more reliably than a
+description of one, and the two defects of is-even's round-1 plan review (step tags,
+tick sentences) were format misses, not reasoning ones. A template is also less text to
+keep consistent with `probe.py`'s parser and linter.
+
+**Smallest version.** Render into the card a plan skeleton with every slot the probe and
+the checklist read — the header lines (`**Goal:**`, `**Architecture:**`,
+`**Tech Stack:**`, `**Spec:**`), `## Global Constraints`, `### Task n` with `**Files:**`
+and `**Interfaces:**`, `- [ ] **Step n [TW|C|TI]: …**`, the fenced `file=`/`patch=`
+blocks, `Run:` lines and the `Tick:` sentence — with one short note per slot, and cut
+the prose that only describes that shape. Keep the rules that need judgment (derived
+values, scope, the TW/C fork) as prose.
+
+**Measure.** Compare the first-round plan-review verdicts and the P card's minutes over
+a few is-even runs before and after.
+
