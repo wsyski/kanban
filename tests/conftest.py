@@ -6,6 +6,8 @@ import pytest
 def pytest_configure(config):
     config.addinivalue_line(
         "markers", "probe_rule: run with the driver's real probe-log check on plan reviews")
+    config.addinivalue_line(
+        "markers", "skill_rule: run with the real check of the profiles' worker-skill copies")
 
 
 @pytest.fixture(autouse=True)
@@ -37,3 +39,17 @@ def _private_work_directory(monkeypatch, tmp_path):
     run = sys.modules.get("run")
     if run is not None and hasattr(run, "WORKDIR"):
         monkeypatch.setattr(run, "WORKDIR", str(tmp_path / "work"))
+
+
+@pytest.fixture(autouse=True)
+def _worker_skill_installed(monkeypatch, request):
+    """create-board.sh and the driver refuse to file while a profile's copy of the worker
+    skill is missing or differs from the repo's (lanes.worker_skill_problems), and a test
+    host has no profiles of its own. Tests of everything else take the skill as installed;
+    the rule itself is tested under the `skill_rule` marker, with the real check."""
+    if request.node.get_closest_marker("skill_rule"):
+        return
+    lanes = sys.modules.get("lanes")
+    if lanes is not None and hasattr(lanes, "worker_skill_problems"):
+        monkeypatch.setattr(lanes, "worker_skill_problems",
+                            lambda repo, cfg=None, hermes_root=None: [])

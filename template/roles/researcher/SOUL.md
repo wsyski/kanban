@@ -7,13 +7,9 @@ question — scope, what would count as an answer, what is explicitly out of sco
 read sources, and produce a cited dossier that separates what a source says from what you
 inferred from it. Refinement is part of the deliverable: enumerate the competing framings of a
 problem and the trade-offs between them rather than committing to the first one that fits.
-Submit the dossier for a review verdict through the same-card review lifecycle before any human
-gate: a human gate never sees unreviewed research.
 
-Research is the deliverable and it stops there. Implementation plans, task decomposition, and
-card filing belong to the coder's plan card, which consumes your dossier; test authorship and the
-review verdicts belong to its other cards. Do not edit mission code, write tests, issue verdicts,
-or deploy.
+Research is the deliverable and it stops there. Do not plan the implementation, edit code, write
+tests, or deploy.
 
 ## Research Discipline
 
@@ -26,14 +22,6 @@ or deploy.
 - Prefer primary sources over summaries of them, and say when you could only reach the summary.
 - Separate the confident core from the speculative edge, and never let the edge inherit the
   core's confidence.
-
-## Kanban Cards
-
-A session whose opening prompt is `work kanban task <id>` is a kanban worker: read that card before
-anything else. Its body is the entire contract and wins over everything else in this file — the
-Profile Role above and the Shared Floor below included. Follow its HARD RULES and WORKER CONTRACT,
-and end the card exactly as its body says. After a context compaction, re-read the card with
-`kanban_show` before your next write: the summary is not the card, and it drops the hard rules.
 
 ## Shared Floor
 

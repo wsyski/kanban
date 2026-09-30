@@ -1386,16 +1386,17 @@ def _create_args(title, body, assignee_role, key, runtime, extra, parent=None):
     Written once because the two filers (`file_revision`, `file_code_revision`) had a
     copy each: a flag added to one of them, or a `--max-runtime` that stops travelling
     with the round, is drift no test can see — the cards would simply differ by
-    accident. `extra` is the per-card tail: skill, goal and model args.
+    accident. `extra` is the per-card tail: goal and model args. The worker skill is
+    not in it: every round's card is a profile's, so it is filed here, once.
     """
-    args = ["create", title, "--body", body,
-            "--assignee", lanes.assignee_for(assignee_role, manifest().get("assignees"))]
+    assignee = lanes.assignee_for(assignee_role, manifest().get("assignees"))
+    args = ["create", title, "--body", body, "--assignee", assignee]
     if parent:
         args += ["--parent", parent]
     args += ["--workspace", f"dir:{WORKDIR}", "--max-runtime", runtime,
              "--max-retries", rework_retries(), "--idempotency-key", key,
              "--created-by", "coder", "--json"]
-    return args + extra
+    return args + lanes.skill_args(assignee) + extra
 
 
 def judged_version(state, lane, base):
@@ -5336,31 +5337,36 @@ def validate_armed(armed):
 
     So the same `board_schema` that guards the files guards this, and the finding
     goes back as a comment on the card the human is looking at. The board refuses to
-    file until the text is fixed — the card stays where it was dropped, so editing
-    it and letting the next tick re-read it is the whole recovery.
+    file until what it names is fixed — the card stays where it was dropped, so fixing
+    it and letting the next tick re-read it is the whole recovery. The board's own
+    faults ride along: an invalid manifest, or a profile without the repo's worker skill.
     """
     problems = []
     cfg = card_render.read_board(BOARD_DIR)
-    manifest_problems = board_schema.validate(cfg, where="board.json")
+    # The board's own faults: the manifest, then — on a valid one — every profile it needs
+    # holding the repo's copy of the worker skill, which each of its cards is filed with.
+    board_problems = (board_schema.validate(cfg, where="board.json")
+                      or lanes.worker_skill_problems(REPO, cfg))
     for lane, text, cid in armed:
         found = [f"lane {lane}: {p}" for p in
                  board_schema.validate_idea(text, where=f"lane-{lane}.md")]
-        if not found and not manifest_problems:
+        if not found and not board_problems:
             continue
         problems.append((cid, lane, found + [f"lane {lane}: {p}"
-                                            for p in manifest_problems]))
+                                            for p in board_problems]))
     if not problems:
         return True
     for cid, lane, found in problems:
-        log(f"REFUSING refile: lane {lane}'s armed idea does not validate")
+        log(f"REFUSING refile: lane {lane}'s armed idea cannot be filed")
         for p in found:
             log(f"  - {p}")
         if STATE.reported.get(cid) == found:
             continue                      # already said, and nothing changed
         STATE.reported[cid] = found
-        body = ("This idea does not validate, so the board did not file it:\n\n"
+        body = ("The board did not file this idea:\n\n"
                 + "\n".join(f"  - {p}" for p in found)
-                + "\n\nEdit this card and the driver re-reads it on the next tick. "
+                + "\n\nFix what is listed — this card, board.json, or a profile's skill — "
+                  "and the driver re-reads it on the next tick. "
                   "`python3 template/board_schema.py --schema` lists every option; "
                   "a header is a whole line, `<!-- option: value -->`, and only the "
                   f"per-lane options {sorted(board_schema.PER_LANE)} may appear in an "

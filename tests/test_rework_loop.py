@@ -239,7 +239,8 @@ def test_revision_rounds_are_rendered_like_filed_cards(monkeypatch, board_env):
         assert _arg(c, "--workspace") == f"dir:{run.WORKDIR}"
         assert _arg(c, "--max-runtime") == "7m"
     rev_plan = next(c for c in created if c[1].startswith("P1-rev-1"))
-    assert "--skill" not in rev_plan
+    for c in created:                 # every round's card is a profile's: the worker skill
+        assert _arg(c, "--skill") == lanes.WORKER_SKILL, c[1]
     rev_tw = next(c for c in created if c[1].startswith("TW1-rev-1"))
     assert _arg(rev_tw, "--assignee") == "coder"
     rev_ti = next(c for c in created if c[1].startswith("TI1-rev-1"))

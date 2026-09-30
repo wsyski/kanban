@@ -224,6 +224,50 @@ def required_profiles(assignees=None, refinement=True, unit_tests=True,
     return sorted(out)
 
 
+# The engine's worker skill, `template/skills/kanban-worker/SKILL.md`: the kanban rules
+# a profile's SOUL would otherwise load into every session of that profile. Every card a
+# profile works is filed with it (`--skill`), so it sits in the worker's system prompt —
+# the one part of a session a context compaction keeps — and no other session sees it.
+WORKER_SKILL = "kanban-worker"
+
+
+def skill_args(assignee):
+    """`--skill kanban-worker` for a card a profile works; [] for a gate, which spawns no
+    worker. Keyed on the ASSIGNEE, so a gate a board remaps onto a profile gets it too."""
+    return [] if assignee in NO_PROFILE_ROLES else ["--skill", WORKER_SKILL]
+
+
+def worker_skill_problems(repo, cfg=None, hermes_root=None):
+    """One line per profile this board needs whose copy of the worker skill is missing or
+    differs from the repo's; [] when every copy matches.
+
+    Hermes loads a forced skill by name from the profile, so a stale or hand-patched copy
+    would be what every card runs on. create-board.sh and the driver refuse to file on any
+    line here. The root is `${HERMES_HOME:-~/.hermes}`, as create-board.sh resolves it.
+    """
+    cfg = cfg or {}
+    root = hermes_root or os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
+    src = os.path.join(repo, "template", "skills", WORKER_SKILL, "SKILL.md")
+    with open(src, "rb") as f:
+        want = f.read()
+    out = []
+    for p in required_profiles(cfg.get("assignees"),
+                               refinement=any_lane(cfg.get("refinement")),
+                               unit_tests=any_lane(cfg.get("unit-tests")),
+                               integration_tests=any_lane(cfg.get("integration-tests"))):
+        home = root if p == "default" else os.path.join(root, "profiles", p)
+        dst = os.path.join(home, "skills", WORKER_SKILL, "SKILL.md")
+        try:
+            with open(dst, "rb") as f:
+                have = f.read()
+        except FileNotFoundError:
+            have = None
+        if have != want:
+            out.append(f"profile {p}: the {WORKER_SKILL} skill is "
+                       f"{'missing' if have is None else 'not the repo copy'} — "
+                       f"install -D -m 600 {src} {dst}")
+    return out
+
 def max_reworks(cfg=None):
     """This lane's rework budget: `max-reworks` when the board — or the lane's own
     header — sets one, else the house default.

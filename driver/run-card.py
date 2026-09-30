@@ -321,7 +321,7 @@ def run_one(code, lane, rev, rr, title, prior, trigger, slug, run_name, live):
             run._full_verdict_pointer(stubs.get(vcode)))
     if rr:
         # Production files a re-review WITH its revision: base review body + the round's
-        # paragraph, the review's model pin and nothing else (no --skill, no goal), and
+        # paragraph, the review's model pin and the worker skill, no goal, and
         # the revision card as its parent.
         body += run.rereview_text(RR_KIND[code], trigger["round_no"], trigger["max_rounds"],
                                   rr_no=rr, judged=trigger["judged"],

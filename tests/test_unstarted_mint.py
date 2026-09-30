@@ -25,6 +25,7 @@ writes into it, and the next filing reuses it.
 import datetime
 import os
 import re
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -283,6 +284,11 @@ def _probe_repo(tmp_path):
     (repo / "boards" / SLUG / "lane-1.md").write_text(
         open(os.path.join(sample, "lane-1.md")).read())
     home = tmp_path / "hermes-home"
+    for p in ("coder", "researcher"):       # the worker skill the pre-flight demands
+        dst = home / "profiles" / p / "skills" / "kanban-worker"
+        dst.mkdir(parents=True)
+        shutil.copy(os.path.join(here, "template", "skills", "kanban-worker", "SKILL.md"),
+                    dst / "SKILL.md")
     lock = home / "kanban" / ".dispatcher.lock"
     lock.parent.mkdir(parents=True)
     lock.write_text("")

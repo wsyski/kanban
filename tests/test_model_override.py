@@ -8,6 +8,7 @@ and the schema that declares the options.
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 
@@ -395,6 +396,14 @@ def _run_create(tmp_path, board_dir, profiles, skills=None):
             else _stub_hermes(tmp_path, profiles, skills))
     env["PATH"] = str(stub) + os.pathsep + env["PATH"]
     env["HERMES_HOME"] = str(tmp_path / ".hermes")
+    # the worker skill each listed profile must hold, or the pre-flight stops before
+    # the checks these tests are about
+    skill = os.path.join(os.path.dirname(CREATE), "..", "template", "skills", "kanban-worker",
+                         "SKILL.md")
+    for p in profiles:
+        dst = tmp_path / ".hermes" / "profiles" / p / "skills" / "kanban-worker"
+        dst.mkdir(parents=True, exist_ok=True)
+        shutil.copy(skill, dst / "SKILL.md")
     r = subprocess.run([CREATE, "--board", str(board_dir)],
                        capture_output=True, text=True, env=env)
     return r.returncode, r.stdout + r.stderr

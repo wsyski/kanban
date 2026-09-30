@@ -32,8 +32,9 @@ create and run a board, run records, operational rules, gate discipline — is
   and `trader` (no card); gates have none. A role is not a profile: the review cards get a
   different model (the review model) through `model_override`/`provider_override` in
   `board.json`. The goal judge is separate (`auxiliary.goal_judge`, [the goal judge](#the-goal-judge)).
-- **Skills on cards.** No card force-loads a skill (no `--skill`): the profile's own skill
-  list serves the model, and a card body names the one to load. RVa and RVc ask for the
+- **Skills on cards.** Every card a profile works is filed with one skill, the engine's
+  `kanban-worker` (`lanes.skill_args`), and no other; gates get none. For the rest the
+  profile's own skill list serves the model, and a card body names the one to load. RVa and RVc ask for the
   hub's `ocr-review` skill in their prose — it must be an ordinary (model-invoked) skill in
   the coder profile, and disabled for the profiles that never review — and run it over the
   lane's tree; the reviewers it dispatches are read-only, writing only under
@@ -44,11 +45,21 @@ create and run a board, run records, operational rules, gate discipline — is
   add `using-superpowers` on top of it: the worker contract forbids a card pulling in
   planning skills of its own. Card bodies forbid workers from creating, patching or deleting
   skills; keep that clause.
-- **The worker contract and the SOUL.** Rules every worker card shares live once, in
-  `template/card-bodies/_worker-contract.txt` (`<WORKER_CONTRACT>`). A profile SOUL's
-  `## Kanban Cards` stays a short precedence paragraph ("the card wins"): don't grow it back.
-  `template/roles/*/SOUL.md` are copies of `~/.hermes/profiles/<p>/SOUL.md`; the drift check
-  is in `template/roles/README.md`.
+- **The worker contract and the worker skill.** Rules every worker card shares live once, in
+  `template/card-bodies/_worker-contract.txt` (`<WORKER_CONTRACT>`). What a worker needs
+  outside its card's text — the card wins, re-read it after a context compaction, ignore this
+  repository's `AGENTS.md`, one card one job — is the `kanban-worker` skill
+  (`template/skills/kanban-worker/SKILL.md`). `--skill` puts it in the system prompt, the only
+  part a compaction keeps (Hermes demotes every older tool result, the `kanban_show` card body
+  included); `requires_tools: [__manual_command_only__]` keeps it out of every other session.
+  The SOULs carry no kanban rules: don't add any back. The skill is edited here and installed
+  into the profiles; `lanes.worker_skill_problems` makes `create-board.sh` and the driver
+  (`validate_armed`) refuse to file while a needed profile's copy is missing or differs.
+  `template/roles/*/SOUL.md` are copies of `~/.hermes/profiles/<p>/SOUL.md`; install, drift
+  check and refresh are in `template/roles/README.md`. Hermes loads the `AGENTS.md` chain from
+  the git root down to the session's cwd into the system prompt, so a worker on a board-owned
+  `work/` gets this repository's `AGENTS.md` too. Keep nothing in `AGENTS.md` a worker could
+  mistake for its card.
 - **Board output.** The driver never commits and never moves a branch. Board output lands in
   `boards/<slug>/work/`, which this repo gitignores; the human commits it at a gate only when
   the work directory is a repository of its own. `boards/<slug>/runs/` is gitignored per-run
@@ -352,11 +363,12 @@ card runs at its profile's configured effort.
 only for a missing decision or tool and never `--kind dependency`, no caches
 in `work/`, full sentences, no memory/skill/config writes, end the card as the body
 says — live once in `template/card-bodies/_worker-contract.txt`, included by every
-worker and verdict body as `<WORKER_CONTRACT>`. The profile SOUL's `## Kanban Cards`
-is only a short precedence paragraph: the card wins. Reasons: only kanban sessions pay
-the tokens for the rules; there is one copy to maintain; and precedence has to sit in
-the system prompt, because the card body arrives as a tool result. SOUL maintenance is
-in [template/roles/README.md](template/roles/README.md).
+worker and verdict body as `<WORKER_CONTRACT>`. Precedence — the card wins — and the few
+rules a worker needs outside its card's text are the `kanban-worker` skill every card is
+filed with; the SOULs carry none. Reasons: only kanban sessions pay the tokens for the
+rules; there is one copy to maintain; and precedence has to sit in the system prompt,
+because the card body arrives as a tool result and a compaction drops it. Skill and SOUL
+maintenance is in [template/roles/README.md](template/roles/README.md).
 
 **Worker sessions** are tagged `source=kanban` and hidden by Hermes Desktop; read them with
 `hermes -p <profile> sessions list --source kanban` and
@@ -520,8 +532,8 @@ polling would hide the stall.
   worker's turns when its context reaches Hermes's threshold. Left unpinned it is the
   worker's own model: on the Liferay board's P1 (2026-09-30) `swift15-27b` summarised
   about 157k tokens, the summary kept the product goal but none of the card's hard rules,
-  and the worker wrote a plan copy into `work/`. The profile SOULs' `## Kanban Cards` makes
-  a worker re-read its card after any compaction, whichever model summarised. Both pins
+  and the worker wrote a plan copy into `work/`. The `kanban-worker` skill makes a worker
+  re-read its card after any compaction, whichever model summarised. Both pins
   send text off the machine — the claim, and a compressed card's transcript — and both
   run out of turn, so the fallback above governs them alike.
   The *review model* is `model_override`/`provider_override`, set on the review cards

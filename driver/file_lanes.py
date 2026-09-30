@@ -272,6 +272,7 @@ def file_board(board, repo, workdir, lane_count, key_prefix, max_runtime=None,
                     "--initial-status", "blocked",
                     "--idempotency-key", f"{key_prefix}-{card['id']}",
                     "--created-by", "coder", "--json"]
+            args += lanes.skill_args(card["assignee"])   # the worker skill; none on a gate
             # The model this card runs on: the board's `model`/`provider`, this lane's
             # entry when the board declares an array (`models[lane]`) — a lane's own
             # header is not known yet, the idea is entered after filing, and

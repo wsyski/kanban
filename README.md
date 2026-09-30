@@ -108,8 +108,8 @@ and deletes the board afterwards. Nothing reaches a cloud provider: the fixture'
   fixed number of parallel slots: a board run on the same model makes the two queue
   behind each other, and a board on another model evicts it mid-card. Finish or reset
   that board first.
-- The cards run in your real `coder` profile — its SOUL, its skills (`writing-plans` for
-  the revision) and its config, exactly as on a board. A profile change made for anything
+- The cards run in your real `coder` profile — its SOUL, its skills (`kanban-worker` on
+  every card, `writing-plans` for the revision) and its config, exactly as on a board. A profile change made for anything
   else changes these tests too.
 - Budget about 30 minutes for the two tests on `swift15-27b` (26.9 min on 2026-09-30).
   `KANBAN_RUN_CARD_TIMEOUT` (default 2400 s) bounds each card run; the fixture's own
@@ -223,6 +223,7 @@ What the template consists of:
 | `driver/run.py` | the driver |
 | `template/card-bodies/` | what each card tells its worker |
 | `template/roles/` | the profiles' SOULs |
+| `template/skills/` | `kanban-worker`, the skill every card is filed with |
 | `driver/run-audit.py` | the per-run auditor (§4) |
 | `driver/run-card.py` | one card of an existing run, on a one-card board |
 | `driver/doc-chain.py` | what each card was given and produced |
@@ -270,11 +271,11 @@ still works a card. Only *notification* delivery needs a running gateway: the
 
 Gates have no profile — a person completes them, or the driver does with `auto-gates`.
 `create-board.sh` derives the profiles a board needs from its manifest and checks they are
-there before filing anything: a profile on disk (`~/.hermes/profiles/<name>`, the root the
+there, each holding this repository's `kanban-worker` skill, before filing anything: a profile on disk (`~/.hermes/profiles/<name>`, the root the
 core itself resolves) counts even when `hermes profile list` is silent about it — that silence
 is a note, not a refusal, because a CLI that failed must not read as a missing profile. The CLI's
-list still counts for a profile rooted elsewhere. The SOULs, the
-drift check and the install commands are in [template/roles/](template/roles/README.md);
+list still counts for a profile rooted elsewhere. The SOULs, the worker skill, the
+drift checks and the install commands are in [template/roles/](template/roles/README.md);
 why one work profile is enough is in [DESIGN.md](DESIGN.md#profiles-and-the-worker-contract).
 
 **Toolchains belong to boards, not here.** The card graph never mentions a language or
@@ -865,12 +866,17 @@ include `kanban`, so worker runs appear under All/Chats.
 - **Turn budgets are global, not per-profile.** `agent.max_turns` (80) in
   `~/.hermes/config.yaml` governs every kanban worker. A profile-level shadow value
   kills runs — never set `agent.max_turns` on a worker profile.
-- **Cards name skills, they never force them.** No card is filed with `--skill`; the body
-  says which skill to load (`writing-plans`, `test-driven-development`, `ocr-review`) and
-  the model loads it from its own profile's list. A skill the profile cannot see makes the
-  card run without it and nothing fails loudly, so `create-board.sh` notes a missing `ocr`
-  or `ocr-review`. Install the skill for the assignee profile (`/skill-sync`); the profile
-  the board was created from is irrelevant.
+- **Cards force one skill and name the rest.** Every card a profile works is filed with
+  `--skill kanban-worker`, the engine's worker rules (the card wins, re-read it after a
+  context compaction, one card one job); gates get none. Every other skill is named in the
+  body (`writing-plans`, `test-driven-development`, `ocr-review`) and the model loads it from
+  its own profile's list. A named skill the profile cannot see makes the card run without it
+  and nothing fails loudly, so `create-board.sh` notes a missing `ocr` or `ocr-review`.
+  Install it for the assignee profile (`/skill-sync`); the profile the board was created from
+  is irrelevant. The worker skill is different: `create-board.sh` refuses the board, and the
+  driver refuses to file an armed idea (it says so on the card), while a profile the board
+  needs lacks this repository's copy. Install it as [template/roles/](template/roles/README.md)
+  says.
 - **Worker cards are turn-bounded; reviews and gates never are.** Worker cards (I, P,
   TW, C, TI and their rounds) are filed with a turn ceiling and, with `goal` on, a goal
   judge that checks the body's `DONE WHEN:` line. A goal judge on a review or gate could

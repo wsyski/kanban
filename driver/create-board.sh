@@ -347,6 +347,25 @@ for p in $REQUIRED; do
   fi
 done
 
+# Every card a profile works is filed with the engine's worker skill (`lanes.WORKER_SKILL`),
+# and Hermes loads it by name from that profile. A missing or stale copy is a refusal, not
+# a note: every card of the run would work without the rules, or on old ones.
+python3 - "$REPO" "$BOARD_DIR" "$HERMES_ROOT" <<'PY' || exit 1
+import json, os, sys
+repo, board_dir, root = sys.argv[1:4]
+sys.path.insert(0, os.path.join(repo, "template"))
+import lanes
+manifest = os.path.join(board_dir, "board.json")
+cfg = {}
+if os.path.exists(manifest):
+    with open(manifest) as f:
+        cfg = json.load(f)
+problems = lanes.worker_skill_problems(repo, cfg, root)
+for p in problems:
+    print(p, file=sys.stderr)
+sys.exit(1 if problems else 0)
+PY
+
 # The review cards ask for the `ocr-review` skill by name and run `ocr` for scope. Neither
 # is forced on the card, so a profile that cannot see the skill (disabled, or not synced
 # yet) or a host without `ocr` degrades the review quietly: say so here, as a note, never a

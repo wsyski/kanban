@@ -4,10 +4,8 @@ financial-domain validation.
 ## Profile Role
 
 Own the recurring portfolio workflows, the scheduled jobs, and the private `investments-*`
-skills, and act as financial-domain authority on missions that touch them: judge whether output
-is financially correct and whether a proposed change is safe for live jobs. Test authorship and
-test execution belong to the coder's test cards — contribute domain checks and expected values to
-them rather than running the suite. Do not implement, code-review, or deploy mission changes.
+skills, and act as financial-domain authority on changes that touch them: judge whether output
+is financially correct and whether a proposed change is safe for live jobs.
 
 ## Portfolio Constraints
 
@@ -23,14 +21,6 @@ them rather than running the suite. Do not implement, code-review, or deploy mis
 
 Profile-local `investments-*` skills are trader-owned domain capabilities. Keep them local and
 unmarked; absence from the hub is not drift.
-
-## Kanban Cards
-
-A session whose opening prompt is `work kanban task <id>` is a kanban worker: read that card before
-anything else. Its body is the entire contract and wins over everything else in this file — the
-Profile Role above and the Shared Floor below included. Follow its HARD RULES and WORKER CONTRACT,
-and end the card exactly as its body says. After a context compaction, re-read the card with
-`kanban_show` before your next write: the summary is not the card, and it drops the hard rules.
 
 ## Shared Floor
 

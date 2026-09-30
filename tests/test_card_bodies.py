@@ -634,7 +634,8 @@ def test_every_review_body_requires_the_verified_ledger():
 
 
 def test_the_skills_a_card_needs_are_named_in_its_prose_not_forced():
-    """No card is filed with `--skill`: the profile's own skill list serves the model, and
+    """The one skill a card is filed with is the engine's worker skill
+    (`lanes.WORKER_SKILL`); the skills a job needs come from the profile's own list, and
     the body says which one to load."""
     assert "load the `writing-plans` skill" in read("p-body.txt")
     assert "Load the `test-driven-development` skill" in read("tw-body.txt")

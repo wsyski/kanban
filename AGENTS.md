@@ -25,7 +25,8 @@ per board under `boards/<slug>/`, driven by `driver/run.py` over `hermes kanban`
 - The driver never commits or moves a branch. Never delete a `boards/<slug>/runs/` directory.
 - One driver per board (`runs/driver.lock`); never re-file a board mid-run — use `driver/reset.sh`.
 - No Hermes profile per role: a review model goes in `board.json` (`model_override`/`provider_override`).
-- No card force-loads a skill (`--skill`), and card bodies keep their no-skill-writes clause.
+- Every card is filed with `--skill kanban-worker`, and nothing else; card bodies keep their no-skill-writes clause.
 - Rules every worker shares live once, in `template/card-bodies/_worker-contract.txt`.
 - `template/roles/*/SOUL.md` copy the live profiles: edit the live one first, then copy it back.
+  `template/skills/kanban-worker/` goes the other way: edit it here, then install it.
 - `template/board.schema.json` is generated (`board_schema.py --write-schema`); never hand-edit it.
