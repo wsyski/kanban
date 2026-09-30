@@ -145,6 +145,21 @@ def test_a_worker_card_carries_no_verdict(monkeypatch, tmp_path):
     assert _lines(path) == []
 
 
+def test_a_worker_that_reported_in_its_summary_has_a_result(monkeypatch, tmp_path):
+    """Liferay P1, 2026-09-30: the plan card completed through `summary`; the chain
+    recorded an empty result and the audit's E7 failed a run whose card had reported."""
+    path = _ledger_env(monkeypatch, tmp_path)
+    st = {lanes.card_title("P", 1): {
+        "id": "t_p", "status": "done", "title": lanes.card_title("P", 1), "result": ""}}
+    monkeypatch.setattr(run, "kb", lambda *a, **k: '{"events": []}')
+    monkeypatch.setattr(run.runs_util, "board_runs", lambda board, cid: [
+        {"outcome": "completed", "summary": "Workspace plan. PROBE: 9 exit 0", "ended_at": 5}])
+    run.record_chain_done(st)
+    done = [r for r in _recs(tmp_path) if r["event"] == "done"][0]
+    assert done["result"].startswith("Workspace plan") and done["verdict"] == ""
+    assert _lines(path) == [], "a worker's report is not a verdict"
+
+
 def test_a_returned_round_is_logged_with_its_gate_and_findings(monkeypatch, tmp_path):
     path = _ledger_env(monkeypatch, tmp_path)
     st = {lanes.card_title("Gc", 1): {"id": "t_gc", "status": "ready",

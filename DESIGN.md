@@ -3,7 +3,7 @@
 The reasoning behind the board, the driver's behaviour in detail, the known traps and
 the timing instrumentation. The operator's guide — boards, prerequisites, how to
 create and run a board, run records, operational rules, gate discipline — is
-[README.md](README.md); section numbers (§N) refer to it.
+[README.md](README.md), which is for humans: everything an agent needs is here.
 
 ## Repository map and conventions
 
@@ -60,7 +60,7 @@ create and run a board, run records, operational rules, gate discipline — is
 
 | rule | where it lives, and why |
 |---|---|
-| Workers STAGE only (`git add -- own paths`), never commit or push | card bodies' HARD RULES; checked by the reviews. The commit is the human's authorization record (§6) |
+| Workers STAGE only (`git add -- own paths`), never commit or push | card bodies' HARD RULES; checked by the reviews. The commit is the human's authorization record |
 | Per-card patch = OWN paths only (`git diff --cached -- <own paths>`) | card bodies — a bare diff bundles every earlier card's staged files |
 | The board's only git writes are stage and unstage | `driver/run.py`: `git add` by workers, `restore --staged` for its own leftovers. Never commit, branch, checkout, reset or push: a work directory that moves under a live run is REPORTED, not corrected (see [work directory pinning](#work-directory-pinning)) |
 | Nothing is deleted — not `work/`, not a run directory | `driver/reset.sh` archives cards and unstages; deleting either tree is a human's own `rm`. `work/` may be the input of a follow-up fix, and an old run is the evidence for why something wedged — no tool has an opinion about when either stops being useful |
@@ -209,10 +209,14 @@ Gi(n)      ──REWORK───────→ I(n)-rev-N          → Gi(n)-r(
   [TW] and a [C] step) and 6 (no Run command commits, pushes, stashes, branches or runs
   `hermes kanban`), and `untagged` lists every file block and Run command under a step
   heading with no tag, or under none (a tagless heading ends the step before it, so what
-  follows never inherits its tag). Both land in the log (`LINT:`, `UNTAGGED:`) and the
-  footer (`lint n`, `untagged n`), and either makes the probe exit 1. Why: a plan review
-  rejected five untagged step headings and two steps with no tick sentence that the probe
-  had passed (is-even, 2026-09-30) — a rule-decidable defect cost a whole review round.
+  follows never inherits its tag). After the full pass, `unlisted_paths` decides item 7
+  from the tree: every path the Run commands left that no file block writes and Global
+  Constraints never names (`named_byproducts`) is a LINT line too — a new directory
+  reported whole. Both land in the log (`LINT`, `UNTAGGED:`) and the footer (`lint n`,
+  `untagged n`), and either makes the probe exit 1. Why: plan reviews rejected, on
+  rule-decidable grounds the probe had passed, five untagged step headings and two steps
+  with no tick sentence (is-even, 2026-09-30) and a stray `sc5/` fixture plus two unlisted
+  build by-products (Liferay, 2026-09-30) — each a whole review round.
 - **The driver writes the review header.** `stamp_review_header` puts
   `review_header` on a review card's `review.md` before attaching it: card and run,
   verdict, plan, spec, what was judged (the plan version for RVp, the lane's patches for
@@ -354,8 +358,9 @@ the tokens for the rules; there is one copy to maintain; and precedence has to s
 the system prompt, because the card body arrives as a tool result. SOUL maintenance is
 in [template/roles/README.md](template/roles/README.md).
 
-**Worker sessions** are tagged `source=kanban` and hidden by Hermes Desktop; §4 shows
-how to read them.
+**Worker sessions** are tagged `source=kanban` and hidden by Hermes Desktop; read them with
+`hermes -p <profile> sessions list --source kanban` and
+`hermes -p <profile> sessions export --session-id <id> --format md`.
 
 ## Driver behaviour
 
@@ -901,7 +906,10 @@ Each is current behaviour, with what to do about it.
   Files blocks name. Transients go under `runs/<run-id>/scratch/<card-id>/`. `<RUNS>`
   is a render value, deliberately not a lane document, so the chain never stats scratch
   as a hand-off. Caches a worker leaves in `work/` are reported as a note (E16) and left
-  in place. The one exception is `work/docs/`, which only the driver writes:
+  in place; dependency and build directories are never walked for it. A file the run
+  wrote into `work/` (its ctime inside the run) that no patch, plan file block or listed
+  by-product accounts for is a WARNING (E19, `stray_findings`): the Liferay plan card left
+  `work/plan.md` in the product on 2026-09-30 and every review passed it. The one exception is `work/docs/`, which only the driver writes:
   `publish_refined` copies the refined idea into `docs/superpowers/specs/` when the idea
   gate opens (named by run id, overwritten on an idea rework), `publish_plan` the plan
   into `docs/superpowers/plans/` when the plan gate opens, and `publish_review` every

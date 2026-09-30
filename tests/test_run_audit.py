@@ -984,3 +984,55 @@ def test_a_failing_index_read_is_an_e14_not_a_clean_index(tmp_path, monkeypatch)
     monkeypatch.setattr(ra.subprocess, "run", lambda cmd, **kw: R())
     findings = ra.repo_findings(runs)
     assert any(c == "E14" and "index file corrupt" in t for _s, c, t in findings), findings
+
+
+def _stray_run(tmp_path, open_offset=-100, end_offset=100):
+    """A run whose lane opened `open_offset` s from now and whose summary is `end_offset`
+    s from now, with a plan, a patch and a work tree written now."""
+    import time as _t
+    runs = fixture(tmp_path)
+    run_dir = tmp_path / "boards" / "b" / "runs"
+    (run_dir / "snapshots").mkdir()
+    snap = run_dir / "snapshots" / "lane-1-workdir-at-open.md"
+    snap.write_text("empty\n")
+    (run_dir / "artifacts" / "lane-1").mkdir(parents=True)
+    (run_dir / "artifacts" / "lane-1" / "plan.md").write_text(
+        "# P\n\n## Global Constraints\n\n- By-products: `work/yarn.lock`, `build/`.\n\n"
+        "### Task 1: x\n- [ ] **Step 1 [C]: x**\n\n```txt file=src/block.txt\nb\n```\n")
+    (run_dir / "scratch" / "c1").mkdir(parents=True)
+    (run_dir / "scratch" / "c1" / "patch.diff").write_text(
+        "--- /dev/null\n+++ b/src/app.py\n@@ -0,0 +1 @@\n+x\n")
+    work = tmp_path / "boards" / "b" / "work"
+    for rel in ("plan.md", "docs/reviews/r.md", "src/app.py", "src/block.txt", "yarn.lock",
+                "node_modules/a/b.js", "build/out.jar", ".git/index"):
+        (work / rel).parent.mkdir(parents=True, exist_ok=True)
+        (work / rel).write_text("x\n")
+    now = _t.time()
+    os.utime(snap, (now + open_offset, now + open_offset))
+    summary = run_dir / "run-summary.json"
+    os.utime(summary, (now + end_offset, now + end_offset))
+    return runs
+
+
+def test_a_file_the_run_wrote_that_nothing_accounts_for_is_an_e19(tmp_path):
+    """Liferay, 2026-09-30: the plan card left `work/plan.md` in the product, every review
+    passed, and E16 (caches only) said nothing."""
+    findings = ra.stray_findings(_stray_run(tmp_path))
+    assert codes(findings) == ["E19"] and findings[0][0] == "WARNING"
+    assert findings[0][2].endswith(": work/plan.md"), findings
+
+
+def test_e19_judges_only_what_this_run_wrote_and_only_in_the_boards_own_tree(tmp_path):
+    assert ra.stray_findings(_stray_run(tmp_path / "a", open_offset=50, end_offset=100)) == []
+    runs = _stray_run(tmp_path / "b")
+    assert ra.stray_findings(runs, workdir=str(tmp_path / "elsewhere")) == []
+
+
+def test_e16_does_not_walk_into_dependency_directories(tmp_path):
+    runs = fixture(tmp_path)
+    work = tmp_path / "boards" / "b" / "work"
+    (work / "node_modules" / "nwsapi" / "dist").mkdir(parents=True)
+    (work / "node_modules" / "nwsapi" / "dist" / "lint.log").write_text("x")
+    (work / "gradle.log").write_text("x")
+    found = ra.work_noise_findings(runs)
+    assert codes(found) == ["E16"] and "gradle.log" in found[0][2], found

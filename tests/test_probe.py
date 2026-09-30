@@ -555,3 +555,25 @@ def test_a_complete_plan_lints_clean_and_a_missing_spec_is_named(tmp_path):
     assert probe.lint_plan(plan.read_text().replace(str(spec), str(tmp_path / "gone.md")),
                            [], []) == [(1, "header", f"the Spec line names "
                                                      f"{tmp_path / 'gone.md'}, which does not exist")]
+
+
+def test_what_the_run_commands_leave_unnamed_is_a_lint_defect(tmp_path):
+    """Liferay, 2026-09-30: the plan review rejected a stray `sc5/` fixture and two build
+    by-products Global Constraints never named — all three in the planner's own probe
+    tree. A listed by-product, a file block and the seeded work directory are not."""
+    w, r, plan, out = _setup(tmp_path)
+    plan.write_text(_clean(
+        "- [ ] **Step 1 [C]: build**\n\n```txt file=src/app.txt\napp\n```\n\n"
+        "Run: `mkdir -p dist cache/deep sc5 && touch dist/app.zip cache/deep/x yarn.lock src/extra.txt`\n")
+        .replace("## Global Constraints\n\n- none\n",
+                 "## Global Constraints\n\n- By-products: `work/dist/`, `cache/`.\n"))
+    assert _run(w, r, plan, out) == 1
+    log = (out / "probe-log.md").read_text()
+    assert "LINT (after the full pass): 3 path(s)" in log, log
+    for rel in ("sc5/", "yarn.lock", "src/extra.txt"):
+        assert f"- item 7: {rel}: `{rel}` is created by a Run command" in log
+    for rel in ("dist", "cache", "src/app.txt", "src/keep.txt", "docs"):
+        assert f"- item 7: {rel}" not in log
+    assert _log(out)["lint"] == 3
+    assert probe.named_byproducts("## Global Constraints\n- `work/a/`, `/w/b`, `../c`, `d/*.log`\n",
+                                  "/w") == {"a", "b", "d/*.log"}

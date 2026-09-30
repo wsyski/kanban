@@ -3117,13 +3117,17 @@ def record_chain_done(state):
         # summary — the same fallback the gate reads, so the ledger and the gate never
         # disagree about what was decided. Only a completed run counts: the parking block
         # is a run here too.
-        if code.lower().startswith(VERDICT_CODES) and not result:
+        # A worker's report takes the same fallback: the card bodies call it a supported
+        # path, and without it the chain recorded "" and the audit's E7 failed a run whose
+        # plan card had reported in full (Liferay P1, 2026-09-30). E7 now means NO report.
+        is_verdict = code.lower().startswith(VERDICT_CODES)
+        if not result and (is_verdict or lanes.base_code(code) in lanes.WORKER_CODES):
             runs = runs_util.board_runs(BOARD, card["id"])
             closed = [r for r in (runs or []) if r.get("outcome") == "completed"]
             if closed:
                 last = max(closed, key=lambda r: r.get("ended_at") or 0)
                 result = (last.get("summary") or "").strip()
-            unreadable = runs is None
+            unreadable = runs is None and is_verdict
         else:
             unreadable = False
         verdict = ""

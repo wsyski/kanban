@@ -9,7 +9,8 @@ probes; §7–§10 are 2026-09-15 (two patches retired and the one-run mint, the
 against an external repository, the gate-text fix, and the two attachment habits the card
 bodies now forbid); §11 is 2026-09-18 (two audit rules); §12 is 2026-09-19 (the layering, a
 green CI, and the attach hand-off); §14 is 2026-09-30 (plan lint, the driver's review
-header, docs published as the run goes).
+header, docs published as the run goes); §15 is the Liferay board on the local model the same
+day.
 
 Every number here comes from the run directories under `boards/<slug>/runs/`, which are
 never deleted. Re-derive any of it with:
@@ -467,4 +468,43 @@ The refined idea's SC3 excluded `docs/` (`ls -I docs …`). Every `review.md` ca
 driver's header. `work/docs/` gained the plan and `…-plan-review-r1.md` at the plan gate and
 `…-implementation-review-r1.md` when RVa1 finished; the end-of-run catch-up wrote nothing
 new. One run is one data point for the plan-lint entry in BACKLOG.md.
+
+## 15. The Liferay board on the local model — 2026-09-30
+
+`roman-evaluator-liferay-client-ext`, `run-20260930-134356`: `swift15-27b` on `llama-swap` for
+every card, reviews included (no review-model pin), auto-gates, `max-runtime` 300 m, the work
+directory empty at lane open, engine at `c8a060e`. Deliberately run to the local model's limit.
+
+| card | min | | card | min |
+|---|---|---|---|---|
+| I1 | 10.87 | | P1-rev-1 | 4.90 |
+| P1 | 81.60 | | RVp1-r2 | 9.68 (PASS) |
+| RVp1 | 29.17 (REJECT) | | TW1 ∥ C1 | 18.58 ∥ 17.72 |
+| | | | RVa1 | 38.45 (PASS) |
+
+Wall 201.2 min, agent 193.4, overhead 7.8, overlap 17.6. Audit: 0 errors, 2 warnings (E7, and
+E12 only where `hermes` is absent), 1 note (E16).
+
+**What worked.** P1's probe `LINT: clean`; the driver's review headers named the right round,
+judged version and previous verdict; the refined idea, both plan-review rounds, the accepted
+plan and the implementation review reached `work/docs/` at their gates; the revision was
+surgical (+4/−4 of 728 lines).
+
+**What it surfaced, and what changed:**
+- RVp1 rejected on checklist item 7: a Run command unzipped the archive into
+  `client-extensions/roman-evaluator/sc5/` inside the tree, and the build's
+  `node_modules_cache/` and `yarn.lock` were named nowhere — though the planner's own probe
+  `ls` showed them. The probe now lints item 7 from the tree (`unlisted_paths`); on this plan's
+  tree it lists those three and `client-extensions/roman-evaluator/yarn.lock`, which RVp1 and
+  RVp1-r2 both missed, and nothing else.
+- `work/plan.md`, a copy of P1's first plan (identical bytes), was left in the product at the
+  end of P1; no review and no audit rule noticed. The audit now warns (E19) on any file the
+  run wrote into `work/` that no patch, file block or listed by-product accounts for — on the
+  real trees it flags exactly this file here and nothing on is-even. The likely cause is a
+  relative path (a worker's shell starts in the work directory); `p-body.txt` now says so.
+- E7: P1 reported through `summary`, a path the card bodies call supported, but the chain
+  recorded an empty result. The chain record now takes a worker's summary as the driver
+  already did for verdicts; E7 means no report at all.
+- E16 flagged `node_modules/nwsapi/dist/lint.log`, a package's own file; E16 no longer walks
+  dependency and build directories.
 

@@ -17,6 +17,7 @@ Usage:
 import argparse
 import datetime
 import fcntl
+import glob
 import importlib.util
 import json
 import os
@@ -30,6 +31,7 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(REPO, "template"))   # the shared layer
 import board_schema  # noqa: E402  — the manifest's duration parser lives there
 import lanes  # noqa: E402  — base_code, and WORKER_CODES beside it
+import probe  # noqa: E402  — a plan's file blocks and by-products, read as the probe reads them
 import runs_util  # noqa: E402
 
 
@@ -366,12 +368,84 @@ def work_noise_findings(runs_dir, workdir=None):
                 out.append(("INFO", "E16",
                             f"not a deliverable, left in place: "
                             f"{os.path.relpath(os.path.join(root, d), REPO)}"))
+        # A dependency or build tree is the toolchain's own: a `lint.log` inside
+        # `node_modules/nwsapi/dist/` is a package's file, not litter (Liferay, 2026-09-30).
+        dirs[:] = [d for d in dirs if d not in DEPENDENCY_DIRS]
         for f in files:
             if f.endswith((".pyc", ".pyo", ".tmp", ".log")):
                 out.append(("INFO", "E16",
                             f"not a deliverable, left in place: "
                             f"{os.path.relpath(os.path.join(root, f), REPO)}"))
     return out
+
+
+# Dependency and build directories: the toolchain's, never walked for litter or strays.
+DEPENDENCY_DIRS = frozenset(probe.SKIP_DIRS) - {"__pycache__", ".pytest_cache"}
+_PATCH_TARGET = re.compile(r"^\+\+\+ b/(.+?)\s*$")
+
+
+def stray_findings(runs_dir, workdir=None):
+    """Files this run wrote into `work/` that nothing accounts for — no patch of the lane
+    wrote them, no file block of its plan names them, and its Global Constraints do not
+    list them as a by-product (E19, a WARNING: a stray is in the deliverable).
+
+    The Liferay run of 2026-09-30 left `work/plan.md`, a copy of the plan card's first
+    plan, in the product; every review passed and the audit said nothing, because E16
+    looks only for caches. "This run wrote it" is the file's ctime between the first lane's
+    opening snapshot and the run summary, so an older run audited later is judged on what
+    it wrote, not on what came after. The ctime, not the mtime: a package manager copying
+    tarballs into an offline mirror keeps their old mtimes, and those landed inside the
+    window of a run from the day before. `docs/` is the driver's record; dependency and build
+    directories are the toolchain's (their unlisted ones are the probe's item-7 lint).
+    Board-owned trees only, as for E16."""
+    board = board_dir_for(runs_dir)
+    work = os.path.abspath(workdir) if workdir else os.path.join(board, "work")
+    if not work.startswith(os.path.abspath(board) + os.sep) or not os.path.isdir(work):
+        return []
+    opens = [os.path.getmtime(p) for p in glob.glob(
+        os.path.join(runs_dir, "snapshots", "lane-*-workdir-at-open.md"))]
+    summary = os.path.join(runs_dir, "run-summary.json")
+    if not opens or not os.path.isfile(summary):
+        return []
+    start, end = min(opens) - 1, os.path.getmtime(summary) + 60
+    named, blocks = set(), set()
+    for plan_path in glob.glob(os.path.join(runs_dir, "artifacts", "lane-*", "plan.md")):
+        with open(plan_path, encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
+        try:
+            files, _ = probe.parse_plan(text)
+        except probe.PlanError:
+            files = []
+        blocks |= {os.path.normpath(f["path"]) for f in files if not os.path.isabs(f["path"])}
+        named |= probe.named_byproducts(text, work)
+    for diff in glob.glob(os.path.join(runs_dir, "scratch", "*", "*.diff")):
+        with open(diff, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                m = _PATCH_TARGET.match(line)
+                if m:
+                    blocks.add(os.path.normpath(m.group(1)))
+    out = []
+    for root, dirs, files in os.walk(work):
+        rel_root = os.path.relpath(root, work)
+        dirs[:] = [d for d in dirs if d not in DEPENDENCY_DIRS and d != ".git"
+                   and os.path.normpath(os.path.join(rel_root, d)) != "docs"]
+        for name in sorted(files):
+            rel = os.path.normpath(os.path.join(rel_root, name))
+            if rel in blocks or any(b.endswith(os.sep + rel) for b in blocks) \
+                    or probe._covered(rel, named):
+                continue
+            try:
+                written = os.stat(os.path.join(root, name)).st_ctime
+            except OSError:
+                continue
+            if start <= written <= end:
+                out.append(rel)
+    if not out:
+        return []
+    shown = ", ".join(f"work/{r}" for r in out[:10]) + (f" … (+{len(out) - 10})" if len(out) > 10 else "")
+    return [("WARNING", "E19",
+             f"{len(out)} file(s) this run wrote into work/ that no patch, plan file block "
+             f"or listed by-product accounts for — a stray in the deliverable: {shown}")]
 
 
 def _proc_state(pid):
@@ -559,6 +633,7 @@ def audit(runs_dir, board_dir=None):
     findings += card_log_findings(slug, started, runs_util.ledger_log_offsets(runs_dir))
     findings += repo_findings(runs_dir)
     findings += work_noise_findings(runs_dir, cfg.get("default-workdir"))
+    findings += stray_findings(runs_dir, cfg.get("default-workdir"))
     findings += board_findings(slug, runs_dir)
     return findings, rows, stats
 

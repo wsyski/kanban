@@ -49,11 +49,13 @@ in the same command.
 
 Exit status: 0 when the full pass is clean (every file written, no defect skip, every
 command that ran exited 0, nothing TOUCHED, nothing UNTAGGED, no LINT defect — the
-rule-decidable parts of plan checklist items 1, 2, 4 and 6: `lint_plan`), 1 otherwise, 2 on a usage error. A non-zero
-probe is EVIDENCE for the card that ran it, never a reason to stop.
+rule-decidable parts of plan checklist items 1, 2, 4 and 6: `lint_plan`, and of item 7: no
+path the Run commands leave that the plan names nowhere: `unlisted_paths`), 1 otherwise, 2 on a
+usage error. A non-zero probe is EVIDENCE for the card that ran it, never a reason to stop.
 """
 import argparse
 import datetime
+import fnmatch
 import hashlib
 import os
 import re
@@ -745,6 +747,70 @@ def lint_plan(text, files, commands):
     return out
 
 
+def named_byproducts(text, workdir=None):
+    """The paths the plan's Global Constraints name in backticks, relative to the work
+    directory — a leading `work/` or the work directory's own absolute path dropped, and a
+    trailing `/` — the by-products the plan says its toolchain writes (checklist item 7)."""
+    out = set()
+    for tok in re.findall(r"`([^`\s]+)`", _md_section(text, "Global Constraints")):
+        t = tok.strip().rstrip("/")
+        if workdir and t.startswith(workdir.rstrip("/") + "/"):
+            t = t[len(workdir.rstrip("/")) + 1:]
+        elif t.startswith("work/"):
+            t = t[len("work/"):]
+        if t and not os.path.isabs(t) and not t.startswith(".."):
+            out.add(os.path.normpath(t))
+    return out
+
+
+def _covered(rel, named):
+    """Is `rel`, or a directory above it, one of the `named` paths (globs allowed)?"""
+    parts = rel.split(os.sep)
+    for i in range(1, len(parts) + 1):
+        head = os.sep.join(parts[:i])
+        if head in named or any(fnmatch.fnmatch(head, n) for n in named
+                                if any(ch in n for ch in "*?[")):
+            return True
+    return False
+
+
+def unlisted_paths(root, named, blocks, is_new, limit=50):
+    """Top-most paths under `root` that are new (`is_new(rel, path, is_dir)`), not a file
+    the plan writes (`blocks`) and not covered by a by-product it names (`named`). A new
+    directory holding no file block is reported whole and never walked into, so an
+    unlisted `node_modules/` is one line; `docs/` (the driver's) and `.git` are skipped."""
+    out = []
+    for dirpath, dirs, files in os.walk(root):
+        base = os.path.relpath(dirpath, root)
+        for d in sorted(dirs):
+            rel = os.path.normpath(os.path.join(base, d))
+            if rel in ("docs", ".git") or _covered(rel, named):
+                dirs.remove(d)
+            elif is_new(rel, os.path.join(dirpath, d), True) \
+                    and not any(b.startswith(rel + os.sep) for b in blocks):
+                out.append(rel + "/")
+                dirs.remove(d)
+        for f in sorted(files):
+            rel = os.path.normpath(os.path.join(base, f))
+            if rel in blocks or _covered(rel, named):
+                continue
+            if is_new(rel, os.path.join(dirpath, f), False):
+                out.append(rel)
+        if len(out) >= limit:
+            break
+    return sorted(out)[:limit]
+
+
+def _tree_paths(root):
+    """Every path under `root`, relative — what a pass starts from."""
+    seen = set()
+    for dirpath, dirs, files in os.walk(root):
+        base = os.path.relpath(dirpath, root)
+        for n in dirs + files:
+            seen.add(os.path.normpath(os.path.join(base, n)))
+    return seen
+
+
 def untagged(files, commands):
     """Where each file block and Run command that sits under no tagged step is, in plan
     order: `["line 40: file test_is_even.py", "Task 2 Step 2: Run: pytest …"]`."""
@@ -856,7 +922,8 @@ def main(argv=None):
         # mode would hash to a different value forever.
         sha = hashlib.sha256(raw).hexdigest()
         head[3] = f"plan-sha256: {sha}"
-        files, commands = parse_plan(raw.decode("utf-8", "replace"))
+        text = raw.decode("utf-8", "replace")
+        files, commands = parse_plan(text)
     except (OSError, PlanError) as e:
         body.append(f"PLAN UNREADABLE: {e} — nothing was built or run")
         write_log(complete=True)
@@ -872,13 +939,13 @@ def main(argv=None):
             else:
                 shutil.rmtree(p)
     loose = untagged(files, commands)
-    lint = lint_plan(raw.decode("utf-8", "replace"), files, commands)
+    lint = lint_plan(text, files, commands)
     if lint:
         body += [f"LINT: {len(lint)} defect(s) of the plan — checklist items a rule decides; "
                  f"each is a finding as it stands, and fixed by editing the plan:", ""]
         body += [f"- item {item}: {where}: {msg}" for item, where, msg in lint] + [""]
     else:
-        body += ["LINT: clean (the rule-decidable parts of checklist items 1, 2, 4 and 6)", ""]
+        body += ["LINT: clean (the rule-decidable parts of checklist items 1, 2, 4 and 6 in the plan's text; item 7's tree check follows the full pass)", ""]
     if loose:
         nf = sum(1 for e in files if not e["tag"])
         body += [f"UNTAGGED: {nf} file block(s) and {len(loose) - nf} Run command(s) sit under "
@@ -904,6 +971,7 @@ def main(argv=None):
             tree = os.path.join(out, "tree" if name == "full" else f"tree-{name}")
             seeded, seed_errors = seed_tree(workdir, tree)
             git_line = init_tree_repo(tree, workdir)
+            before = _tree_paths(tree) if name == "full" else None
             frows = write_files(files, tree, workdir=workdir, targets=targets, runs=a.runs,
                                 scratch=os.path.join(out, "scratch"), skip_tag=skip_tag)
             body += [f"## Pass: {name}", "", f"tree: {tree} (seeded with {seeded} file(s) "
@@ -943,6 +1011,26 @@ def main(argv=None):
                 summary.update(tally(crows))
                 if summary["failed"] or summary["skipped-defect"]:
                     worst = 1
+                # Checklist item 7, decided by the tree rather than read: what the Run
+                # commands left that no file block writes and Global Constraints never
+                # names. The Liferay plan of 2026-09-30 was rejected for exactly this — a
+                # stray `sc5/` and two unlisted build by-products its own `ls` had shown.
+                blocks = {os.path.normpath(f["path"]) for f in files
+                          if not os.path.isabs(f["path"])}
+                stray = unlisted_paths(tree, named_byproducts(text, workdir), blocks,
+                                       lambda rel, _p, _d: rel not in before)
+                if stray:
+                    found = [(7, rel, f"`{rel}` is created by a Run command and named "
+                                      f"nowhere — list it in Global Constraints as a "
+                                      f"by-product the toolchain writes, or have the "
+                                      f"command write it to the card's scratch")
+                             for rel in stray]
+                    lint += found
+                    summary["lint"] = len(lint)
+                    worst = 1
+                    body += [f"LINT (after the full pass): {len(found)} path(s) the Run "
+                             f"commands left in the tree that the plan names nowhere:", ""]
+                    body += [f"- item 7: {rel}: {msg}" for _i, rel, msg in found] + [""]
             write_log()
     except Interrupted as e:
         # The interrupted pass's command rows live only in the last flush: keep them, so

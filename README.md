@@ -728,16 +728,17 @@ board again, audit again; the loop ends when the audit exits 0.
 | E4 | ERROR | `run-summary.json` or `board.json` missing/unreadable, or the summary has no gate evidence or records a gate as waiting — usually a halted or killed run |
 | E5 | WARNING | the driver restarted during the run |
 | E6, E10 | WARNING | agent minutes unknown or inconsistent for a card (the runs CLI could not report them) |
-| E7 | WARNING | a card finished with an empty result |
+| E7 | WARNING | a card finished with no report — neither its `result` nor its closing run's summary |
 | E8 | WARNING/INFO | a worker process outlived the run; stop it, or `driver/reset.sh --board boards/<slug> --batch` |
 | E9 | ERROR | the run wrote into the repo root instead of `boards/<slug>/work/` |
 | E11 | WARNING | a card's result text reports a warning |
 | E12 | ERROR/WARNING | a board card is still not done (`todo`, `running`, `blocked` …) — the board did not finish, or its cards could not be read |
 | E13 | WARNING | a card's own log contains an error line |
 | E14 | ERROR | something is staged in git that must stay unstaged (the driver never stages) |
-| E16 | INFO | build litter (`__pycache__`, `.pyc`, `.log`) left in `work/`; harmless, left alone |
+| E16 | INFO | build litter (`__pycache__`, `.pyc`, `.log`) left in `work/`, outside dependency and build directories; harmless, left alone |
 | E17 | ERROR | the work directory moved under the run (branch switch, commit, or an unrelated staged path) |
 | E18 | WARNING | a provider storm the run survived — retries that eventually worked; the count and first line are quoted |
+| E19 | WARNING | a file the run wrote into `work/` that no patch, plan file block or listed by-product accounts for — a stray in the deliverable; the finding names it. Delete it, or have the plan name it |
 
 A warning alone fails the audit: a run that finished but retried through a flaky provider is
 not a pass until you have looked at it.
