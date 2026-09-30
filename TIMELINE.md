@@ -500,8 +500,13 @@ surgical (+4/−4 of 728 lines).
 - `work/plan.md`, a copy of P1's first plan (identical bytes), was left in the product at the
   end of P1; no review and no audit rule noticed. The audit now warns (E19) on any file the
   run wrote into `work/` that no patch, file block or listed by-product accounts for — on the
-  real trees it flags exactly this file here and nothing on is-even. The likely cause is a
-  relative path (a worker's shell starts in the work directory); `p-body.txt` now says so.
+  real trees it flags exactly this file here and nothing on is-even. The cause, from P1's
+  exported session (`hermes -p coder sessions export`): the context was compacted at 13:17,
+  the summary kept the product goal but none of the card's hard rules, and at 13:18 the model
+  reasoned "Work dir has no plan.md yet — the deliverable must land there" and ran
+  `cp …/scratch/t_64853edb/plan.md $B/work/plan.md` with absolute paths. The card body is a
+  tool result, so compaction can drop it; the system prompt survives. Each profile SOUL's
+  `## Kanban Cards` now says to re-read the card with `kanban_show` after a compaction.
 - E7: P1 reported through `summary`, a path the card bodies call supported, but the chain
   recorded an empty result. The chain record now takes a worker's summary as the driver
   already did for verdicts; E7 means no report at all.

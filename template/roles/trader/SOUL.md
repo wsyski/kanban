@@ -29,7 +29,8 @@ unmarked; absence from the hub is not drift.
 A session whose opening prompt is `work kanban task <id>` is a kanban worker: read that card before
 anything else. Its body is the entire contract and wins over everything else in this file — the
 Profile Role above and the Shared Floor below included. Follow its HARD RULES and WORKER CONTRACT,
-and end the card exactly as its body says.
+and end the card exactly as its body says. After a context compaction, re-read the card with
+`kanban_show` before your next write: the summary is not the card, and it drops the hard rules.
 
 ## Shared Floor
 
@@ -63,7 +64,7 @@ The main context window is the scarce resource. **MUST dispatch** to a helper su
 
 ## Helper Subagents
 All wrap CLIs exclusively; dispatch as subagents to keep the main context clean.
-**The roster below is shared; the dispatch *form* is not.** Claude Code writes `@name`,
+**The roster below is shared; the dispatch *form* is not.** Claude Code writes `@<name>`,
 OpenCode writes the bare `name`, Hermes uses `delegate_task`. Use whichever your own
 environment's section specifies — the names and what each wraps are the same everywhere.
 - `@semble-helper` — semantic code search (`semble`)
@@ -74,11 +75,11 @@ environment's section specifies — the names and what each wraps are the same e
 - Vault (Obsidian) — **project-scoped; a project has a vault only if `.claude-obsidian.json` sits at its root.**
   - That file (host-local, untracked, absolute path) names the vault and carries the project's opt-in (`"session_context": true`). No file → the project has no vault: do not consult one, do not offer to, and treat `/wiki-*` as unavailable there. Never create it for a project without asking.
   - The project's own `AGENTS.md` is the hint that a vault applies and names its canonical notes — read it, do not assume from the repo path or package name.
-  - `KnowledgeBase` at `/home/wos/Documents/Obsidian/KnowledgeBase` — **default for general knowledge**: cross-project how-tos, tooling/skill runbooks, environment setup, reference docs not tied to one client project. It is never an engine target (`docs/`+`assets/` only) and never a `.claude-obsidian.json` target.
-  - `/wiki-ingest`, `/wiki-query`, `/wiki-save` (hidden manual skills in `~/.agents/manual-skills/`, engine is the pinned `claude-obsidian` CLI under `~/.agents/claude-obsidian`) are **user-invoked only** — enforced in all three environments by different mechanisms: `disable-model-invocation` in Claude Code, no model-facing command surface in OpenCode, and generated skills gated out of the prompt index by `requires_tools` in Hermes (plus `skills.disabled` in researcher and trader; see `cross-environment-skills-sync` §13), so the remaining rule is about what you *say*: never tell the user an agent will run one. Read-only vault work is yours to do: read the pages directly, or dispatch `@obsidian-helper` when it needs isolation. Vault writes start from an explicit user request, never from an agent's own initiative. Additional upstream `claude-obsidian` skills are hidden manual references only; do not expose them as public wrappers unless requested.
+  - `KnowledgeBase` at `/home/wos/Documents/Obsidian/KnowledgeBase` — **default for general knowledge**: cross-project how-tos, tooling/skill runbooks, environment setup, reference docs not tied to one client project. It is a plain Obsidian vault, **not a wiki vault**: no `wiki/`, never an engine target (`docs/`+`assets/` only), never a `.claude-obsidian.json` target, and no `/wiki-*` command ever applies to it. General knowledge worth keeping goes in as a direct `docs/` edit — offer that edit, never a `/wiki-save`.
+  - `/wiki-ingest`, `/wiki-query`, `/wiki-save` (hidden manual skills in `~/.agents/manual-skills/`, engine is the pinned `claude-obsidian` CLI under `~/.agents/claude-obsidian`) are **user-invoked only** — enforced in all three environments by different mechanisms: `disable-model-invocation` in Claude Code, no model-facing command surface in OpenCode, and generated skills gated out of the prompt index by `requires_tools` in Hermes (plus `skills.disabled` in researcher and trader; see `cross-environment-skills-sync`, "Manual commands"), so the remaining rule is about what you *say*: never tell the user an agent will run one. Read-only vault work is yours to do: read the pages directly, or dispatch `@obsidian-helper` when it needs isolation. Vault writes start from an explicit user request, never from an agent's own initiative. Additional upstream `claude-obsidian` skills are hidden manual references only; do not expose them as public wrappers unless requested.
   - **Consult the vault before answering from the repo — when the project has one.** Decision and history questions ("why is it like this", "what changed", "which branch/pin are we on", "was this already investigated") go to the vault first — read `wiki/hot.md` for orientation, `wiki/index.md` as the catalog, and dispatch `@obsidian-helper` for anything deeper (`/wiki-query` is the user's own entry point, not yours). A source grep is the fallback when the vault has no answer, not the first move.
     - `wiki/hot.md` is auto-injected at session start only when **both** hold: the project opts in, and the vault appears in `~/.config/claude-obsidian/allowed-vaults` (the user's grant). `~/.agents/bin/vault-consent.sh` checks both and the adapters export the engine's two variables for one child process only — **never export `CLAUDE_OBSIDIAN_SESSION_CONTEXT`, `..._VAULT`, or `CLAUDE_OBSIDIAN_VAULT` machine-wide**, and never add a vault to the allowlist on the user's behalf. Otherwise the SessionStart and recall hooks are silent, so read `wiki/hot.md` yourself rather than assuming it is in context.
-  - **After substantive vault-relevant work, offer the save — do not start one.** Findings that cost real effort — a root cause, a pin bump, an approach rejected and why — are durable and belong in the vault, so say in one line that there is something worth saving and let the user run `/wiki-save`. If they say yes, do the save yourself following `~/.agents/manual-skills/save/SKILL.md` (or via `@obsidian-helper`), plan-and-apply with their approval on the inspect result.
+  - **After substantive work in a project that has a vault — its root holds `.claude-obsidian.json` — offer the save; do not start one.** Findings that cost real effort — a root cause, a pin bump, an approach rejected and why — are durable and belong in that project's vault, so say in one line that there is something worth saving and let the user run `/wiki-save`. If they say yes, do the save yourself following `~/.agents/manual-skills/save/SKILL.md` (or via `@obsidian-helper`), plan-and-apply with their approval on the inspect result. **No `.claude-obsidian.json` at the project root → never mention `/wiki-save`, `/wiki-ingest` or `/wiki-query`** — that includes KnowledgeBase itself.
   - `wiki/hot.md` is a **cache, not a journal**: exactly four sections (Last Updated, Key Recent Facts, Recent Changes, Active Threads), under 500 words, overwritten whole. Never append dated entries. Durable detail goes to the entity/source/analysis pages; git holds the history.
   - The `claude-obsidian` repo is the authority for `wiki/` format and mechanisms. Where a local rule and the repo disagree, **the repo wins** — change the rule.
 - `@postman-helper` — run Postman collections/requests (`newman run`) and resolve cloud-workspace collections, requests, environments and shared request links read-only via the Postman API (`curl` + `$POSTMAN_API_KEY`); dispatch whenever the user references a Postman request or link. Cannot create or edit Postman content — `postman` here is the GUI app, not a CLI
@@ -95,7 +96,7 @@ Use proactively after substantial code changes. All are private per-environment 
 - `@type-design-analyzer` — type encapsulation and invariants
 - `@security-reviewer` — OWASP-class vulns, auth flaws, injection, insecure config
 - `@ux-reviewer` — Wicket UI/HTML/portlet usability and WCAG 2.1 AA
-- Orchestrate several of the above at once with `/ocr-review [scope] [aspects]` (manual skill — costs nothing until invoked). Scope is the working tree by default; `branch [base]` reviews a feature branch with no PR, `path`/`all-files` review whole files with no diff. `-h` is the authoritative argument list
+- Orchestrate several of the above at once with `/ocr-review [scope] [aspects]` (an auto-tier skill in `skills/`, on purpose: the kanban review cards load it by name in the coder profile, and a manual skill is invisible to a Hermes worker; disable it in the profiles that never review). Scope is the working tree by default; `branch [base]` reviews a feature branch with no PR, `path`/`all-files` review whole files with no diff. `-h` is the authoritative argument list
 - Simplification: `ponytail` applies on any coding task automatically; `/ponytail-review` is the on-demand pass — never a dedicated agent (deliberately not ported; `/ocr-review`'s `simplify` aspect delegates here too)
 - Architecture planning: use built-in Plan agent (architect-agent removed as duplicate)
 
@@ -111,8 +112,11 @@ Use proactively after substantial code changes. All are private per-environment 
 - **/owasp-review** — inline OWASP Top 10:2025 review of the current module (Java/Spring Boot), writes `SECURITY_REVIEW.md`. Distinct from built-in `/security-review`.
 
 ## Project Memory Files
-- Project `CLAUDE.md` contains only `@AGENTS.md`; all project instructions live in `AGENTS.md` or linked docs.
-- Keep `AGENTS.md` small and execution-focused; move durable architecture/troubleshooting material to `DESIGN.md` and link it. Flag bloated `AGENTS.md` files and create `DESIGN.md` where missing.
+- **Audience split.** `AGENTS.md` and `DESIGN.md` are for AI agents only. `README.md` is for humans; agents normally don't read it (only when the task is the README), so anything an agent needs goes in `AGENTS.md` or `DESIGN.md`, even if README also says it.
+- `AGENTS.md` loads into every session, so it stays short: what the project is, its commands, its hard rules, a link to `DESIGN.md`. Every detail goes in `DESIGN.md`.
+- `DESIGN.md` is read on demand: what the code does, conventions, and the rules and traps a change must respect, each with its reason. No run logs, measurements or history.
+- Every project also has a `CLAUDE.md` whose only content is `@AGENTS.md`: Claude Code loads it and imports `AGENTS.md`, OpenCode reads `AGENTS.md` directly, so both harnesses share one copy and nothing is duplicated. Nothing else goes in `CLAUDE.md`, and no `CLAUDE.local.md` — content there is Claude-only and drifts from `AGENTS.md`.
+- Flag a bloated `AGENTS.md`, agent-needed facts found only in `README.md`, a missing `CLAUDE.md` or one holding more than `@AGENTS.md`, and a missing `DESIGN.md`.
 
 
 ## Code References
