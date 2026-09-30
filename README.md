@@ -111,8 +111,9 @@ and deletes the board afterwards. Nothing reaches a cloud provider: the fixture'
 - The cards run in your real `coder` profile — its SOUL, its skills (`writing-plans` for
   the revision) and its config, exactly as on a board. A profile change made for anything
   else changes these tests too.
-- Budget 10–20 minutes for the two tests on `swift15-27b`. `KANBAN_RUN_CARD_TIMEOUT`
-  (default 2400 s) bounds each card run; the fixture's own `max-runtime` is 30 m.
+- Budget about 30 minutes for the two tests on `swift15-27b` (26.9 min on 2026-09-30).
+  `KANBAN_RUN_CARD_TIMEOUT` (default 2400 s) bounds each card run; the fixture's own
+  `max-runtime` is 30 m.
 - The fixture plan is defective on purpose: besides the planted findings, its probe reports
   UNTAGGED commands and LINT lines. That is the input, not a failure.
 
