@@ -25,9 +25,9 @@ review round to reject — measured on is-even `run-20260930-104349` at 13.6 min
 `runs/<run>/scratch/<P card>/probe/probe-log.md` and its RVp rejects on them. Check the
 next 3–5 runs of any board.
 
-**Measured so far.** 3 runs, all 2026-09-30 (TIMELINE §14, §15):
-- is-even `run-20260930-115853`, `run-20260930-124146`: P1's probe `LINT: clean`, `untagged 0`;
-  RVp1 PASS on the first round.
+**Measured so far.** 4 runs, all 2026-09-30 (TIMELINE §14, §15):
+- is-even `run-20260930-115853`, `run-20260930-124146`, `run-20260930-232906` (the last with
+  the item-7 tree lint): P1's probe `LINT: clean`, `untagged 0`; RVp1 PASS on the first round.
 - Liferay `run-20260930-134356`: P1's probe `LINT: clean`, but RVp1 rejected on item 7
   (a stray fixture, two unlisted by-products) — rule-decidable, and since added to the lint
   (`unlisted_paths`). Not yet a trigger: the planner had no LINT line to ignore.

@@ -508,10 +508,22 @@ polling would hide the stall.
 - **Two different models.** The *goal judge* is the auxiliary task `auxiliary.goal_judge`.
   It runs on the worker's profile model only where nothing pins it: a managed pin decides
   for every profile and a per-profile `auxiliary.goal_judge` cannot override it — the
-  managed layer here (`/etc/hermes/config.yaml`) sets `provider: openrouter`, `model:
-  z-ai/deepseek-v4.1-flash` (not opencode-go: the judge runs outside a turn, carries no
-  `x-opencode-session`, and OpenCode Go answers `400 MissingSessionID`), so that is what
-  judges, whatever the profile or the board's `model` say.
+  managed layer here (`/etc/hermes/config.yaml`) sets `provider: opencode-go`, `model:
+  qwen3.8-flash` (since 2026-09-30; `openrouter` / `z-ai/deepseek-v4.1-flash` before), so
+  that is what judges, whatever the profile or the board's `model` say. OpenCode Go
+  answers an out-of-turn call only through the Hermes checkout's out-of-turn affinity
+  fallback (below): without it the judge gets `400 MissingSessionID`. Measured on the new
+  pin (is-even, 2026-09-30): `Auxiliary goal_judge: using opencode-go (qwen3.8-flash)`,
+  `verdict=done`, C1 completed after one turn.
+- **Compression is pinned the same way.** `auxiliary.compression` in the same managed
+  layer (`opencode-go` / `qwen3.8-flash`, 2026-09-30) writes the summary that replaces a
+  worker's turns when its context reaches Hermes's threshold. Left unpinned it is the
+  worker's own model: on the Liferay board's P1 (2026-09-30) `swift15-27b` summarised
+  about 157k tokens, the summary kept the product goal but none of the card's hard rules,
+  and the worker wrote a plan copy into `work/`. The profile SOULs' `## Kanban Cards` makes
+  a worker re-read its card after any compaction, whichever model summarised. Both pins
+  send text off the machine — the claim, and a compressed card's transcript — and both
+  run out of turn, so the fallback above governs them alike.
   The *review model* is `model_override`/`provider_override`, set on the review cards
   only (`lanes.JUDGE_CODES`, `lanes.model_args`). Pinning the review model does not move
   the goal judge.

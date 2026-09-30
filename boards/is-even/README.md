@@ -93,8 +93,9 @@ researcher's to find — a worker's `python3` may not.
     rig's log actually lives.
 - **The goal judge is not the review pin.** A review-model override moves the review cards
   only; the goal judge is the auxiliary task `auxiliary.goal_judge`, pinned machine-wide in
-  `/etc/hermes/config.yaml` to `z-ai/deepseek-v4.1-flash` on `openrouter`, so a locally-run
-  worker still gets its claim judged by a strong model. Without that pin the judge follows the
+  `/etc/hermes/config.yaml` to `qwen3.8-flash` on `opencode-go` (2026-09-30; `openrouter` /
+  `z-ai/deepseek-v4.1-flash` before), so a locally-run worker still gets its claim judged
+  by a stronger model. Without that pin the judge follows the
   worker's own model, i.e. it goes local too. Because the judge stays strong when the work runs
   locally, this board doubles as the judge's canary after a `hermes update`; see
   [DESIGN.md, *The goal judge*](../../DESIGN.md#the-goal-judge), probe bullet.

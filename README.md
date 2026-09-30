@@ -883,7 +883,7 @@ include `kanban`, so worker runs appear under All/Chats.
   Which model judges is not a board option: it is each worker profile's resolved
   `auxiliary.goal_judge` (the managed `/etc/hermes/config.yaml` pin wins), and
   `create-board.sh` prints it per profile in its pre-flight (`goal judge for C,TI (profile
-  coder): openrouter / z-ai/deepseek-v4.1-flash`).
+  coder): opencode-go / qwen3.8-flash`).
 - **The review model is a different model.** `model_override`/`provider_override`
   (board-level only, so no lane can buy itself a different review model) go on the
   review cards and their rounds. The goal judge is not affected: it runs on the worker's
