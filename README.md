@@ -88,20 +88,56 @@ driver/run-card.py --run boards/<slug>/runs/<run>-try1 --card C2 --keep
 driver/run-card.py --run ... --card RVp1 | tail -1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["verdict"])'
 ```
 
-The LLM-gated tests do the same on a fresh copy of `tests/integration/fixtures/greet/`.
-They need `hermes` on `$PATH`, a running gateway and the local model `swift15-27b` on
-`llama-swap`:
+### Running the LLM integration tests
+
+They run real cards on your machine: `RVp1` on the fixture's planted-defect plan must come
+back `REJECT`, and `P1-rev-1` must fix the findings without rewriting the plan. Each test
+copies `tests/integration/fixtures/greet/` to a pytest temp directory, files a one-card
+Hermes board (`greet-card-<card>-<timestamp>`), runs the card through `driver/run-card.py`
+and deletes the board afterwards. Nothing reaches a cloud provider: the fixture's
+`board.json` names `swift15-27b` on `llama-swap`.
+
+**Before you start:**
+
+- `./test.sh` (no LLM variables) passes — the engine is sound before a model is involved.
+- `hermes` is on `$PATH` (`hermes --version`) and its gateway is running: the dispatcher is
+  what spawns the card's worker.
+- `llama-swap` serves `swift15-27b` (`curl -s http://127.0.0.1:8081/v1/models`). A cold
+  model takes 25–60 s to load on the first request, and that time counts against the card.
+- Nothing else is using the local model. `llama-swap` keeps one model resident, with a
+  fixed number of parallel slots: a board run on the same model makes the two queue
+  behind each other, and a board on another model evicts it mid-card. Finish or reset
+  that board first.
+- The cards run in your real `coder` profile — its SOUL, its skills (`writing-plans` for
+  the revision) and its config, exactly as on a board. A profile change made for anything
+  else changes these tests too.
+- Budget 10–20 minutes for the two tests on `swift15-27b`. `KANBAN_RUN_CARD_TIMEOUT`
+  (default 2400 s) bounds each card run; the fixture's own `max-runtime` is 30 m.
+- The fixture plan is defective on purpose: besides the planted findings, its probe reports
+  UNTAGGED commands and LINT lines. That is the input, not a failure.
+
+**Run:**
 
 ```bash
-KANBAN_LLM_TESTS=1 ./test.sh -rs                              # every LLM case (minutes each)
-KANBAN_LLM_TESTS=1 ./test.sh -rs -k planted                   # the planted-defect review only
-KANBAN_LLM_TESTS=1 ./test.sh -rs -k revision_round            # P1-rev-1 closes its findings
-KANBAN_LLM_TESTS=1 KANBAN_RUN_CARD_REPEAT=1 ./test.sh -rs -k different   # two reviews differ
-KANBAN_LLM_TESTS=1 KANBAN_RUN_CARD_TIMEOUT=3600 ./test.sh -k planted     # per-run timeout (s)
+KANBAN_LLM_TESTS=1 TEST_PATHS=tests/integration ./test.sh -rs                     # both tests
+KANBAN_LLM_TESTS=1 TEST_PATHS=tests/integration ./test.sh -rs -k planted          # the review only
+KANBAN_LLM_TESTS=1 TEST_PATHS=tests/integration ./test.sh -rs -k revision_round   # the revision only
+KANBAN_LLM_TESTS=1 KANBAN_RUN_CARD_REPEAT=1 TEST_PATHS=tests/integration ./test.sh -rs -k different   # one review twice: the two must differ
+KANBAN_LLM_TESTS=1 KANBAN_RUN_CARD_TIMEOUT=3600 TEST_PATHS=tests/integration ./test.sh -rs            # a longer bound per card (s)
 ```
 
-`./test.sh` always runs the whole suite, so `-k` narrows it. `TEST_PATHS=tests/integration
-./test.sh -rs` collects only that directory (the `llm` job does this).
+Without `TEST_PATHS` the whole suite runs as well; `-k` narrows either. `-rs` prints why a
+test was skipped, so a missing `KANBAN_LLM_TESTS=1` shows there instead of passing silently.
+
+**After a run:** pytest keeps its last three temp directories,
+`/tmp/pytest-of-$USER/pytest-<n>/`. Each test's copy of the run is under its own
+subdirectory (`test_<name>0/greet/runs/run-20260927-000000/`, the name truncated), with the
+card's hand-offs and probe log in `scratch/<card-id>/` and its verdict in `verdicts.jsonl`.
+`--basetemp=<dir>` puts them somewhere fixed (pytest empties that directory first). When
+`KANBAN_RUN_CARD_TIMEOUT` expires, the test kills `run-card.py` outright, so its one-card
+board (`greet-card-…`) and possibly its worker are left behind: delete the board with
+`hermes kanban boards rm <name> --delete` and stop the worker with
+`pkill -f "work kanban task <card-id>"`.
 
 ### Running the LLM tests on GitHub
 
@@ -109,6 +145,24 @@ The `kanban-engine` workflow's `llm` job runs them on a self-hosted runner on th
 has the local model. It never runs on push or PR: start it from Actions → kanban-engine → *Run
 workflow*, tick `llm`, and optionally give a `-k` filter (`gh workflow run kanban-engine -f llm=true
 -f k=planted`).
+
+The filter box ("pytest -k filter for the LLM job") takes a pytest `-k` expression over the
+integration test names, not a board name: `is-even` matches nothing, and the job fails with
+"no tests collected". The job always runs `tests/integration` with
+`KANBAN_RUN_CARD_REPEAT=1`, so there are three tests to choose from:
+
+| filter | runs |
+|---|---|
+| *(empty)* | all three |
+| `planted` | RVp1 must REJECT the planted-defect plan |
+| `revision_round` | P1-rev-1 must fix the findings without a rewrite |
+| `different` | the same review twice; the two verdicts must differ |
+| `planted or revision_round` | the reject and the rework, without the repeat |
+
+The runner is on the same machine as the local model, so do not start the job while the
+integration tests or a board run are using that model locally: the cards queue behind each
+other and can hit their timeouts. Board runs are not part of this workflow — start those with
+`driver/arm.sh --slug <slug>`.
 
 One-time setup on the workstation (repo → Settings → Actions → Runners → *New self-hosted
 runner* prints the exact commands and a short-lived token):
@@ -137,8 +191,8 @@ KANBAN_LLM_TESTS=1 KANBAN_RUN_CARD_REPEAT=1 ./test.sh -rs                # the w
 KANBAN_LLM_TESTS=1 KANBAN_RUN_CARD_REPEAT=1 ./test.sh -rs -k planted     # with the `k` input
 ```
 
-Check the prerequisites first: `hermes --version`, the gateway answering, `llama-swap`
-serving `swift15-27b`, and `./test.sh` (no LLM variables) passing.
+Check the prerequisites in [Running the LLM integration tests](#running-the-llm-integration-tests)
+first.
 
 To run the workflow file itself, [`act`](https://github.com/nektos/act) can execute a job on
 the host instead of in a container. This route is not verified here:
