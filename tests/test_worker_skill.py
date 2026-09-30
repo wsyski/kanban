@@ -178,3 +178,13 @@ def test_create_board_refuses_a_profile_without_the_skill(tmp_path):
                        capture_output=True, text=True, env=env, timeout=120)
     assert r.returncode == 1, r.stdout + r.stderr
     assert "profile researcher: the kanban-worker skill is missing" in r.stderr, r.stderr
+
+
+def test_the_card_log_records_the_skills_a_card_was_filed_with(monkeypatch):
+    """The card log is the card's input as filed; the worker skill is part of it."""
+    monkeypatch.setattr(run.runs_util, "board_runs", lambda board, cid: [])
+    monkeypatch.setattr(run, "kb", lambda *a, **k: "")
+    entry = run._card_log_entry({"id": "t_1", "title": "C1: implement - lane 1",
+                                 "assignee": "coder", "skills": [lanes.WORKER_SKILL]})
+    assert entry["skills"] == [lanes.WORKER_SKILL]
+    json.dumps(entry)

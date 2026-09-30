@@ -2379,7 +2379,8 @@ def _card_log_entry(card):
     history, comments). Written on every status change, appended in full —
     JSONL, one complete line per event."""
     r = {"id": card["id"], "title": card.get("title"), "status": card.get("status"),
-         "assignee": card.get("assignee"), "result": card.get("result"),
+         "assignee": card.get("assignee"), "skills": card.get("skills"),
+         "result": card.get("result"),
          "body": card.get("body"), "at": datetime.datetime.now().isoformat(timespec="seconds"),
          "epoch": time.time()}
     runs = runs_util.board_runs(BOARD, card["id"])
