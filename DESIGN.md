@@ -5,6 +5,55 @@ the timing instrumentation. The operator's guide — boards, prerequisites, how 
 create and run a board, run records, operational rules, gate discipline — is
 [README.md](README.md); section numbers (§N) refer to it.
 
+## Repository map and conventions
+
+- **Two engine layers, plus the driver.** `template/` is what the driver imports — the
+  graph (`lanes.py`), the option declaration (`board_schema.py`), the body renderer
+  (`card_render.py`), the board lock (`driver_lock.py`), the probe (`probe.py`),
+  `card-bodies/` and `roles/` (the profile personas). `driver/` is the kanban driver's own:
+  `run.py`, `file_lanes.py`, `run-audit.py`, `runs_util.py`, `doc-chain.py`, the reports and
+  the `.sh` entry points. `tests/` is ONE suite over both layers — `./test.sh` — and the
+  boundary is enforced by `tests/test_layer_boundary.py`: a module that grows a dependency
+  across it fails there rather than in a run. `tests/integration/` is the LLM-gated surface
+  (skipped without `KANBAN_LLM_TESTS=1`): it drives one real card of the fixture board
+  `tests/integration/fixtures/greet/` through `driver/run-card.py` on the local model.
+- **Who says what.** What a card body SAYS and where a lane's hand-offs live is
+  `template/card_render.py`; `run_root` is how a caller names its own run directory.
+  `template/driver_lock.py` is the board's one driver lock. `driver/file_lanes.py` files the
+  board (`hermes kanban create`, the idea cards, the run-id mint). Board options have one
+  declaration, `template/board_schema.py`, and `template/board.schema.json` is generated from
+  it. `driver/start-board.sh --slug <slug>` serves a board without arming it (the dashboard
+  drag of the seeded Triage card into Todo arms it). Code-review reports and SDD run output of
+  this repository: `docs/reviews/`, `docs/superpowers/`.
+- **CI** (`.github/workflows/ci.yml`, on push to `main` and on every PR) runs the same
+  commands, not a fourth: `./test.sh` with `PYTHON` pinned, `driver/render-flow.py --check`,
+  and every `boards/*/board.json` through `board_schema.py --any-host`.
+- **Profiles.** Hermes profiles are `researcher` (card I), `coder` (every other work card)
+  and `trader` (no card); gates have none. A role is not a profile: the review cards get a
+  different model (the review model) through `model_override`/`provider_override` in
+  `board.json`. The goal judge is separate (`auxiliary.goal_judge`, [the goal judge](#the-goal-judge)).
+- **Skills on cards.** No card force-loads a skill (no `--skill`): the profile's own skill
+  list serves the model, and a card body names the one to load. RVa and RVc ask for the
+  hub's `ocr-review` skill in their prose — it must be an ordinary (model-invoked) skill in
+  the coder profile, and disabled for the profiles that never review — and run it over the
+  lane's tree; the reviewers it dispatches are read-only, writing only under
+  `<RUNS>/scratch/<card>/`. Its findings are evidence for the card's own checks — the
+  verdict and the `OWNER:` routing stay the card's. Needs `ocr` on `$PATH`;
+  `create-board.sh`'s pre-flight notes a missing `ocr` or `ocr-review` rather than refusing
+  the board. The plan card asks for `writing-plans`, the hub's superpowers plan skill — don't
+  add `using-superpowers` on top of it: the worker contract forbids a card pulling in
+  planning skills of its own. Card bodies forbid workers from creating, patching or deleting
+  skills; keep that clause.
+- **The worker contract and the SOUL.** Rules every worker card shares live once, in
+  `template/card-bodies/_worker-contract.txt` (`<WORKER_CONTRACT>`). A profile SOUL's
+  `## Kanban Cards` stays a short precedence paragraph ("the card wins"): don't grow it back.
+  `template/roles/*/SOUL.md` are copies of `~/.hermes/profiles/<p>/SOUL.md`; the drift check
+  is in `template/roles/README.md`.
+- **Board output.** The driver never commits and never moves a branch. Board output lands in
+  `boards/<slug>/work/`, which this repo gitignores; the human commits it at a gate only when
+  the work directory is a repository of its own. `boards/<slug>/runs/` is gitignored per-run
+  scratch, never deleted.
+
 ## What the board enforces
 
 **Plan-first, stage-only, every lane gated.**
@@ -161,11 +210,9 @@ Gi(n)      ──REWORK───────→ I(n)-rev-N          → Gi(n)-r(
   `hermes kanban`), and `untagged` lists every file block and Run command under a step
   heading with no tag, or under none (a tagless heading ends the step before it, so what
   follows never inherits its tag). Both land in the log (`LINT:`, `UNTAGGED:`) and the
-  footer (`lint n`, `untagged n`), and either makes the probe exit 1. Calibrated on every
-  plan under `boards/*/runs/` on 2026-09-30: the accepted plans lint clean; the rejected
-  one gets both of its review's findings. Why: is-even's round-1 plan review
-  (2026-09-30) rejected five untagged step headings and two steps with no tick sentence —
-  the probe had passed the plan, and the round cost 13.6 minutes on the local model.
+  footer (`lint n`, `untagged n`), and either makes the probe exit 1. Why: a plan review
+  rejected five untagged step headings and two steps with no tick sentence that the probe
+  had passed (is-even, 2026-09-30) — a rule-decidable defect cost a whole review round.
 - **The driver writes the review header.** `stamp_review_header` puts
   `review_header` on a review card's `review.md` before attaching it: card and run,
   verdict, plan, spec, what was judged (the plan version for RVp, the lane's patches for
@@ -861,9 +908,7 @@ Each is current behaviour, with what to do about it.
   review round into `docs/reviews/` as it finishes (`…-plan-review-r2.md`), all named
   `YYYY-MM-DD-<feature>…`; a run's own copy carries its mark on the last line and is
   replaced in place by a revision or a restart, never duplicated. `publish_docs` is the
-  end-of-run catch-up of the same documents. Until 2026-09-30 the plan and the reviews
-  waited for a passed code gate, so a live run showed only the refined idea. Copies,
-  because the chain and E14 need the
+  end-of-run catch-up of the same documents. Copies, because the chain and E14 need the
   hand-offs under `runs/`; never by a card, whose `writing-plans` "Save plans to" path the plan card's body overrides.
 - **An IDE commit while a driver is live is suspect.** A changelist commit has no
   pathspec, so it takes whatever the run has staged — generated files into HEAD, or

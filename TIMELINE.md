@@ -8,7 +8,8 @@ rig and §13 carries its measurements — the current local-model data, replacin
 probes; §7–§10 are 2026-09-15 (two patches retired and the one-run mint, the first lane
 against an external repository, the gate-text fix, and the two attachment habits the card
 bodies now forbid); §11 is 2026-09-18 (two audit rules); §12 is 2026-09-19 (the layering, a
-green CI, and the attach hand-off).
+green CI, and the attach hand-off); §14 is 2026-09-30 (plan lint, the driver's review
+header, docs published as the run goes).
 
 Every number here comes from the run directories under `boards/<slug>/runs/`, which are
 never deleted. Re-derive any of it with:
@@ -429,3 +430,41 @@ template's default applies.
 | the ceiling | 20 m fits `swift15-27b` on every card (`P1`: 5.33 and 9.92 min); `qwen38-27b` overshoots it on `P1` by seconds. The board ships `"max-runtime": "30m"` |
 | the effort probe | same prompt, warm: bare **379** completion tokens / 22.5 s; `reasoning_effort=medium` **847** / 47.0 s; `chat_template_kwargs.reasoning_budget_tokens=1024` **316** / 19.7 s. The server honours the parameter, so a cap belongs in `/opt/llm/llama-swap/config.yaml`, not on a card |
 | what failed was the contract | the two card defects a local worker could not hold: an index the work directory could not have (it is gitignored — now `GIT IS OPTIONAL`, with `GIT ABSENT — nothing staged` the expected result) and a spec recipe written in a command shape the unattended terminal denies (`python3 -c`; a worker writes the script and runs it by path). Each cost a run; with both fixed, the lane above is clean |
+
+## 14. Plan lint, the driver's review header, live docs — `is-even`, 2026-09-30
+
+Both runs: `swift15-27b` on `llama-swap` for every card (no review-model pin), auto-gates,
+unit tests on, integration tests off, the work directory empty at lane open.
+
+| | `run-20260930-104349` (before) | `run-20260930-115853` (after) |
+|---|---|---|
+| plan review | RVp1 **REJECT** → P1-rev-1 → RVp1-r2 PASS | RVp1 **PASS**, first round |
+| cards (min) | I1 4.30, P1 4.35, RVp1 8.23, P1-rev-1 2.12, RVp1-r2 3.28, TW1 2.95, C1 3.92, RVa1 4.45 | I1 7.17, P1 4.12, RVp1 2.75, TW1 3.32, C1 3.32, RVa1 5.47 |
+| wall / agent / overhead | 38.5 / 30.6 / 7.9 min | 28.5 / 22.8 / 5.7 min |
+| audit | 0 errors, 0 warnings | 0 errors, 0 warnings |
+
+**What the first run surfaced.** RVp1 rejected on two rule-decidable defects: five step
+headings with no `[TW]`/`[C]` tag (the `writing-plans` template's `**Step n: …**` shape) and
+two steps with no tick sentence. The probe had passed the plan: an untagged heading was
+invisible to it, and its without-C pass ran 0 commands without saying so. The round cost
+13.6 min. The plan and the reviews reached `work/docs/` only after the code gate, so a
+person watching the live run saw the refined idea and nothing else. Earlier the same day,
+`run-20260930-094959` halted when P1 hit its 30 m ceiling 21 s after handing over a
+correctly tagged, cleanly probed plan (BACKLOG: timeout salvage).
+
+**What changed** (commits `5fd1260`, `8cd5a29`): the probe reports `UNTAGGED` and `LINT` and
+exits 1 on either; the plan card's body shows the tag syntax and the tick sentences
+literally; the driver refuses a plan-review PASS over lint or untagged defects; the driver
+writes the `review.md` header; the plan is published at the plan gate and every review
+round as it finishes; the researcher leaves `work/docs/` out of "exactly these files"
+criteria. Calibration: every plan under `boards/*/runs/` on this date — the accepted ones
+lint clean, the rejected P1 plan gets both of RVp1's findings; the two older plans of
+`run-20260929-201041` and `run-20260930-094959` fail on a missing tick sentence their
+reviews passed.
+
+**What the second run showed.** P1's probe: `LINT: clean`, `untagged 0`, 4 commands exit 0.
+The refined idea's SC3 excluded `docs/` (`ls -I docs …`). Every `review.md` carried the
+driver's header. `work/docs/` gained the plan and `…-plan-review-r1.md` at the plan gate and
+`…-implementation-review-r1.md` when RVa1 finished; the end-of-run catch-up wrote nothing
+new. One run is one data point for the plan-lint entry in BACKLOG.md.
+

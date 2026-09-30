@@ -25,6 +25,9 @@ review round to reject — measured on is-even `run-20260930-104349` at 13.6 min
 `runs/<run>/scratch/<P card>/probe/probe-log.md` and its RVp rejects on them. Check the
 next 3–5 runs of any board.
 
+**Measured so far.** 1 run: is-even `run-20260930-115853` — P1's probe `LINT: clean`,
+`untagged 0`; RVp1 PASS on the first round (TIMELINE §14).
+
 **Smallest version (one hook in `driver/run.py`).** When P<lane> is done and the driver
 is about to promote RVp<lane>, lint the plan hand-off in-process. On defects, file
 `P<lane>-rev-N (lint retry)` — a revision card with the lint lines as its findings — and
