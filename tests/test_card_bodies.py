@@ -638,6 +638,9 @@ def test_the_skills_a_card_needs_are_named_in_its_prose_not_forced():
     (`lanes.WORKER_SKILL`); the skills a job needs come from the profile's own list, and
     the body says which one to load."""
     assert "load the `writing-plans` skill" in read("p-body.txt")
+    # item 3 cites a Findings line per tool; the format sentence asks for it too, so a
+    # plan that meets the body meets the checklist (is-even 2026-10-01: RVp1 rejected `ls`)
+    assert "names for every tool the Findings line that shows it" in read("p-body.txt")
     assert "Load the `test-driven-development` skill" in read("tw-body.txt")
     researcher = read("i-body.txt")
     assert "`liferay-expert`" in researcher and "`github-deep-research`" in researcher

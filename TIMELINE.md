@@ -513,3 +513,38 @@ surgical (+4/−4 of 728 lines).
 - E16 flagged `node_modules/nwsapi/dist/lint.log`, a package's own file; E16 no longer walks
   dependency and build directories.
 
+
+## 16. The kanban rules as a forced skill — `is-even`, 2026-10-01
+
+`run-20261001-080301`: `swift15-27b` on `llama-swap` for every card (no review-model pin),
+auto-gates, unit tests on, integration tests off, engine at `6d6eee4` — the first run with the
+`kanban-worker` skill. The SOULs' `## Kanban Cards` (§15's compaction rule included) moved into
+`template/skills/kanban-worker/SKILL.md`, which every card a profile works is filed with
+(`--skill kanban-worker`); `create-board.sh` and the driver refuse to file while a profile's
+copy differs from the repo's. A start at 00:46 (`run-20261001-004632`) lost its driver
+during I1 — the lock's pid was gone at 08:02 — and was refiled as this run when the board was
+re-armed.
+
+| card | min | | card | min |
+|---|---|---|---|---|
+| I1 | 3.92 | | P1-rev-1 | 1.63 |
+| P1 | 15.72 | | RVp1-r2 | 3.02 (PASS) |
+| RVp1 | 7.70 (REJECT) | | TW1 ∥ C1 | 4.08 ∥ 3.20 |
+| | | | RVa1 | 4.80 (PASS) |
+
+Wall 47.2 min, agent 40.9, overhead 6.3, overlap 3.2. Audit: 0 errors, 0 warnings; doc chain
+0 findings over 11 cards.
+
+**What it showed.** The card log recorded `skills: ["kanban-worker"]` on every worker and review
+card, the rework round's two included, and none on the three gates. Hermes adds a preloaded
+skill to each request and never stores it, so the load itself is measured, not read: at 00:46
+I1's stored system prompt was 879 characters shorter than the previous run's (the SOUL's
+kanban text gone, `AGENTS.md` reworded) while its first request was 420 tokens longer — about 650 tokens
+outside the stored prompt, the skill's size.
+
+**What changed.** RVp1 rejected on checklist item 3: the plan's Tech Stack named `ls` as present
+"used by the spec's own Verification recipe" instead of citing the Findings line that shows it
+(F9). The plan card's format sentence said only that Tech Stack comes from tools Findings show
+present; it now also asks for each tool's Findings line, as item 3 does. The audit gained E20:
+a card the engine holds with other skills than filing gives it (`kanban-worker` alone on a
+profile's card, none on a gate), read from the card log, which now records `skills`.

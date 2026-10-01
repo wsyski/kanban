@@ -1036,3 +1036,34 @@ def test_e16_does_not_walk_into_dependency_directories(tmp_path):
     (work / "gradle.log").write_text("x")
     found = ra.work_noise_findings(runs)
     assert codes(found) == ["E16"] and "gradle.log" in found[0][2], found
+
+
+def _card_records(run_dir, *recs):
+    (run_dir / "cards").mkdir(parents=True, exist_ok=True)
+    for i, rec in enumerate(recs):
+        (run_dir / "cards" / f"t_{i}.jsonl").write_text(
+            json.dumps({"status": "todo", **rec}) + "\n" + json.dumps(rec) + "\n")
+
+
+def test_a_card_filed_without_the_worker_skill_is_an_e20(tmp_path):
+    """Every card a profile works carries the worker skill and nothing else; a gate none.
+    A card without it ran without the rules a worker needs outside its card's text."""
+    _card_records(tmp_path,
+                  {"title": "P1: plan", "assignee": "coder", "skills": ["kanban-worker"]},
+                  {"title": "Gp1: gate", "assignee": "human-gate", "skills": []},
+                  {"title": "C1: implement", "assignee": "coder", "skills": []},
+                  {"title": "RVa1: review", "assignee": "coder",
+                   "skills": ["kanban-worker", "extra"]})
+    findings = ra.skill_findings(str(tmp_path))
+    assert codes(findings) == ["E20"] and findings[0][0] == "ERROR"
+    assert "C1 (coder: none)" in findings[0][2] and "RVa1 (coder:" in findings[0][2]
+    assert "P1" not in findings[0][2] and "Gp1" not in findings[0][2]
+
+
+def test_e20_skips_records_older_than_the_field_and_unassigned_cards(tmp_path):
+    _card_records(tmp_path,
+                  {"title": "C1: implement", "assignee": "coder"},          # before the field
+                  {"title": "Idea 1: x", "assignee": None, "skills": []},
+                  {"title": "Gc1: gate", "assignee": "gatekeeper", "skills": ["kanban-worker"]})
+    (tmp_path / "cards" / "t_9.jsonl").write_text('{"title": "torn')
+    assert ra.skill_findings(str(tmp_path)) == []

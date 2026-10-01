@@ -142,10 +142,11 @@ board (`greet-card-…`) and possibly its worker are left behind: delete the boa
 
 ### Running the LLM tests on GitHub
 
-The `kanban-engine` workflow's `llm` job runs them on a self-hosted runner on the workstation that
-has the local model. It never runs on push or PR: start it from Actions → kanban-engine → *Run
-workflow*, tick `llm`, and optionally give a `-k` filter (`gh workflow run kanban-engine -f llm=true
--f k=planted`).
+The `integration-test` workflow runs them on a self-hosted runner on the workstation that has
+the local model. It never runs on push or PR: start it from Actions → integration-test → *Run
+workflow*, and optionally give a `-k` filter (`gh workflow run integration-test -f k=planted`).
+The `unit-test` workflow runs the suite, the diagram check and the schema check on every push
+to `main` and every PR.
 
 The filter box ("pytest -k filter for the LLM job") takes a pytest `-k` expression over the
 integration test names, not a board name: `is-even` matches nothing, and the job fails with
@@ -199,12 +200,12 @@ To run the workflow file itself, [`act`](https://github.com/nektos/act) can exec
 the host instead of in a container. This route is not verified here:
 
 ```bash
-act workflow_dispatch -j llm -W .github/workflows/ci.yml \
-    -P self-hosted=-self-hosted --input llm=true --input k=planted
+act workflow_dispatch -j llm -W .github/workflows/integration-test.yml \
+    -P self-hosted=-self-hosted --input k=planted
 ```
 
 Or start the real job on your registered runner from any machine with `gh`:
-`gh workflow run kanban-engine -f llm=true -f k=planted`, then `gh run watch`.
+`gh workflow run integration-test -f k=planted`, then `gh run watch`.
 
 What the template consists of:
 
@@ -740,6 +741,7 @@ board again, audit again; the loop ends when the audit exits 0.
 | E17 | ERROR | the work directory moved under the run (branch switch, commit, or an unrelated staged path) |
 | E18 | WARNING | a provider storm the run survived — retries that eventually worked; the count and first line are quoted |
 | E19 | WARNING | a file the run wrote into `work/` that no patch, plan file block or listed by-product accounts for — a stray in the deliverable; the finding names it. Delete it, or have the plan name it |
+| E20 | ERROR | a card the engine holds with other skills than filing gives it — `kanban-worker` alone on a profile's card, none on a gate; read from `runs/<run>/cards/` |
 
 A warning alone fails the audit: a run that finished but retried through a flaky provider is
 not a pass until you have looked at it.

@@ -1,0 +1,33 @@
+name: integration-test
+
+# The LLM-gated integration tests: one real card at a time on the workstation's local model.
+# Manual only — Actions → integration-test → "Run workflow" — and never on push or PR: a
+# self-hosted runner must never execute a pull request's code.
+on:
+  workflow_dispatch:
+    inputs:
+      k:
+        description: "pytest -k filter for the LLM job, e.g. planted (empty = every case)"
+        type: string
+        default: ""
+
+jobs:
+  # Needs the workstation's local model (swift15-27b via llama-swap) and the `hermes` CLI,
+  # which no hosted runner has. Register the runner with the `kanban-llm` label (README).
+  llm:
+    runs-on: [self-hosted, linux, kanban-llm]
+    # A protected environment: add required reviewers to `kanban-llm` under Settings →
+    # Environments and every run waits for an approval before it touches the workstation.
+    environment: kanban-llm
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: LLM-gated integration tests
+        env:
+          KANBAN_LLM_TESTS: "1"
+          KANBAN_RUN_CARD_REPEAT: "1"
+          KFILTER: ${{ inputs.k }}
+          TEST_PATHS: tests/integration        # the fast suite is unit-test.yml's
+        run: |
+          if [ -n "$KFILTER" ]; then ./test.sh -rs -k "$KFILTER"; else ./test.sh -rs; fi

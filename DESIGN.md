@@ -25,15 +25,17 @@ create and run a board, run records, operational rules, gate discipline — is
   it. `driver/start-board.sh --slug <slug>` serves a board without arming it (the dashboard
   drag of the seeded Triage card into Todo arms it). Code-review reports and SDD run output of
   this repository: `docs/reviews/`, `docs/superpowers/`.
-- **CI** (`.github/workflows/ci.yml`, on push to `main` and on every PR) runs the same
+- **CI** (`.github/workflows/unit-test.yml`, on push to `main` and on every PR) runs the same
   commands, not a fourth: `./test.sh` with `PYTHON` pinned, `driver/render-flow.py --check`,
-  and every `boards/*/board.json` through `board_schema.py --any-host`.
+  and every `boards/*/board.json` through `board_schema.py --any-host`. The LLM-gated
+  integration tests are `integration-test.yml`: manual only, on the self-hosted runner.
 - **Profiles.** Hermes profiles are `researcher` (card I), `coder` (every other work card)
   and `trader` (no card); gates have none. A role is not a profile: the review cards get a
   different model (the review model) through `model_override`/`provider_override` in
   `board.json`. The goal judge is separate (`auxiliary.goal_judge`, [the goal judge](#the-goal-judge)).
 - **Skills on cards.** Every card a profile works is filed with one skill, the engine's
-  `kanban-worker` (`lanes.skill_args`), and no other; gates get none. For the rest the
+  `kanban-worker` (`lanes.skill_args`), and no other; gates get none — the audit checks it
+  from the card log (E20, `skill_findings`). For the rest the
   profile's own skill list serves the model, and a card body names the one to load. RVa and RVc ask for the
   hub's `ocr-review` skill in their prose — it must be an ordinary (model-invoked) skill in
   the coder profile, and disabled for the profiles that never review — and run it over the

@@ -448,6 +448,43 @@ def stray_findings(runs_dir, workdir=None):
              f"or listed by-product accounts for — a stray in the deliverable: {shown}")]
 
 
+def skill_findings(runs_dir):
+    """Cards the engine holds with other skills than filing gives them (E20, an ERROR).
+
+    Every card a profile works is filed with the worker skill and nothing else, and a gate
+    with none (`lanes.skill_args`): the skill carries the rules a worker needs outside its
+    card's text, so a card without it ran without them. Read from the card log the driver
+    writes (`cards/<id>.jsonl`, the card's last readable record). A record without a
+    `skills` field predates the field and is not judged, nor is an unassigned card — the
+    idea card, which no worker takes."""
+    out = []
+    for path in sorted(glob.glob(os.path.join(runs_dir, "cards", "*.jsonl"))):
+        try:
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                lines = fh.read().splitlines()
+        except OSError:
+            continue
+        rec = None
+        for line in reversed(lines):        # a torn last line is a kill mid-write
+            try:
+                rec = json.loads(line)
+                break
+            except ValueError:
+                continue
+        if not isinstance(rec, dict) or "skills" not in rec or not rec.get("assignee"):
+            continue
+        want = [lanes.WORKER_SKILL] if lanes.skill_args(rec["assignee"]) else []
+        have = list(rec.get("skills") or [])
+        if have != want:
+            code = str(rec.get("title") or rec.get("id") or os.path.basename(path)).split(":")[0]
+            out.append(f"{code} ({rec['assignee']}: {have or 'none'})")
+    if not out:
+        return []
+    return [("ERROR", "E20",
+             f"{len(out)} card(s) not filed with the skills their assignee gets — "
+             f"`{lanes.WORKER_SKILL}` alone on a profile's card, none on a gate: "
+             + ", ".join(out))]
+
 def _proc_state(pid):
     """The state letter from /proc ('Z' = exited, not yet reaped), or None if unreadable."""
     try:
@@ -634,6 +671,7 @@ def audit(runs_dir, board_dir=None):
     findings += repo_findings(runs_dir)
     findings += work_noise_findings(runs_dir, cfg.get("default-workdir"))
     findings += stray_findings(runs_dir, cfg.get("default-workdir"))
+    findings += skill_findings(runs_dir)
     findings += board_findings(slug, runs_dir)
     return findings, rows, stats
 
