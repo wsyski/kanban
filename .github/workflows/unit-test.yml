@@ -1,4 +1,4 @@
-name: unit-test
+name: Unit tests
 
 # The same commands the README's receipts name, so CI and a human run one thing. The suite
 # is seconds, and the diagram check is what catches a card-graph edit that forgot its

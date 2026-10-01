@@ -1,7 +1,7 @@
-name: integration-test
+name: Integration tests
 
 # The LLM-gated integration tests: one real card at a time on the workstation's local model.
-# Manual only — Actions → integration-test → "Run workflow" — and never on push or PR: a
+# Manual only — Actions → Integration tests → "Run workflow" — and never on push or PR: a
 # self-hosted runner must never execute a pull request's code.
 on:
   workflow_dispatch:

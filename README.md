@@ -142,10 +142,11 @@ board (`greet-card-…`) and possibly its worker are left behind: delete the boa
 
 ### Running the LLM tests on GitHub
 
-The `integration-test` workflow runs them on a self-hosted runner on the workstation that has
-the local model. It never runs on push or PR: start it from Actions → integration-test → *Run
-workflow*, and optionally give a `-k` filter (`gh workflow run integration-test -f k=planted`).
-The `unit-test` workflow runs the suite, the diagram check and the schema check on every push
+The *Integration tests* workflow (`integration-test.yml`) runs them on a self-hosted runner on
+the workstation that has the local model. It never runs on push or PR: start it from Actions →
+Integration tests → *Run workflow*, and optionally give a `-k` filter
+(`gh workflow run integration-test.yml -f k=planted`). The *Unit tests* workflow
+(`unit-test.yml`) runs the suite, the diagram check and the schema check on every push
 to `main` and every PR.
 
 The filter box ("pytest -k filter for the LLM job") takes a pytest `-k` expression over the
@@ -205,7 +206,7 @@ act workflow_dispatch -j llm -W .github/workflows/integration-test.yml \
 ```
 
 Or start the real job on your registered runner from any machine with `gh`:
-`gh workflow run integration-test -f k=planted`, then `gh run watch`.
+`gh workflow run integration-test.yml -f k=planted`, then `gh run watch`.
 
 What the template consists of:
 
