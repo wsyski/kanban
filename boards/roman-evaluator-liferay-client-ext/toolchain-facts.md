@@ -84,3 +84,7 @@ review's `scratch/<card>/review.md`.
 ## run-20260929-211109 — accepted at the code gate 2026-09-29
 
 - lane 1: Task 3 Step 2: the plan said build.gradle carries subprojects { node { download = false } } -> I wrote subprojects { ext { nodeDownload = false } }, because build 1 with the plan's form shows the extension's downloadNode RAN and the extension build ran on the downloaded Node v20.12.2 / yarn 1.13.0 (not the host's v22.22.2 / yarn 1.22.22) — the NodeExtension reads the project property nodeDownload (NodeExtension.java:31) and the node { download = false } closure configures a throwaway object created before NodePlugin.apply() (NodePlugin.java:90-91), so it is inert; the ext-property form is what the extension reads (after-run: extension downloadNode SKIPPED, packageRunBuild/packageRunTest via host node, T4S4 via host yarn v1.22.22) (accepted by RVa1)
+
+## run-20261001-095737 — accepted at the code gate 2026-10-01
+
+- lane 1: Task 5 Step 1 / Task 6 Step 5: plan says yarn install (run in client-extensions/roman-evaluator) writes yarn.lock at the workspace root → I additionally ran yarn install from the workspace root, because the extension-dir install alone writes only client-extensions/roman-evaluator/yarn.lock and no root lockfile; the root package.json (yarn workspaces root) was pre-existing in the tree (accepted by RVa1)
