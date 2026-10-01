@@ -105,19 +105,25 @@ def workdir_state(workdir, board_dir=None, when="open"):
     """
     if not os.path.isdir(workdir):
         return "empty — this directory does not exist yet; the lane creates it"
-    entries = [e for e in os.listdir(workdir) if e not in (".git",)]
-    if not entries:
-        return "empty — nothing has been built here yet"
-    # `.git` is not something a lane works on: counting its internals reported
-    # "21 file(s) on disk" for a one-file repo.
-    files = 0
-    for _root, dirs, names in os.walk(workdir):
-        dirs[:] = [d for d in dirs if d not in DEPENDENCY_DIRS]
-        files += len(names)
     # realpath, not abspath: a workdir reached through a symlink into the board's own
     # tree is the board's own, and abspath read it as someone else's (prior T-22)
     own = bool(board_dir) and os.path.realpath(workdir).startswith(
         os.path.realpath(board_dir) + os.sep)
+    # `.git` is not something a lane works on: counting its internals reported
+    # "21 file(s) on disk" for a one-file repo. Nor, in the board's own tree, is `docs/`:
+    # the driver's record of earlier runs (publish_*), which E16 and E19 skip too. A
+    # stopped run's published spec alone read as "a PREVIOUS RUN's product … change the
+    # smallest thing" to the next run's cards (Liferay, 2026-10-01). Another project's
+    # `docs/` is that project's, and counts.
+    skip = {".git"} | ({"docs"} if own else set())
+    entries = [e for e in os.listdir(workdir) if e not in skip]
+    if not entries:
+        return "empty — nothing has been built here yet"
+    files = 0
+    for root, dirs, names in os.walk(workdir):
+        dirs[:] = [d for d in dirs if d not in DEPENDENCY_DIRS
+                   and not (root == workdir and d in skip)]
+        files += len(names)
     what = ("a PREVIOUS RUN's product on this board" if own
             else "an EXISTING PROJECT this board did not create")
     control, top = git_control(workdir)

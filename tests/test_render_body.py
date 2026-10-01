@@ -84,6 +84,24 @@ def test_the_reading_itself_distinguishes_the_three_cases(tmp_path):
     assert "does not exist" in card_render.workdir_state(str(tmp_path / "nope"), str(board))
 
 
+def test_the_drivers_docs_alone_are_not_a_previous_runs_product(tmp_path):
+    """Liferay, 2026-10-01: a stopped run left only the refined spec the driver published
+    into `work/docs/`, and the next run's cards were told the lane opened on "a PREVIOUS
+    RUN's product … change the smallest thing". In the board's own tree `docs/` is the
+    driver's record; another project's `docs/` is that project's own."""
+    board = tmp_path / "boards" / "b"
+    spec = board / "work" / "docs" / "superpowers" / "specs" / "s.md"
+    spec.parent.mkdir(parents=True)
+    spec.write_text("published by the driver\n")
+    assert card_render.workdir_state(str(board / "work"), str(board)).startswith("empty")
+    (board / "work" / "built.py").write_text("x\n")
+    own = card_render.workdir_state(str(board / "work"), str(board))
+    assert "NOT empty" in own and "1 file(s) on disk" in own, own
+    theirs = tmp_path / "project" / "docs"
+    theirs.mkdir(parents=True)
+    (theirs / "guide.md").write_text("the project's\n")
+    assert "NOT empty" in card_render.workdir_state(str(tmp_path / "project"), str(board))
+
 def test_the_reading_describes_the_tree_not_the_index(tmp_path):
     """USER RULE (2026-09-12): no assumption about the work directory's contents. The
     line says what is on disk and how much of it is uncommitted — `git ls-files`
