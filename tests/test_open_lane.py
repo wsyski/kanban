@@ -37,6 +37,8 @@ def _kb(calls):
         calls.append(a)
         if a[:1] == ("show",):
             return _PARKED_SHOW
+        if a[:1] == ("list",):
+            return "[]"                     # `list --json` always answers a JSON list
         return ""
     return kb
 
@@ -969,3 +971,50 @@ def test_a_per_lane_model_array_still_re_points_a_lane_whose_header_differs(
     for a in [c for c in calls if c[0] == "set-model"]:
         assert all(isinstance(t, str) for t in a[1:]), a
     run.STATE.opened.clear()
+
+
+def test_a_refile_archives_every_live_card_even_two_sharing_a_title(monkeypatch, tmp_path):
+    """Liferay, 2026-10-01: the board's seeded Triage card and the armed copy of it shared
+    a title, `board()` keeps one card per title, and the refile archived only the one it
+    saw — the other stayed live beside the new run's cards for the whole run."""
+    import file_lanes
+    archived = []
+    live = [{"id": "t_seed", "title": "Idea 1: x", "status": "triage"},
+            {"id": "t_armed", "title": "Idea 1: x", "status": "blocked"},
+            {"id": "t_p1", "title": "P1: plan - lane 1", "status": "done"}]
+
+    def kb(*a, **k):
+        if a[:1] == ("list",):
+            return json.dumps([c for c in live if c["id"] not in archived])
+        if a[:1] == ("archive",):
+            archived.extend(a[1:])
+        return ""
+
+    calls = []
+    _board_env(monkeypatch, tmp_path, calls)
+    monkeypatch.setattr(run, "kb", kb)
+    monkeypatch.setattr(run, "BOARD", "b")
+    monkeypatch.setattr(run, "armed_ideas", lambda st: [(1, "## Idea 1: x\n", "t_armed")])
+    monkeypatch.setattr(run, "validate_armed", lambda armed: True)
+    monkeypatch.setattr(card_render, "read_board", lambda d: {"lanes": 1})
+    monkeypatch.setattr(run, "mint_run", lambda key, armed: None)
+    monkeypatch.setattr(file_lanes, "file_board", lambda *a, **k: {})
+    monkeypatch.setattr(file_lanes, "file_ideas", lambda *a, **k: {})
+    logged = []
+    monkeypatch.setattr(run, "log", logged.append)
+    state = {"Idea 1: x": live[1], "P1: plan - lane 1": live[2]}    # what board() shows
+    assert run.adopt_and_refile(state) is True
+    assert sorted(archived) == ["t_armed", "t_p1", "t_seed"]
+    assert "archived 3/3 card(s) from the previous run" in logged
+
+
+def test_two_cards_sharing_a_title_are_warned_about_once_not_every_tick(monkeypatch):
+    cards = [{"id": "t_a", "title": "Idea 1: x"}, {"id": "t_b", "title": "Idea 1: x"}]
+    monkeypatch.setattr(run, "kb", lambda *a, **k: json.dumps(cards))
+    logged = []
+    monkeypatch.setattr(run, "log", logged.append)
+    monkeypatch.setattr(run.STATE, "duplicates", set())
+    monkeypatch.setattr(run.STATE, "show_memo", {"board": None, "cards": None})
+    run.board()
+    run.board()
+    assert len([m for m in logged if "two live cards" in m]) == 1, logged

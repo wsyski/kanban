@@ -193,6 +193,7 @@ class RunState:
         self.waiting = {}
         self.armed = False   # serve mode holds every lane until a human arms an idea
         self.reported = {}   # idea card id -> the text already refused, so one refusal is one comment
+        self.duplicates = set()   # (title, id, id) already warned about: one line per pair
         self.deadman_stuck = [frozenset()]   # the stuck set last notified, so one stall is one message
         # The previous tick's per-card statuses, which record_timing logs a card from
         # only when it MOVED. Run-scoped like everything else here: a refile reuses the
@@ -217,6 +218,7 @@ class RunState:
         self.run_finished[0] = False
         self.announced.clear()
         self.reported.clear()
+        self.duplicates.clear()
         self.timing_prev.clear()
         self.quiet_since[0] = None
 
@@ -638,6 +640,13 @@ def card_show(card_id):
     return record
 
 
+def live_card_ids():
+    """Every live card's id, read from the engine's list — duplicates in title included,
+    which `board()` folds into one entry."""
+    return [c["id"] for c in json.loads(kb("list", "--json"))
+            if c.get("id") and c.get("status") != "archived"]
+
+
 def board():
     """Live cards, keyed by title — ONCE per tick.
 
@@ -663,9 +672,12 @@ def board():
     state = {}
     for card in out:
         if card["title"] in state:
-            log(f"WARNING: two live cards titled {card['title']!r} "
-                f"({state[card['title']]['id']}, {card['id']}) — one is stale; "
-                f"archive it, or the board will disagree with itself")
+            pair = (card["title"], state[card["title"]]["id"], card["id"])
+            if pair not in STATE.duplicates:     # once per pair: every tick read the
+                STATE.duplicates.add(pair)       # same two cards and said so again
+                log(f"WARNING: two live cards titled {card['title']!r} "
+                    f"({pair[1]}, {pair[2]}) — one is stale; "
+                    f"archive it, or the board will disagree with itself")
         state[card["title"]] = card
     if STATE.show_memo["cards"] is not None:      # inside a tick: keep this snapshot
         STATE.show_memo["board"] = state
@@ -5406,13 +5418,16 @@ def adopt_and_refile(state):
         log(f"adopted idea for lane {lane} -> {os.path.relpath(dst, REPO)}")
     # Archive everything, including the armed cards: file_ideas re-creates the
     # triage cards from the files we just wrote, so the loop closes on itself.
-    ids = [c["id"] for c in state.values() if c.get("id")]
+    # By id, from the engine's own list — not from `state`, which is keyed by title:
+    # of two live cards sharing one (the board's seeded Triage card and the armed copy
+    # of it) only one was archived, and the other lived on beside the new run's cards,
+    # a duplicate-title warning on every tick (Liferay, 2026-10-01).
+    ids = live_card_ids()
     if ids:
         kb("archive", *ids)
         # Verify rather than assume: a survivor of this archive is a card that
         # will be re-read as a new idea next tick and refile the board again.
-        left = [c["id"] for c in board().values()
-                if c["id"] in set(ids) and c.get("status") != "archived"]
+        left = [i for i in live_card_ids() if i in set(ids)]
         log(f"archived {len(ids) - len(left)}/{len(ids)} card(s) from the previous run")
         if left:
             log(f"WARNING: {len(left)} card(s) survived the archive: {', '.join(left)} "
