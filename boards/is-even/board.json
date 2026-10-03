@@ -16,6 +16,6 @@
   ],
   "max-runtime": "60m",
   "max-reworks": 3,
-  "model": "gsq38-27b",
+  "model": "swift15-27b",
   "provider": "llama-swap"
 }
