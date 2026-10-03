@@ -146,6 +146,12 @@ class RunState:
         self.drift = set()   # drift already reported, once per change
         self.run_finished = [False]   # this run reached ALL GATES COMPLETE
         self.gate_tag = {}   # gate code -> the review card its current readiness rests on
+        # What each lane's gate COUNTED in its evidence line, recorded when the gate
+        # ran. The summary reads this rather than re-deriving it: at the end of a run a
+        # later review may sit above the gate (RVc on a board that runs integration
+        # tests), and a re-derivation then reports THAT review's notes — so a run whose
+        # gate said "2 noted fixes" could finish with an empty key.
+        self.noted_at_gate: dict = {}
         self.opened = set()
         self.chain_started = set()
         self.chain_done = set()
@@ -221,6 +227,7 @@ class RunState:
         self.duplicates.clear()
         self.timing_prev.clear()
         self.quiet_since[0] = None
+        self.noted_at_gate.clear()   # what the LAST run's gates counted is not this run's
 
 
 STATE = RunState()
@@ -1504,6 +1511,11 @@ def file_revision(state, lane, round_no, findings, base="P", reviewer_prefix="RV
 
 WORKDIR_FACTS = "workdir.json"          # written per run, beside its other state
 
+CHAIN_RESULT_MAX = 200                # the one cut a run still makes, and it is
+                                      # marked: an unmarked head cannot be told from
+                                      # the whole (is-even 2026-10-03: both reviews'
+                                      # ledger lines stopped mid-word at 600)
+
 # The mode `open(path, "w")` leaves a file: 0666 less the process umask. Read ONCE, here,
 # where the process is single-threaded. `_write_atomic` used to set the umask to 0 and
 # restore it around every write, to learn this number: nothing in this driver is threaded,
@@ -1552,14 +1564,19 @@ def workdir_facts():
     correct: switching it back would be a second writer fighting the operator, and
     a commit or a checkout is not the board's to make.
     """
+    # `model` is not a git fact, and it is here because the NEXT run has to know whose
+    # product it is looking at: `rotate_work_directory` moves the tree aside only when the
+    # model changed, and this file is what tells it (2026-10-03, three models in a row).
+    model = str(manifest().get("model") or "")
     top = git_at(WORKDIR, "rev-parse", "--show-toplevel").strip()
     if not top:
-        return {"repo": None, "workdir": os.path.abspath(WORKDIR)}
+        return {"repo": None, "workdir": os.path.abspath(WORKDIR), "model": model}
     return {"repo": top,
             "workdir": os.path.abspath(WORKDIR),
             "branch": git_at(WORKDIR, "rev-parse", "--abbrev-ref", "HEAD").strip()
                       or "DETACHED",
-            "head": git_at(WORKDIR, "rev-parse", "HEAD").strip() or ""}
+            "head": git_at(WORKDIR, "rev-parse", "HEAD").strip() or "",
+            "model": model}
 
 
 def write_workdir_state(lane, when="open"):
@@ -1588,6 +1605,69 @@ def write_workdir_state(lane, when="open"):
         f"what it finds.\n\n"
         f"{os.path.abspath(WORKDIR)}\n\n{wd_state}\n"))
     return wd_state, path
+
+
+def rotate_work_directory(board_dir, model):
+    """Move a work directory the PREVIOUS model filled aside, and return the sentence.
+
+    One `os.rename`, at the open, where the lane already decides what it starts from.
+    Three models ran `is-even` in a row on 2026-10-03 and each product was kept by hand as
+    `boards/<slug>/work.<model>/`, because the driver offers nowhere to put one: every rule
+    that reads the work directory — the docs publishing, E16, E19, the probe-tree pruning —
+    addresses `work/`, so keeping the results by hand took them out of the audit's sight and
+    left `boards/is-even/work` not existing at all.
+
+    Only a DIFFERENT model rotates. The same model re-running means the next idea is
+    usually a fix of what the last run built, and `workdir_state` reports a previous run's
+    product to the researcher on purpose (2026-10-01: a stale `work/plan.md` read as one).
+    Nothing is deleted, and the destination is the driver's own naming, so a person who
+    moved it by hand gets the same directory rather than a second copy.
+
+    Returns the log sentence, or None when there was nothing to rotate.
+    """
+    work = os.path.join(board_dir, "work")
+    if not os.path.isdir(work) or not _dir_has_files(work):
+        return None
+    previous = ""
+    for facts in _latest_workdir_facts(board_dir):
+        try:
+            with open(facts, encoding="utf-8") as fh:
+                previous = (json.load(fh).get("model") or "").strip()
+        except (OSError, ValueError):
+            previous = ""
+        break
+    if not previous or previous == model:
+        # No recorded model, or the same one: the tree is this lane's input, not a product.
+        return None
+    dest = f"{work}.{previous}"
+    n = 1
+    while os.path.exists(dest):          # a hand-moved tree is already there: keep it
+        n += 1
+        dest = f"{work}.{previous}-{n}"
+    os.rename(work, dest)
+    os.makedirs(work, exist_ok=True)     # the lane opens onto an empty directory it creates
+    return (f"{os.path.basename(dest)} — the work {previous} left, moved aside for {model}: "
+            f"{_dir_has_files(dest)} file(s) inside")
+
+
+def _latest_workdir_facts(board_dir):
+    """The previous run's `workdir.json`, newest first — run state is per RUN directory
+    (`runs/<run-id>/`), and at a lane open the new run's own file does not exist yet."""
+    runs = os.path.join(board_dir, "runs")
+    try:
+        found = [os.path.join(runs, d, WORKDIR_FACTS) for d in os.listdir(runs)
+                 if os.path.isfile(os.path.join(runs, d, WORKDIR_FACTS))]
+    except OSError:
+        return []
+    return sorted(found, key=lambda f: os.path.getmtime(f), reverse=True)
+
+
+def _dir_has_files(path):
+    """Any file under `path`, one level down is enough — a lane's own docs/ counts."""
+    try:
+        return any(files for _root, _dirs, files in os.walk(path))
+    except OSError:
+        return False
 
 
 def record_workdir_facts():
@@ -2280,24 +2360,7 @@ def _gate_action(state, title, kind, lane):
         # reads the same for a lane that verified what was already there (a valid
         # ending) and one that did nothing. The gate's own reading of the tree is
         # the file written just above by write_workdir_state.
-        if card_render.git_control(WORKDIR)[0] == "controlled":
-            what = (f"{len(staged)} file(s) staged" if staged else
-                    "no staged change — the lane ends with the tree as it found it")
-        else:
-            # No index: the lane's own patches are what says what it wrote.
-            written = lane_patch_paths(state, lane)
-            what = ("work directory not git-controlled — the lane's patches wrote "
-                    f"{len(written)} file(s): {', '.join(written[:8])}"
-                    + (" …" if len(written) > 8 else "")
-                    if written else
-                    "work directory not git-controlled — the lane's patches name no file "
-                    "(NO CHANGE)")
-        at_gate = os.path.relpath(
-            os.path.join(STATE.snap_dir, f"lane-{lane}-workdir-at-gate.md"), REPO)
-        # The verdict leads: run-summary.json keeps only the head of this string, and a
-        # long list of written files ahead of it cut "PASS" off (a false E4).
-        evidence = (f"verdict PASS, {what}; workdir at gate: {at_gate}; "
-                    f"to commit in: {commit_target()}")
+        evidence = gate_evidence(lane, state, staged, commit_target())
         if title not in STATE.announced:
             log(f"GATE {title.split(':')[0]} evidence: {evidence}; "
                 f"staged: {', '.join(staged[:8])}")
@@ -2458,6 +2521,15 @@ def open_lane(state, lane):
         STATE.opened.add(lane)
         log(f"LANE {lane}: already opened on this run's record — rejoined")
         return "open"
+    # Below both guards, above everything that reads the work directory: a model change
+    # moves the previous model's product aside, so `workdir_state` below describes an empty
+    # tree rather than the last model's, and the docs publishing, E16, E19 and the probe
+    # pruning keep addressing a path the driver still owns. It is an `os.rename` — the one
+    # mutation here that fixing `runs/current` cannot undo — so it waits until the lane is
+    # known to be this run's.
+    moved = rotate_work_directory(BOARD_DIR, card_model("P", lane))
+    if moved:
+        log(f"LANE {lane}: {moved}")
     opts = lane_options(lane)
     if opts is None:
         log(f"LANE {lane}: no idea entered ({IDEAS_DIR}/lane-{lane}.md) — chain stops here")
@@ -2516,6 +2588,47 @@ def open_lane(state, lane):
                 kb("unlink", tw["id"], rva["id"])
             except RuntimeError as e:
                 log(f"LANE {lane}: unlink TW{lane}->RVa{lane} skipped ({e})")
+    # Which cards this lane actually runs is settled HERE, not in the filed bodies: they
+    # were filed IT-complete because the idea did not exist yet. Say so on the card, once,
+    # in the driver's own words — otherwise the plan card tells a model to go and run
+    # `hermes kanban list` to learn that the TI card it should plan against was archived a
+    # moment ago (Liferay 2026-10-01: an integration test file planned, and an expected
+    # `21 passed`, for a lane with no TI card).
+    # PRUNED first, then LIVE as what is left: a card the board no longer has must not be
+    # listed at all, and a card named in both lists is a line that tells the reader two
+    # things. `lanes.lane_cards` order, so the line reads the same every run.
+    present = {}
+    for c in lanes.lane_cards(lane):
+        card = live_card(state, c["code"], lane)
+        if card:
+            present[c["code"]] = card.get("status")
+    pruned = [f"{code}{lane} (integration-tests: no)" for code in lanes.IT_CODES
+              if present.get(code) == "archived"]
+    if not opts.get("refinement", True):
+        pruned += [f"{code}{lane} (refinement: no)" for code in lanes.REFINEMENT_CODES]
+    if not opts.get("unit-tests"):
+        pruned += [f"{code}{lane} (unit-tests: no)" for code in lanes.UT_CODES]
+    retired = {entry.split(" ")[0] for entry in pruned}
+    live = [f"{code}{lane}" for code, status in present.items()
+            if status != "archived" and f"{code}{lane}" not in retired]
+    body = (f"LANE {lane} as the driver opened it — these cards are settled, not the "
+            "board's whole set.\n\n"
+            f"LIVE CARDS: {', '.join(live)}\n"
+            + (f"PRUNED: {', '.join(pruned)}\n" if pruned else "")
+            + f"\nA [TW] step only when TW{lane} is in LIVE CARDS, a [TI] step only when "
+            f"TI{lane} is. A card under PRUNED: is not this lane's to run.")
+    # P and RVp, NOT the lane root: the plan body says the line is on *this* card, and
+    # `_worker-contract.txt` scopes a worker to `<YOUR-CARD-ID>`, so a line on I1 is a line
+    # neither of them can read. RVp needs it too — `_plan-checklist.txt` item 4 makes a
+    # [TI] step whose TI<N> is absent from LIVE CARDS a finding the review must decide.
+    for code in ("P", "RVp"):
+        target = live_card(state, code, lane)
+        if not target:
+            continue
+        try:
+            driver_comment(target["id"], body)
+        except Exception as exc:        # a comment must never stop an open
+            log(f"LANE {lane}: live-cards comment not posted on {code}{lane} ({exc})")
     # Point this lane's parked cards at the model the lane resolves to. The cards
     # were filed before their idea existed (IT-complete, pruned at open), so a
     # `<!-- model: … -->` header is only known NOW — and it has to land before the
@@ -2742,6 +2855,116 @@ def rejoin_chain():
     STATE.escalated.update(escalated)
     STATE.log_offsets.update(offsets)
 # Review and gate cards carry a verdict; the ledger is where they outlive a run.
+# The clauses a result field is made of, each a literal the card bodies prescribe
+# (`rvp-body.txt`: "PASS: … PROBE: … VERIFIED: … NOTES: …"; the worker contract's GIT
+# ABSENT; the `OCR:` line the code reviews now carry). NOTES is written LAST in that
+# shape, so anything after it belongs to the next clause — without this the count
+# swallowed "GIT ABSENT — nothing staged." as a note of its own (the swift15 Liferay plan
+# review, 2026-10-01, three notes counted as four).
+VERDICT_CLAUSES = ("OCR:", "GIT ABSENT", "VERIFIED:", "PROBE:")
+
+
+def _cut_at_next_clause(text):
+    """`text` up to the next clause marker, or all of it."""
+    cut = len(text)
+    for marker in VERDICT_CLAUSES:
+        i = text.find(marker)
+        if i != -1:
+            cut = min(cut, i)
+    return text[:cut]
+
+
+def noted_fixes(result):
+    """The `NOTES:` clause of a review or gate verdict, as a list of lines.
+
+    A card may pass and still record a defect it did not make a finding — "a note, not a
+    finding", "Notes for the human (evidence, no OWNER)". Twice on the Liferay board that
+    note named the fix and the fix never shipped, and neither the gate evidence nor the run
+    summary mentioned it. `NOTES:` is the clause both review bodies prescribe
+    (`rvp-body.txt`, `rva-body.txt`), so it is the one thing a reader can count. Only a PASS
+    carries it: a REJECT's findings are requirements, not notes.
+    """
+    text = str(result or "")
+    if not re.match(r"^\s*PASS\b", text, re.I):
+        return []
+    # The clause is MID-LINE: a verdict is one long line ("PASS: … VERIFIED: … NOTES: …"),
+    # so anchoring to a line start finds nothing on a real review. The gap before the colon
+    # is what carries the real shapes: both Liferay reviews that named the key-prop fix
+    # wrote "Notes for the human (evidence, no OWNER):", which a bare `NOTES?:` misses —
+    # and a missed clause is a count that comes out zero rather than absent.
+    m = re.search(r"(?<![A-Za-z])NOTES?\b[^:\n]{0,40}:\s*(.*?)(?=\n\s*\n|\Z)",
+                  text, re.S | re.I)
+    if not m:
+        return []
+    body = _cut_at_next_clause(m.group(1)).strip()
+    if not body or body.lower().rstrip(" .") in ("none", "n/a", "-", "nothing"):
+        return []
+    # One note per line: `rva-body.txt`/`rvc-body.txt` require that shape, and a clause run
+    # together in the single-line result field is then honestly ONE note. Splitting on
+    # semicolons as well would cut prose mid-sentence ("…as an array to ClayButton.Group;
+    # fix: add key props") and report a number no reader would agree with.
+    out = []
+    for line in body.splitlines():
+        note = line.strip(" -*")
+        if note:
+            out.append(note)
+    return out
+
+
+def lane_noted_fixes(lane):
+    """The noted fixes of the newest review verdict above `lane`, from this run's ledger.
+
+    Read from `runs/<run-id>/verdicts.jsonl` rather than from a card dict: the gate is
+    completed by the driver after the review closed, and by then the review card may be
+    archived. The ledger keeps the whole `text`, which is what makes the count possible at
+    all — at 600 characters both is-even reviews' tails were cut off.
+    """
+    latest = []
+    try:
+        with open(STATE.verdicts_path, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue              # a torn line from a kill mid-append
+                if (rec.get("event") == "verdict" and rec.get("lane") == lane
+                        and str(rec.get("code", "")).lower().startswith(VERDICT_CODES)):
+                    latest = noted_fixes(rec.get("text"))
+    except OSError:
+        return []
+    return latest
+
+
+def gate_evidence(lane, state, staged, commit_target):
+    """The one line `driver.log` gets per gate, and what `run-summary.json` keeps.
+
+    The verdict leads: the summary keeps only the head of this string, and a long list of
+    written files ahead of it cut "PASS" off (a false E4). A named-but-unrequired fix
+    belongs in it too — twice on the Liferay board a review diagnosed the React key-prop
+    defect, named the fix, and this line said PASS with no trace of it.
+    """
+    if card_render.git_control(WORKDIR)[0] == "controlled":
+        what = (f"{len(staged)} file(s) staged" if staged else
+                "no staged change — the lane ends with the tree as it found it")
+    else:
+        # No index: the lane's own patches are what says what it wrote.
+        written = lane_patch_paths(state, lane)
+        what = ("work directory not git-controlled — the lane's patches wrote "
+                f"{len(written)} file(s): {', '.join(written[:8])}"
+                + (" …" if len(written) > 8 else "")
+                if written else
+                "work directory not git-controlled — the lane's patches name no file "
+                "(NO CHANGE)")
+    at_gate = os.path.relpath(
+        os.path.join(STATE.snap_dir, f"lane-{lane}-workdir-at-gate.md"), REPO)
+    noted = lane_noted_fixes(lane)
+    STATE.noted_at_gate[lane] = noted          # recorded here, read by the summary later
+    return (f"verdict PASS, {what}; workdir at gate: {at_gate}; "
+            f"to commit in: {commit_target}"
+            + (f"; {len(noted)} noted fix{'' if len(noted) == 1 else 'es'} the review named "
+               f"without requiring" if noted else ""))
+
+
 VERDICT_CODES = ("rv", "g")
 
 
@@ -3157,10 +3380,17 @@ def record_chain_done(state):
             except RuntimeError as e:
                 log(f"chain: staged set for {card['title'][:20]} unavailable ({e})")
         chain_record("done", card, lane, inputs=chain_inputs(card.get("body"), lane),
-                     attached=attached, result=result[:200], verdict=verdict, staged=staged)
+                     attached=attached, result=result[:CHAIN_RESULT_MAX], verdict=verdict,
+                     staged=staged, result_truncated=len(result) > CHAIN_RESULT_MAX)
         if verdict:
+            # The whole verdict, not a head of it: this file exists so a decision can be
+            # read back, and a 600-char cut mid-word cannot be told from a reviewer that
+            # stopped writing (is-even 2026-10-03: both reviews' NOTES clauses and their
+            # per-item evidence ended at an arbitrary 600). `text_bytes` is there so a
+            # reader can see the size without measuring the string.
             ledger({"event": "verdict", "lane": lane, "code": code, "card_id": card["id"],
-                    "verdict": verdict, "attached": attached, "text": result[:600]})
+                    "verdict": verdict, "attached": attached, "text": result,
+                    "text_bytes": len(result.encode("utf-8"))})
             try:
                 publish_review(state, card, result)
             except OSError as e:  # the record is for the human; never the run's
@@ -3908,6 +4138,66 @@ def worker_moved_on(events, crash_at):
                if e.get("kind") in ("spawned", "heartbeat", "completed"))
 
 
+def salvage_finished_plan(card, lane, cause=""):
+    """Close a P card whose plan is already written and probed, whatever killed it.
+
+    Two deaths, one hand-off. The 2026-09-30 case: P1 wrote a correctly tagged plan, its
+    probe was clean, it copied the plan to its hand-off, and the ceiling killed it 21 s later
+    — 30 minutes of good work lost with the board. The 2026-10-03 case: P1 wrote a 36 KB plan
+    and probed it clean and full (16 file blocks, 11/11 Run commands exit 0), Hermes'
+    repetition guard stopped the stream, the worker exited 1, and a 300m board halted — with
+    the plan on disk and the probe recording its sha256. The first version was reachable only
+    from the CEILING branch, so the one death that leaves a finished hand-off behind was the
+    one it could not help.
+
+    Only P, and only on what makes a hand-off the hand-off: the plan is there, the probe is
+    COMPLETE and full-pass, it wrote every file block and skipped no command, and it records
+    this plan's own sha256.
+
+    A **LINT** defect does not block: it is a property of the plan's text — an uncovered
+    SC, an unlisted by-product — and the fix is to edit it. Refusing here would make the
+    alternative a regeneration of the whole document, which is the expensive path; the
+    rejection round is not waste, it is what hands the revision round its findings. An
+    **UNTAGGED** block does block, and the difference is the point: that is a file block or a
+    Run command under no step heading, so no card will ever write or run it, and the
+    hand-off is then not the plan but a document that silently drops work.
+
+    The plan review then judges the plan exactly as it would have judged a card that
+    finished in time. Nothing is retried and no retry is granted: the card still ran out of
+    attempts.
+
+    Returns the completion text, or None when there is nothing to salvage.
+    """
+    try:
+        plan = card_render.lane_paths(REPO, BOARD, lane, run_root=STATE.run_dir)["<PLAN>"]
+        if not os.path.isfile(plan):
+            return None
+        with open(plan, "rb") as fh:
+            live = hashlib.sha256(fh.read()).hexdigest()
+    except (OSError, KeyError):
+        return None
+    log_path = os.path.join(STATE.run_dir, "scratch", str(card.get("id")), "probe",
+                            "probe-log.md")
+    info = probe.read_log(log_path) if os.path.isfile(log_path) else None
+    if not info:
+        return None
+    if (info.get("complete") is not True or info.get("mode") != "full"
+            or info.get("files-failed") or info.get("skipped-defect")
+            or info.get("untagged")
+            or str(info.get("sha")) != live):
+        return None
+    lint = int(info.get("lint") or 0)
+    return (f"SALVAGED: this card {cause or 'stopped reporting'} and its plan is written "
+            f"and probed "
+            f"— {os.path.relpath(plan, REPO)} "
+            f"(sha256 {live[:12]}, probe complete, full pass, no file block unwritten, "
+            f"every command run, nothing UNTAGGED). The plan review judges it as it judges "
+            f"any other plan."
+            + (f" Its probe listed {lint} rule-decidable defect(s) — the review decides "
+               f"them, and a rejection is what a revision round works from." if lint
+               else " Its probe listed no defect."))
+
+
 def halt_if_exhausted(st):
     """Stop the whole driver the moment any card gives up: retries exhausted,
     max_runtime reached, or a rework loop escalated.
@@ -3976,6 +4266,26 @@ def halt_if_exhausted(st):
         if c["id"] in STATE.requeued and (p.get("at") or 0) <= STATE.requeued[c["id"]]:
             continue
         # A TIMED-OUT card is a HARD FAILURE (user rule, 2026-09-12): the board
+        # Salvage BEFORE either halt, and never instead of the review: a plan that is
+        # written, copied out and probed does not need its card to have finished on time.
+        # Reachable from BOTH deaths — the ceiling, and a worker the repetition guard
+        # stopped (2026-10-03) — because a stopped stream is a card that finished and was
+        # not heard from, which is the most salvageable failure there is. It comes after
+        # the re-queue-history check so a forgiven flake is still forgiven.
+        if lanes.base_code(title) == "P" and (p.get("kind") == "timed_out"
+                                              or repetition_stop(c["id"])):
+            saved = salvage_finished_plan(
+                c, lanes_of.get(title, 1),
+                cause=("ran out of road at its ceiling" if p.get("kind") == "timed_out"
+                       else "was stopped mid-repetition by the client's guard"))
+            if saved:
+                kb("complete", c["id"], "--result", saved)
+                c["status"] = "done"
+                c["result"] = saved
+                record_chain_done(st)
+                log(f"{title.split(':')[0]}: salvaged — {p.get('kind')} reached after its "
+                    f"hand-off was written and probed")
+                continue
         # does not try it again. The dispatcher put it back at `ready` with its
         # retry budget intact, so the attempt would otherwise restart by itself —
         # the board stops that here and then halts. Only a review may send work
@@ -4030,6 +4340,11 @@ def halt_if_exhausted(st):
     hits = provider_hits(c["id"])
     if hits >= 3:
         why += f" — provider-starved ({hits} upstream 4xx/5xx in the worker log)"
+    # The third cause the log can distinguish: the stream was stopped mid-repetition, so
+    # the attempt produced no verdict to judge. Recorded beside the provider note; the
+    # halt and the spent retries are unchanged.
+    if repetition_stop(c["id"]):
+        why += " — stream stopped mid-repetition (Hermes repetition guard)"
     # The reason must be readable where the human looks first: on the card itself, not
     # only in runs/halt.txt or the driver log — which is where stall_halt puts it. Keyed by
     # the exhaustion EVENT, not the card: escalate() comments once per key per run (rejoined
@@ -4158,6 +4473,29 @@ def provider_hits(card_id):
     no attempt before this one, so it counts from 0."""
     return runs_util.upstream_hits_since(worker_log_path(card_id),
                                          STATE.log_offsets.get(card_id, 0))[0]
+
+
+# Hermes stops a stream it judges degenerate and says so in the worker's own output. The
+# words are its message first (2026-10-03, worker pid 578517), the banner second; either
+# identifies the abort, and both are here so a Hermes wording change does not silence it.
+REPETITION_MARKERS = ("response dominated by repeated text", "repetition detected")
+
+
+def repetition_stop(card_id):
+    """Did this attempt end because the stream was stopped mid-repetition?
+
+    Read from the same log slice `provider_hits` reads, so the answer belongs to THIS
+    attempt and an earlier failure cannot label a later one. The caller records it; it
+    deliberately does not touch the retry budget — a stopped stream is not a card that did
+    the work wrong, and deciding what it deserves is a template-semantics question, not
+    something to change because one board lost a run."""
+    try:
+        with open(worker_log_path(card_id), encoding="utf-8", errors="replace") as fh:
+            fh.seek(STATE.log_offsets.get(card_id, 0))
+            tail = fh.read().lower()
+    except OSError:
+        return False
+    return any(marker in tail for marker in REPETITION_MARKERS)
 
 
 def attempt_offset(card):
@@ -5100,6 +5438,8 @@ def write_summary(state):
     union = runs_util.union_min(intervals)
     overlap = max(0.0, agent_total - union)
     overhead = max(0.0, wall - union)
+    idea_lanes = [l for l in range(1, board_lane_count(state) + 1)
+                  if lane_options(l) is not None]
     summary = {
         "finished_at": datetime.datetime.now().isoformat(timespec="seconds"),
         "wall_min": round(wall, 1),
@@ -5111,8 +5451,13 @@ def write_summary(state):
         "restarts_observed": union > wall,
         "gates": {t.split(":")[0]: gate_summary_text(t, c)
                   for t, c in state.items() if re.match(r"^G[ipc]\d+:", t)},
-        "lanes_with_ideas": [l for l in range(1, board_lane_count(state) + 1)
-                             if lane_options(l) is not None],
+        "lanes_with_ideas": idea_lanes,
+        # What the reviews named but did not require, per lane: the React key-prop defect
+        # both Liferay reviews diagnosed and neither gate line mentioned. A summary that
+        # reads PASS for a run whose reviews left fixes unapplied is the record lying by
+        # omission.
+        "noted_fixes": ({str(l): n for l, n in STATE.noted_at_gate.items()}
+                        or {str(l): lane_noted_fixes(l) for l in idea_lanes}),
         # Where this run's work is staged, and therefore where a gate commit lands.
         # A run whose work directory is another repository has to say so, or its
         # record does not describe where the deliverable went.

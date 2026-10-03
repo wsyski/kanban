@@ -1018,3 +1018,120 @@ def test_two_cards_sharing_a_title_are_warned_about_once_not_every_tick(monkeypa
     run.board()
     run.board()
     assert len([m for m in logged if "two live cards" in m]) == 1, logged
+
+
+def test_the_lane_open_states_which_cards_are_live(monkeypatch, tmp_path):
+    """Filed bodies are IT-complete; the driver prunes at open and knows the result.
+
+    p-body told the planner to go and ask the board which TI card is live; the Liferay
+    run of 2026-10-01 planned `src/integration.test.js` and an expected `21 passed` for a
+    lane whose TI1 had been archived seconds earlier — and the plan review checked the
+    arithmetic (10+7+2+2) without noticing.
+    """
+    calls = []
+    _board_env(monkeypatch, tmp_path, calls)
+    monkeypatch.setattr(run, "board", lambda: _state(root_status="blocked"))
+
+    run.tick()
+
+    bodies = [c[2] for c in calls if c[0] == "comment" and "LIVE CARDS:" in str(c[2:])]
+    assert bodies, [c for c in calls if c[0] == "comment"]
+    assert "PRUNED: TI1 (integration-tests: no)" in bodies[0]
+    live = bodies[0].split("LIVE CARDS:")[1].splitlines()[0]
+    assert "TI1" not in live and "RVc1" not in live
+    assert "P1" in live and "TW1" in live and "C1" in live
+    run.STATE.opened.clear()
+
+
+def test_the_live_cards_line_lands_on_the_cards_whose_bodies_read_it(monkeypatch, tmp_path):
+    """P and RVp — not the lane root.
+
+    `p-body.txt` says the line is on *this* card, `_plan-checklist.txt` item 4 makes the
+    reviewer decide from it, and `_worker-contract.txt` scopes a worker to
+    `<YOUR-CARD-ID>`. Posted on I1 (the root on a refinement lane) it is a line neither of
+    them can read, which left the defect this task fixed in place on every refinement lane.
+    """
+    calls = []
+    _board_env(monkeypatch, tmp_path, calls)
+    monkeypatch.setattr(run, "board", lambda: _state(root_status="blocked"))
+
+    run.tick()
+
+    posted = {c[1] for c in calls if c[0] == "comment" and "LIVE CARDS:" in str(c[2:])}
+    assert posted == {"id-P", "id-RVp"}, posted
+    assert "id-I" not in posted, "the root's body does not read this line"
+    run.STATE.opened.clear()
+
+
+def test_the_lane_comment_names_what_a_refinement_off_open_pruned(monkeypatch, tmp_path):
+    """The same line has to say which cards a `refinement: no` open took away, or the
+    planner is back to asking the board."""
+    calls = []
+    _board_env(monkeypatch, tmp_path, calls)
+    monkeypatch.setattr(run, "board", lambda: _state(root_status="blocked"))
+    monkeypatch.setattr(run, "lane_options",
+                        lambda lane: {"refinement": False, "integration-tests": False,
+                                      "unit-tests": True, "auto-gates": [],
+                                      "idea": "## Idea 1: is_even\n"})
+
+    run.tick()
+
+    bodies = [c[2] for c in calls if c[0] == "comment" and "LIVE CARDS:" in str(c[2:])]
+    assert bodies
+    assert "I1 (refinement: no)" in bodies[0] and "Gi1 (refinement: no)" in bodies[0]
+    live = bodies[0].split("LIVE CARDS:")[1].splitlines()[0]
+    assert "I1" not in live
+    assert "P1" in live, "archiving I makes P the lane root"
+    run.STATE.opened.clear()
+
+
+def test_the_lane_comment_lists_no_card_in_both_halves(monkeypatch, tmp_path):
+    """A card named in LIVE CARDS and in PRUNED tells the reader two things at once, and a
+    card the board no longer has is not this lane's to list at all."""
+    calls = []
+    _board_env(monkeypatch, tmp_path, calls)
+    st = _state(root_status="blocked")
+    st.pop(lanes.card_title("TI", 1))           # deleted from the board, not archived
+    monkeypatch.setattr(run, "board", lambda: st)
+    monkeypatch.setattr(run, "lane_options",
+                        lambda lane: {"refinement": False, "integration-tests": False,
+                                      "unit-tests": True, "auto-gates": [],
+                                      "idea": "## Idea 1: is_even\n"})
+
+    run.tick()
+
+    body = next(c[2] for c in calls if c[0] == "comment" and "LIVE CARDS:" in str(c[2:]))
+    live = {c.strip() for c in body.split("LIVE CARDS:")[1].splitlines()[0].split(",")}
+    pruned = {e.split(" ")[0] for e in
+              (body.split("PRUNED:")[1].splitlines()[0] if "PRUNED:" in body else "").split(",")}
+    assert not (live & pruned), (live, pruned)
+    assert "TI1" not in pruned, "a card that was never archived is not a pruned card"
+    run.STATE.opened.clear()
+
+
+def test_a_refused_lane_never_rotates_the_work_directory(monkeypatch, tmp_path):
+    """The rotation is an `os.rename`, and it must sit below the guard that exists to stop
+    the driver acting on a run it is not pointed at.
+
+    `lane_paths_agree` is the first check in `open_lane` for a reason: a lane filed against
+    another run escalates and touches nothing. Moving the operator's product aside before it
+    is the one mutation that cannot be undone by fixing `runs/current`.
+    """
+    calls = []
+    _board_env(monkeypatch, tmp_path, calls)
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "is_even.py").write_text("what the last model left\n")
+    prev = tmp_path / "runs" / "run-previous"
+    prev.mkdir(parents=True)
+    (prev / "workdir.json").write_text(json.dumps(
+        {"repo": str(tmp_path), "workdir": str(work), "branch": "main", "head": "abc",
+         "model": "gsq38-27b"}))
+    monkeypatch.setattr(run, "board", lambda: _state(root_status="blocked"))
+    monkeypatch.setattr(run, "lane_paths_agree", lambda state, lane: False)
+
+    run.tick()
+
+    assert (work / "is_even.py").exists(), "a refused lane moved the work directory"
+    assert not (tmp_path / "work.gsq38-27b").exists()
+    run.STATE.opened.clear()

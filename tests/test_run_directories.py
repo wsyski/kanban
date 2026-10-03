@@ -684,7 +684,14 @@ def test_the_idea_snapshot_does_not_follow_a_planted_temp_symlink(monkeypatch, t
     monkeypatch.setattr(r, "manifest", lambda: {})
     monkeypatch.setattr(r, "workdir_facts", lambda: {"repo": None, "workdir": str(tmp_path)})
     monkeypatch.setattr(r.card_render, "workdir_state", lambda workdir, board, when="open": "empty")
-    monkeypatch.setattr(r.lanes, "lane_cards", lambda lane, **kw: [])
+    # The real signature takes integration_tests POSITIONALLY, and lane_root_code
+    # calls it that way: a stub pinned to (lane, **kw) raises TypeError the moment
+    # anything asks which card opens the lane.
+    monkeypatch.setattr(r.lanes, "lane_cards", lambda lane, *a, **kw: [])
+    # …and this lane has no graph at all, so lane_root_code (which indexes
+    # lane_cards()[0]) cannot be answered from it. This test is about the idea
+    # snapshot, not about which card opens the lane.
+    monkeypatch.setattr(r.lanes, "lane_root_code", lambda *a, **kw: "I")
     monkeypatch.setattr(r, "lane_paths_agree", lambda state, lane: True)
     monkeypatch.setattr(r, "lane_opened_on_record", lambda lane: False)
     monkeypatch.setattr(r, "lane_options", lambda lane: {
@@ -793,3 +800,17 @@ def test_no_prose_names_a_symbol_or_a_test_that_does_not_exist():
     assert "STATE.read_error" in inspect.getsource(r.card_record)
     assert "test_the_driver_retired_every_clearing_function" in \
         inspect.getsource(r.clean_work_noise)
+
+
+def test_a_refile_clears_what_the_gate_counted():
+    """A holder added to RunState and not added to reset() is carried into the next run.
+
+    The class says so: "a seventh holder added later is silently left behind — carried from
+    the finished run into the new one." `noted_at_gate` was exactly that — a second run
+    would write the first run's noted fixes into its own run-summary.json.
+    """
+    run.STATE.noted_at_gate[1] = ["RomanEvaluator.js has no key props."]
+
+    run.STATE.reset()
+
+    assert run.STATE.noted_at_gate == {}

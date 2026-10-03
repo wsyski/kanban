@@ -10,6 +10,7 @@ The same now holds for run state. The refile MINTS `runs/<run-id>/` instead of
 clearing the last run's files, so the incoming run starts on empty paths because
 they are new, and the finished run stays readable for the auditor.
 """
+import json
 import os
 import sys
 
@@ -67,3 +68,66 @@ def test_current_names_the_new_run(monkeypatch, tmp_path):
     _work, runs, _prev = _fixture(monkeypatch, tmp_path)
     run.mint_run("b-20260912-100000", [(1, "## Idea\n\n### Done means\n- x\n", "c1")])
     assert (runs / "current").read_text().strip() == "b-20260912-100000"
+
+
+def _board(tmp_path, previous_model):
+    """A board whose work/ holds a product and whose previous run recorded its model."""
+    work = tmp_path / "work"
+    work.mkdir(exist_ok=True)
+    (work / "is_even.py").write_text("def is_even(n): return n % 2 == 0\n")
+    run_dir = tmp_path / "runs" / "run-previous"
+    run_dir.mkdir(parents=True)
+    (run_dir / "workdir.json").write_text(json.dumps(
+        {"repo": str(tmp_path), "workdir": str(work), "branch": "main",
+         "head": "abc1234", "model": previous_model}))
+    (tmp_path / "board.json").write_text(json.dumps(
+        {"slug": "b", "name": "B", "lanes": 1, "model": "qwen38-27b", "auto-gates": []}))
+    return work
+
+
+def test_the_open_rotates_a_work_directory_the_previous_model_filled(tmp_path):
+    """Per-model results have to live somewhere the driver still knows about.
+
+    2026-10-03: three models ran `is-even` in a row and each product was kept by hand as
+    `boards/<slug>/work.<model>/`, because the driver offers nowhere to put one — every rule
+    that reads the work directory addresses `work/`, so keeping the results by hand took
+    them out of the audit's sight and left `boards/is-even/work` not existing at all.
+    """
+    work = _board(tmp_path, "gsq38-27b")
+
+    say = run.rotate_work_directory(str(tmp_path), "qwen38-27b")
+
+    assert say is not None and "work.gsq38-27b" in say, say
+    assert not any(work.iterdir()), "the lane would start on the previous model's product"
+    assert (tmp_path / "work.gsq38-27b" / "is_even.py").read_text().startswith("def is_even")
+
+
+def test_the_open_leaves_a_work_directory_the_same_model_filled(tmp_path):
+    """The same model re-running usually means the next idea is a fix of what the last run
+    built, and `workdir_state` reports that product to the researcher on purpose (2026-10-01:
+    a stale `work/plan.md` read as a PREVIOUS RUN's product)."""
+    work = _board(tmp_path, "qwen38-27b")
+
+    assert run.rotate_work_directory(str(tmp_path), "qwen38-27b") is None
+    assert (work / "is_even.py").exists(), "nothing was moved"
+
+
+def test_the_open_rotates_an_empty_work_directory_nowhere(tmp_path):
+    work = _board(tmp_path, "gsq38-27b")
+    (work / "is_even.py").unlink()
+
+    assert run.rotate_work_directory(str(tmp_path), "qwen38-27b") is None
+    assert work.exists()
+
+
+def test_the_open_never_overwrites_a_directory_a_person_already_moved(tmp_path):
+    """The destination is the driver's own naming, so a hand-moved tree is already there."""
+    work = _board(tmp_path, "gsq38-27b")
+    kept = tmp_path / "work.gsq38-27b"
+    kept.mkdir()
+    (kept / "is_even.py").write_text("the hand-moved one\n")
+
+    run.rotate_work_directory(str(tmp_path), "qwen38-27b")
+
+    assert (kept / "is_even.py").read_text() == "the hand-moved one\n"
+    assert (tmp_path / "work.gsq38-27b-2" / "is_even.py").exists()

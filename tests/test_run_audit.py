@@ -61,8 +61,13 @@ def codes(findings, sev=None):
 
 
 def clean_probe(monkeypatch):
-    """The board-end-state probe talks to the CLI and pgrep — stub both."""
-    monkeypatch.setattr(ra, "board_findings", lambda slug, runs: [])
+    """The board-end-state probe talks to the CLI and pgrep — stub both.
+
+    `own=None` is part of the signature (the run's own card records, read when the board
+    cannot be): a stub pinned to the older two-argument shape fails every caller with a
+    TypeError instead of skipping the probe.
+    """
+    monkeypatch.setattr(ra, "board_findings", lambda slug, runs, own=None: [])
 
 
 class _NoProcesses:
@@ -194,18 +199,26 @@ def test_dirt_in_the_repo_root_is_an_error(tmp_path, monkeypatch):
 
 
 def test_a_worker_outliving_the_run_is_a_warning(monkeypatch):
-    """The real board_findings, with the CLI and pgrep both stubbed."""
+    """The real board_findings, with the CLI and pgrep both stubbed.
+
+    The board read answers with the worker's card still running: E8 judges a hit against a
+    card list, and with neither a board nor a run card log there is nothing to judge it
+    against (the four tests below). So the positive case has to supply one — as a live
+    board does.
+    """
 
     class R:
         stdout = "1234 hermes kanban work kanban task t_x\n"
         returncode = 0
 
-    calls = {"n": 0}
+    class RJ:
+        stdout = json.dumps([{"id": "t_x", "title": "RVa1", "status": "running"}])
+        returncode = 0
 
     def fake_run(cmd, **kw):
         if cmd[:2] == ["pgrep", "-af"]:
             return R()
-        return R()
+        return RJ() if "list" in cmd else R()
 
     monkeypatch.setattr(ra.subprocess, "run", fake_run)
     # pid 1234 is a real /proc entry on SOME hosts — in state Z there, the zombie filter
@@ -1067,3 +1080,146 @@ def test_e20_skips_records_older_than_the_field_and_unassigned_cards(tmp_path):
                   {"title": "Gc1: gate", "assignee": "gatekeeper", "skills": ["kanban-worker"]})
     (tmp_path / "cards" / "t_9.jsonl").write_text('{"title": "torn')
     assert ra.skill_findings(str(tmp_path)) == []
+
+
+def test_a_worker_from_another_run_is_not_an_e8():
+    """The finding this rule produced on 2026-10-03.
+
+    is-even's board was removed after its run, so the live-board card list was empty,
+    the "not this board's card" filter never ran, and the audit warned about the Liferay
+    board's live I1 worker (pid 539300, task t_9c08932f, gsq38-27b, started 15:57:25 —
+    seven minutes after the audited run finished at 15:50:58). The run's own card log
+    answers the question the filter was asking.
+    """
+    line = ("539300 /usr/bin/python3 -I -c import os … -p researcher --cli "
+            "--skills kanban-worker -m gsq38-27b --provider llama-swap "
+            "-q work kanban task t_9c08932f")
+    own = {"t_790f6c71": {"id": "t_790f6c71", "status": "done",
+                          "title": "RVp1: plan review - lane 1"}}
+
+    assert ra.worker_outlived_run(line, [], own) is None
+
+
+def test_a_worker_of_this_run_still_running_is_an_e8_without_a_board():
+    """The rule still fires when only the run's own log can answer it."""
+    line = "539300 python3 … work kanban task t_790f6c71"
+    own = {"t_790f6c71": {"id": "t_790f6c71", "status": "running",
+                          "title": "RVp1: plan review - lane 1"}}
+
+    text = ra.worker_outlived_run(line, [], own)
+
+    assert text is not None and "t_790f6c71" in text and "running" in text
+
+
+def test_a_pgrep_hit_with_no_task_id_is_not_an_e8():
+    """The fallback warned with the raw line; a wrapper has no card to judge."""
+    assert ra.worker_outlived_run("4711 /bin/sh -c hermes kanban worker", [], {}) is None
+
+
+def test_a_task_id_with_no_card_anywhere_is_not_an_e8():
+    """A run that died before filing has no `cards/` at all (is-even
+    run-20261003-114613 is an empty run directory) and no board: there is nothing to
+    judge the hit against, so E8 says nothing rather than blaming the host."""
+    assert ra.worker_outlived_run("539300 python3 … work kanban task t_deadbee", [], {}) is None
+
+
+def _board_unreadable(monkeypatch, msg="kanban: board 'b' does not exist."):
+    """The board read fails; `pgrep` answers with nothing.
+
+    Nothing is chained to the previous `subprocess.run`: `ra.subprocess` IS the global
+    module, so another test's patch can still be installed when this runs.
+    """
+    class Fail:
+        returncode = 1
+        stdout = ""
+        stderr = msg
+
+    class Ok:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    monkeypatch.setattr(ra.subprocess, "run",
+                        lambda cmd, **kw: Fail() if "list" in cmd else Ok())
+
+
+def test_e12_checks_the_end_state_from_the_run_when_the_board_is_gone(monkeypatch, tmp_path):
+    """The board is one source of the end state; the run's own card log is another.
+
+    is-even's board was removed after its run, so E12 said "its end state and live workers
+    are unchecked" — and a card the run really did leave unfinished would have gone
+    unreported.
+    """
+    _board_unreadable(monkeypatch)
+    own = {"t_1": {"id": "t_1", "title": "C1: implement - lane 1", "status": "done"},
+           "t_2": {"id": "t_2", "title": "RVa1: code review - lane 1", "status": "running"}}
+    _card_records(tmp_path,
+                  {"id": "t_1", "title": "C1: implement - lane 1", "status": "done"},
+                  {"id": "t_2", "title": "RVa1: code review - lane 1", "status": "running"})
+
+    findings = ra.board_findings("b", str(tmp_path), own=own)
+
+    unreadable = [f for f in findings if f[1] == "E12" and f[0] == "WARNING"]
+    unfinished = [f for f in findings if f[1] == "E12" and f[0] == "ERROR"]
+    assert len(unreadable) == 1 and "this run's own card log" in unreadable[0][2]
+    assert len(unfinished) == 1 and "RVa1" in unfinished[0][2]
+
+
+def test_e12_reports_nothing_about_the_end_state_with_neither_source(monkeypatch, tmp_path):
+    """A run that died before filing (is-even run-20261003-114613 is an empty run
+    directory): unreadable board, no cards/ — one warning, no error."""
+    _board_unreadable(monkeypatch)
+
+    findings = ra.board_findings("b", str(tmp_path))
+
+    assert [f[0] for f in findings if f[1] == "E12"] == ["WARNING"]
+    assert "unchecked" in [f for f in findings if f[1] == "E12"][0][2]
+
+
+def test_e12_does_not_report_a_card_the_driver_archived_at_open(monkeypatch, tmp_path):
+    """The run's card log's last word on a retired card is its PRE-retirement status.
+
+    is-even run-20261003-152343: RVc1 and TI1 were archived at lane open
+    (`integration-tests=no`), the card log still says `blocked` for both, and the board
+    that would have said `archived` is gone. Reading the log alone therefore reported
+    two cards the run did not leave unfinished.
+    """
+    _board_unreadable(monkeypatch)
+    (tmp_path / "driver.log").write_text(
+        "[15:24:32] LANE 1: integration-tests=no — archived TI1\n"
+        "[15:24:33] LANE 1: integration-tests=no — archived RVc1\n")
+    own = {"t_a": {"id": "t_a", "title": "TI1: integration tests - lane 1", "status": "blocked"},
+           "t_b": {"id": "t_b", "title": "RVc1: final review - lane 1", "status": "blocked"},
+           "t_c": {"id": "t_c", "title": "C1: implement - lane 1", "status": "done"}}
+
+    findings = ra.board_findings("b", str(tmp_path), own=own)
+
+    assert [f for f in findings if f[0] == "ERROR"] == []
+
+
+def test_a_worker_on_a_card_the_board_forgot_is_still_judged():
+    """The fallback was unreachable whenever the board was readable.
+
+    `worker_outlived_run` tried the board's cards and stopped: a worker still running on a
+    card the board no longer lists — archived there, or completed out from under it — was
+    dropped, which is the same class of silence as the 2026-10-03 false warning, pointed the
+    other way. The board wins where it knows the card; the run's own log answers where it
+    does not.
+    """
+    line = "539300 python3 … work kanban task t_rvp1"
+    board = [{"id": "t_other", "status": "running"}]
+    own = {"t_rvp1": {"id": "t_rvp1", "status": "running", "title": "RVp1: plan review"}}
+
+    text = ra.worker_outlived_run(line, board, own)
+
+    assert text is not None and "t_rvp1" in text and "running" in text
+
+
+def test_a_board_that_knows_the_card_still_wins_over_the_run_log():
+    """The board is the live source: a card it calls `done` is done, whatever the run's own
+    last record says."""
+    line = "539300 python3 … work kanban task t_rvp1"
+    board = [{"id": "t_rvp1", "status": "done"}]
+    own = {"t_rvp1": {"id": "t_rvp1", "status": "running", "title": "RVp1: plan review"}}
+
+    assert ra.worker_outlived_run(line, board, own) is None

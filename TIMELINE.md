@@ -10,7 +10,8 @@ against an external repository, the gate-text fix, and the two attachment habits
 bodies now forbid); §11 is 2026-09-18 (two audit rules); §12 is 2026-09-19 (the layering, a
 green CI, and the attach hand-off); §14 is 2026-09-30 (plan lint, the driver's review
 header, docs published as the run goes); §15 is the Liferay board on the local model the same
-day.
+day; §16 is 2026-10-01 (the kanban rules as a forced skill); §17 is 2026-10-03 — the same two
+boards on three models each, and an audit rule that fires on another board's worker.
 
 Every number here comes from the run directories under `boards/<slug>/runs/`, which are
 never deleted. Re-derive any of it with:
@@ -451,7 +452,8 @@ invisible to it, and its without-C pass ran 0 commands without saying so. The ro
 13.6 min. The plan and the reviews reached `work/docs/` only after the code gate, so a
 person watching the live run saw the refined idea and nothing else. Earlier the same day,
 `run-20260930-094959` halted when P1 hit its 30 m ceiling 21 s after handing over a
-correctly tagged, cleanly probed plan (BACKLOG: timeout salvage).
+correctly tagged, cleanly probed plan — the timeout salvage deferred that day, built
+2026-10-03 (`salvage_timed_out_plan`, DESIGN.md "Known traps").
 
 **What changed** (commits `5fd1260`, `8cd5a29`): the probe reports `UNTAGGED` and `LINT` and
 exits 1 on either; the plan card's body shows the tag syntax and the tick sentences
@@ -467,7 +469,8 @@ reviews passed.
 The refined idea's SC3 excluded `docs/` (`ls -I docs …`). Every `review.md` carried the
 driver's header. `work/docs/` gained the plan and `…-plan-review-r1.md` at the plan gate and
 `…-implementation-review-r1.md` when RVa1 finished; the end-of-run catch-up wrote nothing
-new. One run is one data point for the plan-lint entry in BACKLOG.md.
+new. One run is one data point for the plan-lint question; nine runs later the answer is
+no — see §17.
 
 ## 15. The Liferay board on the local model — 2026-09-30
 
@@ -548,3 +551,201 @@ outside the stored prompt, the skill's size.
 present; it now also asks for each tool's Findings line, as item 3 does. The audit gained E20:
 a card the engine holds with other skills than filing gives it (`kanban-worker` alone on a
 profile's card, none on a gate), read from the card log, which now records `skills`.
+
+## 17. Three models on two boards, and an audit rule on the wrong worker — 2026-10-03
+
+Both boards with a real deliverable were re-run on the local rig with `board.json`'s `model`
+swapped, one lane each, reviews on the author's model (no `model_override` pinned — the driver
+logs that per lane), auto-gates `Gi`/`Gp`/`Gc`, unit tests on, integration tests off. On
+`is-even` the lane idea was byte-identical across the three runs (the three
+`runs/*/snapshots/lane-1.md` diff clean), so the plans differ by model and not by input.
+Products were kept per model as `work.<model>/` beside `work/` — **not a driver feature**:
+nothing in `driver/` or `template/` writes that name, `workdir.json` records
+`boards/<slug>/work` in every run, and `boards/is-even/work` does not exist at all now. The
+comparison is therefore a person's bookkeeping, outside what the audit and E19 can see.
+
+### `is-even` — one board, three models
+
+| model | run | wall | agent | overhead | I1 | P1 | RVp1 | TW1 | C1 | RVa1 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `swift15-27b` | `run-20261003-152343` | 27.0 | 23.2 | 6.0 | 2.57 | 5.32 | 6.83 | 2.25 | 2.70 | 3.53 |
+| `gsq38-27b` | `run-20261003-130852` | 38.1 | 34.7 | 5.7 | 3.87 | 18.05 | 3.75 | 2.35 | 2.62 | 4.07 |
+| `qwen38-27b` | `run-20261003-140230` | 78.3 | 78.0 | 6.0 | 9.67 | 35.23 | 8.30 | 5.72 | 8.43 | 10.63 |
+
+Minutes, per card, from each run's `run-summary.json`; gates are 0.00 and all three runs
+closed `RVp1`/`Gp1`/`RVa1`/`Gc1` PASS with `restarts_observed: false`, `workdir_drift: []`,
+nothing staged and nothing committed. Docs, in bytes (spec / plan / plan review /
+implementation review): swift15 4 888 / 5 531 / 7 017 / 7 972; gsq38 4 730 / 6 611 / 8 043 /
+8 128; qwen38 6 457 / 9 077 / 7 987 / 11 419.
+
+**The deliverable is the same in all three** — `return n % 2 == 0` and four cases (0, 4, 7,
+−3). `gsq38` and `qwen38` gave `is_even.py` a docstring; `swift15` gave each test a
+function-local import. What separates the runs is the evidence and the cost.
+
+- **`swift15-27b`** — the cheapest at 23.2 agent min, and the only run whose tests fail
+  *individually* without the C card's module: four named `FAILED` lines rather than one
+  collection error (`scratch/t_790f6c71/probe/logs-without-C/01.log`), so each assertion is
+  evidence and not a hypothesis. Both reviews quote files on disk; the plan review's tally
+  (`full-pass: files 2, files-failed 0, commands 3, ran 3, exit0 3 … complete: yes`,
+  `probe/probe-log.md`) is real output, and the plan digest it accepted
+  (`plan-sha256: b7e74d25…`) is what `probe-accepted/t_790f6c71.sha256` holds. Costs: the
+  repeated in-test import is unidiomatic — the plan justifies the four cases, not the import
+  placement — and there is no mutation probe.
+- **`qwen38-27b`** — the deepest record and the only *executed* mutation evidence: the review
+  swapped the module body for `return True` (2 failed, 2 passed) and for the inverted rule
+  `n % 2 != 0` (4 failed) — implementation-review:122. Spec 6 457 B with ten findings, though
+  F7/F9/F10 record `pip`, `uv` and `uvx` versions, which have nothing to do with a two-line
+  deliverable. It paid 78.0 agent min, 3.4× swift15, and shipped a plan defect its reviewer
+  asserted away: the C write step is numbered `Step 1 [C]` (plan:54) and its Tick (plan:97)
+  waits on "the Step 2 [C] command" — Step 1 has no Run command of its own, so the Tick
+  cannot be made, while the plan review states "every step carries a Tick sentence in an
+  allowed form" (plan-review:15) without running it.
+- **`gsq38-27b`** — 34.7 agent min, all gates PASS, reviews citing plan line numbers, and its
+  disclosures honest ("delegation budget exhausted (0/2), so aspects code/tests/comments/e…",
+  implementation-review:14). Two costs: P1 alone took 18.05 min, and its best claim is
+  reasoned rather than run — "a wrong implementation (e.g. `n > 0 and n % 2 == 0` would break
+  `test_zero`…", implementation-review:90 — which is exactly the probe `qwen38-27b` executed.
+
+**Two process facts, both from this set.** The planner and the plan reviewer each built a probe
+tree whose `tree/is_even.py` is byte-identical (sha `a5c49533…`), so roughly half of the 12
+minutes in I1+P1+RVp1 was spent twice. And a finished run keeps no tool transcript:
+`runs/<run>/cards/*.jsonl` carries `runs[]` with `outcome`, `elapsed_min`, `summary` and
+`started` and nothing else, so after the fact a retry, a compaction or a failed tool call can
+be neither shown nor ruled out (§14 and §15 each had to export a session by hand to learn
+about one).
+
+### `roman-evaluator-liferay-client-ext` — the same board on two models, 2026-10-01
+
+| card | min | | card | min |
+|---|---|---|---|---|
+| `swift15-27b`, `run-20261001-095737` | | | `qwen38-27b`, `run-20261001-125722` | |
+| I1 | 16.92 | | I1 | 53.63 |
+| P1 | 107.68 | | P1 | 220.55 |
+| RVp1 | 9.73 (PASS) | | RVp1 | 57.88 (PASS) |
+| TW1 ∥ C1 | 6.60 ∥ 15.08 | | TW1 ∥ C1 | 27.90 ∥ 34.12 |
+| RVa1 | 12.65 (PASS) | | RVa1 | 115.25 (PASS) |
+| **wall / agent** | **169.2 / 168.7** | | **wall / agent** | **488.9 / 509.3** |
+
+**The parser is the same file in both trees.** `src/roman.js` is byte-identical (sha
+`6967e95e…`): a table-driven subtractive loop whose round-trip check
+(`toRoman(value) === text`, `roman.js:52`) is what rejects `IIII`, `VX` and `IC`, with
+`value < 1 || value > 3999 → null` as the range guard. Both trees hold 19 tests in 3 files, no
+skips, covering 8 of the 10 invalid-input branches the reviews name; `null`/`undefined` reach
+the regex through `String(input)` and are untested in both. Neither tree holds a line of
+Java — the idea is a custom-element client extension (`snapshots/lane-1.md:1`), so a REST
+resource was never in scope, and a reader expecting the `roman-evaluator-java` shape will not
+find it here.
+
+- **Cost: 3.0×.** 509.3 agent min against 168.7, with P1 at 220.6 against 107.7 and RVa1 at
+  115.3 against 12.7 — RVa1 ran 19:10→21:05 to review 15 files.
+- **Verification rigour favoured the slower run.** `qwen38-27b` re-ran the whole gradle build
+  itself, wrote byte-level verifiers (`plan-match.py` 13/13 blocks, `verify3.py` reporting
+  `C=11 TW=3 union=14 … ALL MATCH`), caught that the plan's `[TW]` steps predict a vitest
+  message the suite never prints (plan-review:15, NOTES), and kept `build-out.log`
+  (`Tests 19 passed (19)`, `BUILD SUCCESSFUL in 3s`). `swift15-27b` verified equally by command
+  (`check_c_files.py` "ALL 10 MATCH", `node --check ×3`, `check_tests_unchanged.py` "ALL 3
+  MATCH") but kept no build log at all, so its build claim rests on the review prose alone.
+- **One defect, seen three times, fixed never.** The React key-prop warning: `swift15-27b`'s
+  reviews dismissed it twice — "no criterion covers console warnings, so this is a note, not a
+  finding" (plan-review:45), "this is a warning, not an error … Not a finding"
+  (implementation-review:105). `qwen38-27b` named the fix twice ("add `key: 'evaluate'` /
+  `key: 'reset'`", implementation-review:65) and never applied it; its own retained
+  `build-out.log:52` prints the warning directly above `Tests 19 passed (19)` (line 68). Both
+  also pin `@clayui/list` 3.120.0, which nothing imports, and ship bootstrap `list-group`
+  markup instead.
+- **Git discipline differed, and the reason is now in the tree.** `swift15-27b`'s gate read
+  "work directory not git-controlled … nothing to commit here". `qwen38-27b`'s gate read "15
+  file(s) staged … to commit in: /opt/projects/kanban/main/kanban (this repo), branch main at
+  6a7f9da", and its plan review had measured `git check-ignore -q --no-index .` → exit 1 and
+  concluded "the work directory IS git-controlled, so the staging rules apply as written"
+  (plan-review:45). On that date `.gitignore` did not ignore the work directory; it now
+  carries `boards/*/work/` and `boards/*/work.*/` (lines 26-27), which is why the 2026-10-03
+  runs report `GIT ABSENT — nothing staged` and the gate calls the directory untracked.
+  Nothing was ever committed out of a work directory: `6a7f9da`, the commit that gate names,
+  touches only `boards/roman-evaluator-liferay-client-ext/toolchain-facts.md`, and the driver
+  never commits.
+- **The DEVIATION channel lost a record.** `qwen38-27b`'s review found an undeclared
+  by-product — its re-run of Task 6 Step 3 re-executed the build's root `yarnInstall` and wrote
+  a 2 633-line npm-generated root `work/yarn.lock` that Global Constraints do not list, while
+  F21 itself records that a root install writes one (implementation-review:73) — and filed it
+  as a "Reported by-product … not a finding against the lane" instead of a DEVIATION. Its
+  `driver.log` therefore has no `toolchain facts:` line at all, where `swift15-27b`'s ends
+  `toolchain facts: 1 DEVIATION(s) recorded` for one extra root `yarn install`. Same class of
+  event, two records, one channel.
+- **A planned test file never existed.** `swift15-27b`'s plan Task 8 creates
+  `src/integration.test.js` and its verification expects `21 passed` (plan:618, :779); TI1 was
+  archived on both runs (`integration-tests: false`), so 19 is all there is, and the plan
+  review checked the arithmetic against a file the lane would not deliver.
+
+### The audit rule that fired on another board's worker
+
+Auditing the finished `is-even` run printed two warnings that are one event:
+
+    WARNING E12: the board's cards could not be read (kanban: board 'is-even' does not exist …)
+    WARNING E8: a worker outlived the run: 539300 …
+
+`is-even` was removed from `hermes kanban` after its run (`boards list` shows only `default`
+and the Liferay board), so `board_findings` had no cards to judge a worker against — and pid
+539300 is the Liferay board's I1 worker, `kanban task t_9c08932f` on `gsq38-27b`, started
+15:57:25, seven minutes after `is-even` finished at 15:50:58. `worker_outlived_run`'s third
+filter ("a worker whose card is not on this board says nothing about this run",
+`run-audit.py:508`) is gated on `cards` being non-empty (`run-audit.py:514`), so the moment E12
+fires the filter is skipped and the fallback at :522 warns about every `work kanban task`
+process on the host. The pair reads as "this run's worker is stranded", which is the opposite
+of the truth, and a run summary is written once, so the warning can never be corrected.
+
+### What this asks for
+
+Nine items, six built on 2026-10-03 and three left where they belong. The plan is
+`docs/superpowers/plans/2026-10-03-run-record-and-lane-truth.md`.
+
+**Built**
+
+1. `run-audit.py:514` — E8 judges a worker against the run's own card ids
+   (`runs/<run>/cards/*.jsonl`), not only the live board, and says nothing for a `pgrep` line
+   with no task id. Re-auditing `run-20261003-152343` while the Liferay board was still
+   running: `0 error(s), 1 warning(s)`, E12 only.
+2. E12 reads the end state from that same file when the board cannot be read, and says which
+   source it used. A third source appeared on the way: `driver_archived_codes`, because a card
+   the driver archived at lane open keeps its pre-archive status in the log — without it the
+   new fallback reported `TI1` and `RVc1` as unfinished on a run that finished clean.
+3. The verdict ledger keeps the **whole** verdict plus `text_bytes`; the chain keeps a
+   200-character head with `result_truncated` beside it. Both cut silently before.
+4. A review's `NOTES:` clause now reaches the gate evidence line and `run-summary.json`, and
+   `rva-body.txt`/`rvc-body.txt` require it in the result field — the code reviews put their
+   notes in `review.md`, where nothing counts them, which is why the key-prop defect shipped
+   twice unremarked. Both bodies also state the `ocr` staffing numbers, since every review in
+   this window ran its aspects inline ("delegation budget exhausted (0/2)") and the run's
+   record said only "PASS".
+5. The open posts one comment on the lane root naming `LIVE CARDS:` and `PRUNED:`, and the
+   plan card reads it instead of running `hermes kanban list`.
+6. `probe.lint_plan` rejects a `Tick:` that hands the box to **another card's** step, and
+   `p-body.txt`'s example, which taught a cross-tag shape, is corrected. A `pytest.ini` keeps
+   bare `pytest` out of `boards/*/work.*/`, which held 76 collection errors.
+7. A ceiling-killed `P` card whose plan is written, copied out and probed clean closes as
+   `SALVAGED:` instead of halting the board (`salvage_timed_out_plan`). The run of
+   `run-20261003-120232` — P1 killed at 1804 s — had no hand-off to save, so the salvage is
+   narrower than the loss and says so.
+8. A worker stopped mid-repetition is **named** in the halt reason beside the provider note
+   (`repetition_stop`), which is what `run-20261003-155632` could not say.
+9. A model change rotates the work directory aside (`rotate_work_directory`), so per-model
+   products stop being a person's bookkeeping.
+
+Each of these rules was checked against the real corpus rather than only against its own
+fixture. That is how item 6's first version was caught before it ran: it rejected all four
+plans that shipped on 10-01 and 10-03.
+
+**Deferred, and where each went**
+
+10. Per-card tool / retry / compaction counters — still blocked, on `hermes kanban runs
+    --json` not exposing the fields. That is a dependency, not a proposal, so it is a Known
+    trap in DESIGN.md rather than a backlog entry.
+11. The reasoning-budget marker is chosen by the model config and has already changed once,
+    so the detector item 10 needs has to read the string from the config. Recorded there
+    too: all nine truncations were under the 12288 budget, raised to 32768 two minutes
+    after that run ended, and the only post-raise measurement is a board 7× smaller.
+
+The file those lived in is gone. Its own rule was to delete an entry once it was
+built or its trigger had a fair chance and never fired; every entry was one or the other,
+and what survives is a fact about the engine rather than a proposal about it, which is what
+DESIGN.md's Known traps are for.

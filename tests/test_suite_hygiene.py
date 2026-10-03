@@ -49,3 +49,17 @@ def test_every_file_the_engine_opens_is_closed_by_a_with():
                      if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
                      and node.func.id == "open" and id(node) not in managed]
     assert not bare, bare
+
+
+def test_bare_pytest_cannot_walk_into_a_boards_products():
+    """76 collection errors on 2026-10-03: bare pytest collected the per-model trees.
+
+    `boards/<slug>/work.*/` holds what a run produced, and on is-even that includes real
+    test files (`test_is_even.py`); on the Liferay board, a lane's own vitest specs.
+    `./test.sh` passes an absolute tests/ path and is unaffected either way, so this is
+    about the bare invocation a person types by habit.
+    """
+    cfg = os.path.join(REPO, "pytest.ini")
+    assert os.path.isfile(cfg), "no pytest.ini — bare pytest collects boards/*/work.*/"
+    text = open(cfg).read()
+    assert "testpaths" in text and "boards" in text

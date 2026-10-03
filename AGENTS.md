@@ -6,7 +6,6 @@ per board under `boards/<slug>/`, driven by `driver/run.py` over `hermes kanban`
 - [DESIGN.md](DESIGN.md): how it works, its rules and traps — read the section your change
   touches; the layout is under [Repository map](DESIGN.md#repository-map-and-conventions).
 - [TIMELINE.md](TIMELINE.md): past runs and measurements — only for a question about one.
-- [BACKLOG.md](BACKLOG.md): deferred engine work — read before proposing any.
 
 ## Commands
 

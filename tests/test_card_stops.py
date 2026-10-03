@@ -1755,7 +1755,7 @@ def _docs_env(monkeypatch, tmp_path):
     monkeypatch.setattr(run, "board_lane_count", lambda st: 1)
     monkeypatch.setattr(run.STATE, "run_dir", str(tmp_path / "runs" / "run-1"))
     art = tmp_path / "runs" / "run-1" / "artifacts" / "lane-1"
-    art.mkdir(parents=True)
+    art.mkdir(parents=True, exist_ok=True)
     (art / "plan.md").write_text("# Roman Evaluator Implementation Plan\n\nsteps\n")
     (art / "refined.md").write_text("# refined\n")
     return tmp_path / "work" / "docs"
@@ -1966,3 +1966,227 @@ def test_a_finished_run_prunes_its_probe_trees_dependencies(monkeypatch, tmp_pat
     (tmp_path / "scratch" / "c2").mkdir()
     assert run.prune_probe_trees() == 1
     assert not (tree / "node_modules").exists() and (tree / "src" / "a.js").exists()
+
+
+def test_a_repetition_stop_is_named_in_the_halt_reason(monkeypatch, tmp_path):
+    """The Liferay board of 2026-10-03, and the reason it is worth recording.
+
+    P1's worker exited 1 with Hermes' own words — "Response dominated by repeated text —
+    stopping the stream mid-loop" — the retries were already spent, and the driver halted a
+    300m board with `max-reworks: 8`. Nothing in the halt said the stream was stopped: a
+    transport abort read exactly like a card that did the work wrong. Same shape as the
+    provider-starved note beside it — recorded, never reclassified; the retry budget still
+    governs.
+    """
+    calls = _halt_harness(monkeypatch, None, dict(PROTOCOL))
+    _ledger_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("HERMES_KANBAN_LOGS_DIR", str(tmp_path))
+    (tmp_path / "c2.log").write_text(
+        "session_id: 20261003_161456_aaaaaa\n"
+        "🔁 Response dominated by repeated text — stopping the stream mid-loop.\n"
+        "⚠️ Response Stopped — Repetition Detected\n")
+    st = {"C2: code - lane 2": card("C2: code - lane 2", "c2")}
+
+    reason = run.halt_if_exhausted(st)
+
+    assert reason and "repetition" in reason.lower(), reason
+    assert "provider-starved" not in reason
+
+
+def test_a_clean_attempt_names_no_cause_beyond_the_protocol(monkeypatch, tmp_path):
+    """The note is evidence, not decoration: an ordinary failure must not grow one."""
+    calls = _halt_harness(monkeypatch, None, dict(PROTOCOL))
+    _ledger_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("HERMES_KANBAN_LOGS_DIR", str(tmp_path))
+    (tmp_path / "c2.log").write_text(
+        "session_id: 20261003_161456_aaaaaa\nI read the card and wrote the plan.\n")
+    st = {"C2: code - lane 2": card("C2: code - lane 2", "c2")}
+
+    reason = run.halt_if_exhausted(st)
+
+    assert reason and "repetition" not in reason.lower()
+
+
+def _probe_log_for(scratch, cid, plan, lint=0, untagged=0, complete="yes"):
+    d = scratch / cid / "probe"
+    d.mkdir(parents=True, exist_ok=True)
+    import hashlib
+    (d / "probe-log.md").write_text(
+        f"# Probe log\n\nout: {d}\nplan-sha256: "
+        f"{hashlib.sha256(plan.read_bytes()).hexdigest()}\nmode: full\n\n"
+        f"## Pass: full\n\nfull-pass: files 2, files-failed 0, commands 3, ran 3, "
+        f"exit0 3, failed 0, skipped 0, skipped-defect 0, untagged {untagged}, "
+        f"lint {lint}\ncomplete: {complete}\n")
+    return d
+
+
+def _plan_env(monkeypatch, tmp_path, lint=0, untagged=0, complete="yes", present=True):
+    """A P card killed by its ceiling with its plan already probed and copied out."""
+    calls = _halt_harness(monkeypatch, None, dict(PROTOCOL, kind="timed_out"))
+    _ledger_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("HERMES_KANBAN_LOGS_DIR", str(tmp_path))
+    run.STATE.run_dir = str(tmp_path / "runs" / "run-1")
+    art = tmp_path / "runs" / "run-1" / "artifacts" / "lane-1"
+    art.mkdir(parents=True, exist_ok=True)
+    plan = art / "plan.md"
+    title = "P1: implementation plan - lane 1"
+    st = {title: card(title, "p1", status="blocked")}
+    if present:
+        plan.write_text("# Plan\n\n**Goal:** g\n\n## Global Constraints\n\n- none\n")
+        _probe_log_for(tmp_path / "runs" / "run-1" / "scratch", "p1", plan,
+                       lint=lint, untagged=untagged, complete=complete)
+    monkeypatch.setattr(run, "STATE", run.STATE)
+    monkeypatch.setattr(run.card_render, "lane_paths",
+                        lambda *a, **k: {"<PLAN>": str(plan)})
+    return st, plan, title
+
+
+def test_a_plan_killed_by_its_ceiling_with_a_clean_handoff_is_salvaged(monkeypatch, tmp_path):
+    """is-even, 2026-09-30: P1 wrote a correctly tagged plan, its probe was clean, it copied
+    the plan to its hand-off at 08:26:07, and the ceiling killed it 21 s later — 30 minutes
+    of good work, lost with the board."""
+    st, plan, title = _plan_env(monkeypatch, tmp_path)
+    calls = []
+
+    def kb(*a, **k):
+        calls.append(a)
+        return json.dumps({"events": []})   # what the harness's recorder returns
+
+    monkeypatch.setattr(run, "kb", kb)
+
+    reason = run.halt_if_exhausted(st)
+
+    assert reason is None, f"a salvaged card must not halt the board: {reason}"
+    done = [c for c in calls if c[0] == "complete"]
+    assert done and "SALVAGED" in done[0][-1], calls
+
+
+def test_a_plan_killed_by_its_ceiling_without_a_handoff_still_halts(monkeypatch, tmp_path):
+    """The 2026-10-03 recurrence, which the salvage cannot help: P1 died with a complete
+    probe log and no plan copied out. Salvaging nothing must not look like success."""
+    st, plan, title = _plan_env(monkeypatch, tmp_path, present=False)
+
+    reason = run.halt_if_exhausted(st)
+
+    assert reason and "ceiling" in reason, reason
+
+
+def test_a_plan_with_a_dirty_probe_is_not_salvaged(monkeypatch, tmp_path):
+    """UNTAGGED is not a property of the plan's text — it is content no card will run, so
+    the hand-off is not the plan. An incomplete probe is no evidence at all. A LINT defect
+    is neither of those: it is fixed by editing the plan, and the review says so."""
+    for kwargs in ({"untagged": 2}, {"complete": "no"}):
+        calls = []
+        st, plan, title = _plan_env(monkeypatch, tmp_path, **kwargs)
+        monkeypatch.setattr(run, "kb",
+                            lambda *a, **k: calls.append(a) or json.dumps({"events": []}))
+        reason = run.halt_if_exhausted(st)
+        assert reason and "ceiling" in reason, (kwargs, reason)
+        assert not [c for c in calls if c[0] == "complete"], kwargs
+
+
+# --- the repetition abort, and a lint defect that is recorded rather than fatal
+
+
+def _crashed_env(monkeypatch, tmp_path, lint=0, untagged=0, present=True,
+                 hits=None, stopped=True):
+    """A P card whose WORKER died mid-turn (`gave_up` / crashed), with a vouched hand-off."""
+    calls = _halt_harness(monkeypatch, hits, dict(
+        PROTOCOL, kind="gave_up",
+        reason="worker pid 578517 exited with code 1 Worker's last output: ' "
+               "Response dominated by repeated text — stopping the stream mid-loop.'"))
+    _ledger_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("HERMES_KANBAN_LOGS_DIR", str(tmp_path))
+    run.STATE.run_dir = str(tmp_path / "runs" / "run-1")
+    art = tmp_path / "runs" / "run-1" / "artifacts" / "lane-1"
+    art.mkdir(parents=True, exist_ok=True)
+    plan = art / "plan.md"
+    title = "P1: implementation plan - lane 1"
+    st = {title: card(title, "p1", status="blocked")}
+    if present:
+        plan.write_text("# Plan\n\n**Goal:** g\n\n## Global Constraints\n\n- none\n")
+        _probe_log_for(tmp_path / "runs" / "run-1" / "scratch", "p1", plan,
+                       lint=lint, untagged=untagged)
+    log = tmp_path / "p1.log"
+    log.write_text("session_id: 20261003_161456_aaaaaa\n"
+                   + ("🔁 Response dominated by repeated text — stopping the stream "
+                      "mid-loop.\n" if stopped else "I read the card and started.\n"))
+    run.STATE.log_offsets.clear()
+    monkeypatch.setattr(run.card_render, "lane_paths", lambda *a, **k: {"<PLAN>": str(plan)})
+    return st, plan, title, calls
+
+
+def test_a_plan_whose_worker_stopped_mid_repetition_is_salvaged(monkeypatch, tmp_path):
+    """The Liferay board of 2026-10-03, and the case the salvage missed.
+
+    P1 wrote a 36 KB plan, probed it clean and full (16 files, 11/11 commands exit 0), and
+    its sha is the one the probe recorded — then Hermes' repetition guard stopped the stream,
+    the worker exited 1, the retries were spent and a 300m board halted. The salvage was
+    reachable only from the CEILING branch, so the one death that leaves a finished hand-off
+    behind was the one it could not help: a stopped stream is not a card that ran out of road
+    with work unfinished, it is a card that finished and was not heard from.
+    """
+    st, plan, title, calls = _crashed_env(monkeypatch, tmp_path)
+
+    reason = run.halt_if_exhausted(st)
+
+    assert reason is None, f"a salvaged card must not halt the board: {reason}"
+    done = [c for c in calls if c[0] == "complete"]
+    assert done and "SALVAGED" in done[0][-1], calls
+    assert "mid-repetition" in done[0][-1], "the salvaging cause belongs in the result"
+
+
+def test_a_stopped_worker_with_no_hand_off_still_halts(monkeypatch, tmp_path):
+    """Nothing on disk, nothing to salvage — and the halt must still say why."""
+    st, plan, title, calls = _crashed_env(monkeypatch, tmp_path, present=False)
+
+    reason = run.halt_if_exhausted(st)
+
+    assert reason and "repetition" in reason.lower(), reason
+    assert not [c for c in calls if c[0] == "complete"]
+
+
+def test_a_lint_defect_is_recorded_by_the_salvage_not_fatal(monkeypatch, tmp_path):
+    """A rule-decidable defect in the plan's TEXT is the revision round's business.
+
+    Refusing to salvage here — which is what the first version did — makes the alternative
+    a regeneration of the whole plan. The rejection round is not waste: it is what hands
+    `P1-rev-1` its findings, and the 2026-10-03 plan's two defects were an uncovered SC6 and
+    an unlisted by-product, both fixed by editing two lines of 839.
+    """
+    st, plan, title, calls = _crashed_env(monkeypatch, tmp_path, lint=2)
+
+    reason = run.halt_if_exhausted(st)
+
+    assert reason is None, reason
+    done = [c for c in calls if c[0] == "complete"]
+    assert done and "2 rule-decidable defect" in done[0][-1], done[0][-1]
+
+
+def test_an_untagged_block_is_still_fatal_to_a_salvage(monkeypatch, tmp_path):
+    """`untagged` is not a property of the plan's text: it is a file block or a Run command
+    under no step heading, so no card will ever write or run it. The hand-off is then not
+    the plan, and salvaging it would hand the lane a document that silently drops work."""
+    st, plan, title, calls = _crashed_env(monkeypatch, tmp_path, untagged=1)
+
+    reason = run.halt_if_exhausted(st)
+
+    assert reason, "an untagged block means the hand-off is not the plan"
+    assert not [c for c in calls if c[0] == "complete"]
+
+
+def test_a_provider_starved_card_is_still_re_queued_not_salvaged(monkeypatch, tmp_path):
+    """The re-queue exists because the worker never got to try, and hoisting the salvage
+    above the branches must not quietly take that path over.
+
+    Modelled on what a starved card's own event looks like — a protocol violation, or a
+    crash — with a plan already on disk to prove the salvage is not what saved it.
+    """
+    st, plan, title, calls = _crashed_env(monkeypatch, tmp_path, hits=5, stopped=False)
+    monkeypatch.setattr(run, "_exhaustion_event", lambda cid, events=None: dict(PROTOCOL))
+
+    reason = run.halt_if_exhausted(st)
+
+    assert reason is None, reason
+    assert [c for c in calls if c[0] == "unblock"], f"not re-queued: {calls}"
+    assert not [c for c in calls if c[0] == "complete"], "a re-queued card is not completed"

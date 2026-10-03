@@ -448,6 +448,36 @@ def stray_findings(runs_dir, workdir=None):
              f"or listed by-product accounts for — a stray in the deliverable: {shown}")]
 
 
+def last_card_records(runs_dir):
+    """Card id -> the last readable record in `cards/<id>.jsonl`.
+
+    The driver appends one JSON object per observation, so the last readable line is the
+    card's own latest word on itself; a torn last line (a kill mid-write) is skipped, and
+    so is a line that is not an object. A record with no `id` is keyed by its file name
+    rather than dropped: E20 reads records a fixture wrote without one, and nothing keys
+    a lookup on a name that is not a task id. One reader for every rule that needs this
+    file — E8, E12 and E20 all ask it the same question, and E8 cannot ask the live board
+    when the board is gone (is-even, 2026-10-03: with the board removed, every worker on
+    the host read as that run's).
+    """
+    out = {}
+    for path in sorted(glob.glob(os.path.join(runs_dir, "cards", "*.jsonl"))):
+        try:
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                lines = fh.read().splitlines()
+        except OSError:
+            continue
+        for line in reversed(lines):
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue        # a torn last line is a kill mid-write
+            if isinstance(rec, dict):
+                out[rec.get("id") or os.path.basename(path)] = rec
+                break
+    return out
+
+
 def skill_findings(runs_dir):
     """Cards the engine holds with other skills than filing gives them (E20, an ERROR).
 
@@ -458,25 +488,13 @@ def skill_findings(runs_dir):
     `skills` field predates the field and is not judged, nor is an unassigned card — the
     idea card, which no worker takes."""
     out = []
-    for path in sorted(glob.glob(os.path.join(runs_dir, "cards", "*.jsonl"))):
-        try:
-            with open(path, encoding="utf-8", errors="replace") as fh:
-                lines = fh.read().splitlines()
-        except OSError:
-            continue
-        rec = None
-        for line in reversed(lines):        # a torn last line is a kill mid-write
-            try:
-                rec = json.loads(line)
-                break
-            except ValueError:
-                continue
-        if not isinstance(rec, dict) or "skills" not in rec or not rec.get("assignee"):
+    for rec in last_card_records(runs_dir).values():
+        if "skills" not in rec or not rec.get("assignee"):
             continue
         want = [lanes.WORKER_SKILL] if lanes.skill_args(rec["assignee"]) else []
         have = list(rec.get("skills") or [])
         if have != want:
-            code = str(rec.get("title") or rec.get("id") or os.path.basename(path)).split(":")[0]
+            code = str(rec.get("title") or rec.get("id")).split(":")[0]
             out.append(f"{code} ({rec['assignee']}: {have or 'none'})")
     if not out:
         return []
@@ -497,35 +515,89 @@ def _proc_state(pid):
     return None
 
 
-def worker_outlived_run(line, cards):
+def worker_outlived_run(line, cards, own=None):
     """One `pgrep` hit -> the E8 text, or None when the hit is not this run's business.
 
-    Three filters, each from a false positive the is-even run of 2026-09-15 produced — it
-    warned about a worker that had completed its card minutes earlier and left a ZOMBIE
-    behind, and a run summary is written once, so the warning could never be corrected:
+    Four filters, each from a false positive this rule has produced — a run summary is
+    written once, so a false warning can never be withdrawn:
       * a zombie has exited and holds nothing; its parent has yet to reap it;
       * a worker whose card is DONE is finishing its turn, not stranded;
-      * a worker whose card is not on this board says nothing about this run.
+      * a worker whose card belongs to another run says nothing about this one. The last
+        two need a card list, and when the board cannot be read there is none — so the
+        run's own card log answers instead (is-even, 2026-10-03: with the board removed,
+        E12 reported the board unreadable and E8 named the Liferay board's live I1 worker);
+      * a hit carrying no task id at all is not a card, and is not judged.
     """
     pid = (line.split() or [""])[0]
     if pid.isdigit() and _proc_state(pid) == "Z":
         return None
     m = re.search(r"work kanban task (t_\w+)", line)
-    if m and cards:
-        card = next((c for c in cards if c.get("id") == m.group(1)), None)
-        if card is None:
-            return None
-        if card.get("status") in DONE_STATES:
+    if not m:
+        return None
+    # Two sources, in this order, and BOTH are consulted: the live board wins wherever it
+    # knows the card, and the run's own log answers where it does not. Stopping at the board
+    # once it was readable dropped a worker still running on a card the board no longer
+    # lists — archived there, or completed out from under it — which is this rule's own
+    # class of silence pointed the other way.
+    for known in list(cards or []) + list((own or {}).values()):
+        if known.get("id") != m.group(1):
+            continue
+        if known.get("status") in DONE_STATES:
             return None
         return (f"a worker outlived the run: {m.group(1)} is still "
-                f"{card.get('status')}")
-    return f"a worker outlived the run: {line[:70]}"
+                f"{known.get('status')}")
+    return None
 
 
-def board_findings(slug, runs_dir):
-    """The board's end state: a card the run did not finish, a live worker."""
+def driver_archived_codes(runs_dir):
+    """The card codes this run's driver retired, read from its own log.
+
+    A card the driver archived at lane open (`integration-tests=no — archived TI1`) keeps
+    its pre-archive status in `cards/<id>.jsonl`, because archiving is the board's move
+    and the card log records observations, not the driver's decisions. Without this, the
+    run-local end state reports cards the run did not leave unfinished (is-even
+    run-20261003-152343: TI1 and RVc1, both `blocked`, both retired at 15:24:32).
+    """
+    out = set()
+    try:
+        with open(os.path.join(runs_dir, "driver.log"), encoding="utf-8",
+                  errors="replace") as fh:
+            for line in fh:
+                m = re.search(r"archived ([A-Za-z]+\d+)", line)
+                if m:
+                    out.add(m.group(1))
+    except OSError:
+        pass
+    return out
+
+
+def _unfinished(cards):
+    """[(title, status)] the cards that are not done — including an ASSIGNED `triage`
+    card, which is a card the board escalated rather than one waiting for a human."""
+    return [(c.get("title"), c.get("status")) for c in cards
+            if c.get("status") not in DONE_STATES
+            or (c.get("status") == "triage" and c.get("assignee"))]
+
+
+def board_findings(slug, runs_dir, own=None):
+    """The board's end state: a card the run did not finish, a live worker.
+
+    Two sources for the end state, in this order: the live board, and — when the board
+    cannot be read — the run's own card log (`cards/<id>.jsonl`). The second is the
+    driver's own record, and it is what keeps E12 from reporting "unchecked" about a board
+    that was removed after its run (is-even, 2026-10-03). With neither source the finding
+    is the warning and nothing more, because an unreadable board once read as "no
+    unfinished cards" and E12 could then never fire on exactly the board it could not see
+    (errors S2).
+    """
     out = []
     cards = []
+    # Read each run-state file ONCE: `own` judges every worker hit and every card, and
+    # `retired` filters every card, so a read inside either loop re-reads the whole run per
+    # item (a board with 12 cards and 3 live workers read the card log 3x and the driver
+    # log 12x).
+    own = own if own is not None else last_card_records(runs_dir)
+    retired = driver_archived_codes(runs_dir)
     if slug:
         why = None
         try:
@@ -537,25 +609,29 @@ def board_findings(slug, runs_dir):
                 why = runs_util.cli_error(raw.stderr) or f"exit {raw.returncode}"
         except (OSError, ValueError) as e:
             why = str(e)
-        if why is not None:
-            # "no unfinished cards" was what an unreachable board read as, so E12 could
-            # never fire on exactly the board the audit could not see (errors S2)
-            out.append(("WARNING", "E12", f"the board's cards could not be read ({why}) — "
-                                          f"its end state and live workers are unchecked"))
         # `triage` is where the UNASSIGNED idea card rests until a human
         # promotes it; an assigned card there is a card the board escalated.
-        left = [(c.get("title"), c.get("status")) for c in cards
-                if c.get("status") not in DONE_STATES
-                or (c.get("status") == "triage" and c.get("assignee"))]
-        for title, status in left:
-            out.append(("ERROR", "E12",
-                        f"{title} is still {status} — the board did not finish"))
+        if why is not None:
+            source = [c for c in own.values()
+                      if str(c.get("title") or "").split(":")[0] not in retired]
+            out.append(("WARNING", "E12", f"the board's cards could not be read ({why}) — "
+                                          + ("its end state was read from this run's own "
+                                             "card log" if source else
+                                             "its end state and live workers are unchecked")))
+            left = _unfinished(source)
+            for title, status in left:
+                out.append(("ERROR", "E12", f"{title} is still {status} — this run's own "
+                                            f"card log says the board did not finish"))
+        else:
+            for title, status in _unfinished(cards):
+                out.append(("ERROR", "E12",
+                            f"{title} is still {status} — the board did not finish"))
     try:
         procs = subprocess.run(["pgrep", "-af", "work kanban [t]ask"],
                                capture_output=True, text=True)
         for line in procs.stdout.splitlines():
             if line.strip():
-                text = worker_outlived_run(line, cards)
+                text = worker_outlived_run(line, cards, own)
                 if text:
                     out.append(("WARNING", "E8", text))
     except OSError as e:

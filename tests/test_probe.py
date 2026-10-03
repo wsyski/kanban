@@ -577,3 +577,80 @@ def test_what_the_run_commands_leave_unnamed_is_a_lint_defect(tmp_path):
     assert _log(out)["lint"] == 3
     assert probe.named_byproducts("## Global Constraints\n- `work/a/`, `/w/b`, `../c`, `d/*.log`\n",
                                   "/w") == {"a", "b", "d/*.log"}
+
+
+def test_a_tick_naming_another_cards_step_is_a_defect():
+    """Each card runs only its own steps' Run commands, so a Tick that hands the box to
+    another card's step can never be made.
+
+    A [TW] step's tick is the review's re-derivation of the predicted FAIL, never a
+    command another card runs; a [C] step cannot tick on a [TI] step either, because TI
+    runs on its own card.
+    """
+    plan = (_HEADER +
+            "### Task 1: module\n"
+            "- [ ] **Step 1 [TW]: Predict the failure**\n\n"
+            "State what the suite will say when the module is absent.\n\n"
+            "Tick: on the Step 2 [C] command printing the file names and exiting 0.\n\n"
+            "- [ ] **Step 2 [C]: Write the module**\n\n"
+            "Run: `ls mod.js`\n\n"
+            "Expected: `mod.js`\n\n"
+            "Tick: on the `mod.js` line the command prints.\n")
+
+    defects = [m for (item, _where, m) in probe.lint_plan(plan, [], []) if item == 4]
+
+    assert any("Step 2 [C]" in m and "[TW]" in m for m in defects), defects
+
+
+def test_a_c_step_ticking_on_a_ti_step_is_a_defect():
+    plan = (_HEADER +
+            "### Task 1: end to end\n"
+            "- [ ] **Step 1 [C]: Write the page**\n\n"
+            "Run: `ls page.js`\n\n"
+            "Expected: `page.js`\n\n"
+            "Tick: on the Step 2 [TI] command exercising the route.\n\n"
+            "- [ ] **Step 2 [TI]: Drive the route**\n\n"
+            "Run: `curl -s localhost/`\n\n"
+            "Tick: on the exit status.\n")
+
+    defects = [m for (item, _where, m) in probe.lint_plan(plan, [], []) if item == 4]
+
+    assert any("Step 2 [TI]" in m for m in defects), defects
+
+
+def test_a_c_step_ticking_on_the_next_c_step_is_clean():
+    """The shape the plan card's own example taught, and four shipped plans use.
+
+    The C card runs EVERY [C] step in the same turn and records the output, so "the Step 2
+    command prints" is the "exact line the recorded command prints" form checklist item 4
+    allows. An earlier version of this check rejected all four — the Liferay board's two
+    plans on 2026-10-01 (three hits each) and is-even's on 2026-10-03 — and would have cost
+    a review round per plan.
+    """
+    plan = (_HEADER +
+            "### Task 1: scaffold\n"
+            "- [ ] **Step 1 [C]: Write the workspace root files**\n\n"
+            "Write them.\n\n"
+            "Tick: on the Step 2 [C] command printing the file names and exiting 0.\n\n"
+            "- [ ] **Step 2 [C]: Verify the root files**\n\n"
+            "Run: `ls settings.gradle`\n\n"
+            "Expected: `settings.gradle`\n\n"
+            "Tick: on the exact `settings.gradle` line the command prints.\n")
+
+    defects = [m for (item, _where, m) in probe.lint_plan(plan, [], []) if item == 4]
+
+    assert defects == [], defects
+
+
+def test_a_tick_naming_a_step_this_task_does_not_have_is_clean():
+    """An unresolvable reference is not decidable, so it is not a finding — item 4 is
+    rule-decidable only."""
+    plan = (_HEADER +
+            "### Task 1: scaffold\n"
+            "- [ ] **Step 1 [C]: Write the file**\n\n"
+            "Run: `ls a.py`\n\n"
+            "Tick: on the Step 9 command, which belongs to another task.\n")
+
+    defects = [m for (item, _where, m) in probe.lint_plan(plan, [], []) if item == 4]
+
+    assert defects == [], defects

@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 import re
 import sys
 
@@ -644,3 +645,42 @@ def test_the_skills_a_card_needs_are_named_in_its_prose_not_forced():
     assert "Load the `test-driven-development` skill" in read("tw-body.txt")
     researcher = read("i-body.txt")
     assert "`liferay-expert`" in researcher and "`github-deep-research`" in researcher
+
+
+def test_the_review_bodies_ask_for_the_staffing_numbers():
+    """Five reviews in TIMELINE §17 ran every aspect inline and said so only in prose.
+
+    A PASS from six aspects read by one reader is not six opinions, and the run's own
+    record is where that belongs. `rvp-body.txt` dispatches no `ocr` and must not gain it.
+    """
+    bodies = Path(__file__).resolve().parents[1] / "template" / "card-bodies"
+    for name in ("rva-body.txt", "rvc-body.txt"):
+        assert "delegated" in (bodies / name).read_text(), name
+    assert "delegated" not in (bodies / "rvp-body.txt").read_text()
+
+
+def test_the_code_review_bodies_require_the_notes_clause_in_the_verdict():
+    """`NOTES:` is the only clause the gate can count, so the body that prescribes the
+    notes must prescribe it THERE. Before this, rva/rvc sent every note to review.md and
+    the result field carried only PASS — which is why two Liferay reviews named the
+    key-prop fix and the gate line said PASS with no trace of it."""
+    bodies = Path(__file__).resolve().parents[1] / "template" / "card-bodies"
+    for name in ("rva-body.txt", "rvc-body.txt"):
+        text = (bodies / name).read_text()
+        assert "NOTES:" in text, name
+        assert "review.md" in text          # the notes still go in the document too
+
+
+def test_the_plan_card_reads_the_lane_comment_instead_of_the_board():
+    """One declaration of which cards are live, and it is the driver's.
+
+    The filed body is IT-complete by construction (filing precedes the idea), so a card
+    told to go and ask the board is told to ask a question about a lane it cannot see.
+    """
+    bodies = Path(__file__).resolve().parents[1] / "template" / "card-bodies"
+    p = (bodies / "p-body.txt").read_text()
+    after = p.split("Plan [TI] steps only when")[1][:500]
+
+    assert "LIVE CARDS:" in after
+    assert "hermes kanban --board <BOARD> list" not in after
+    assert "LIVE CARDS:" in (bodies / "_plan-checklist.txt").read_text()

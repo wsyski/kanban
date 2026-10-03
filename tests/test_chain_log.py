@@ -530,3 +530,55 @@ def test_chain_inputs_follow_the_run_dir_the_driver_was_pointed_at(tmp_path, mon
     monkeypatch.setattr(run, "lane_refinement", lambda lane: True)
     plan = os.path.join(str(run_dir), "artifacts", "lane-1", "plan.md")
     assert run.chain_inputs(f"read {plan} first", 1) == {"PLAN": plan}
+
+
+def test_a_long_verdict_is_recorded_whole(monkeypatch, tmp_path):
+    """The ledger is the run's index of what a review decided; 600 characters of it is not.
+
+    Measured on is-even run-20261003-152343: RVp1's ledger text ended mid-word at 600
+    characters ("Step 1 [TW] (35) states pre"), so the tail carrying the reviewer's own
+    per-item evidence was gone from the only record of the verdict. `publish_review`
+    already gets the whole text (the round above) — the ledger line did not.
+    """
+    path = _ledger_env(monkeypatch, tmp_path)
+    verdict = "PASS: checklist 1-8 hold. " + "x" * 900 + " VERIFIED: 8 — the last item."
+    st = {lanes.card_title("RVp", 1): {
+        "id": "t_rvp", "status": "done", "title": lanes.card_title("RVp", 1),
+        "result": verdict}}
+    monkeypatch.setattr(run, "kb", lambda *a, **k: '{"events": []}')
+    monkeypatch.setattr(run, "publish_review", lambda st, c, text: None)
+
+    run.record_chain_done(st)
+
+    led = _lines(path)
+    assert led[0]["text"] == verdict
+    assert led[0]["text_bytes"] == len(verdict.encode("utf-8"))
+
+
+def test_the_chain_marks_a_truncated_result(monkeypatch, tmp_path):
+    """A 200-character head with no marker reads as the reviewer's whole sentence."""
+    _ledger_env(monkeypatch, tmp_path)
+    st = {lanes.card_title("RVa", 1): {
+        "id": "t_rva", "status": "done", "title": lanes.card_title("RVa", 1),
+        "result": "PASS: (a)-(f) hold. " + "y" * 400}}
+    monkeypatch.setattr(run, "kb", lambda *a, **k: '{"events": []}')
+    monkeypatch.setattr(run, "publish_review", lambda st, c, text: None)
+
+    run.record_chain_done(st)
+
+    done = [r for r in _recs(tmp_path) if r["event"] == "done"]
+    assert done[0]["result_truncated"] is True
+    assert len(done[0]["result"]) == 200
+
+
+def test_a_short_verdict_is_not_marked_truncated(monkeypatch, tmp_path):
+    _ledger_env(monkeypatch, tmp_path)
+    st = {lanes.card_title("Gp", 1): {
+        "id": "t_gp", "status": "done", "title": lanes.card_title("Gp", 1),
+        "result": "PASS: gate clean."}}
+    monkeypatch.setattr(run, "kb", lambda *a, **k: '{"events": []}')
+
+    run.record_chain_done(st)
+
+    done = [r for r in _recs(tmp_path) if r["event"] == "done"]
+    assert done[0]["result_truncated"] is False

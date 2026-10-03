@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 
@@ -503,3 +504,133 @@ def test_the_plan_gate_publishes_the_plan_when_it_opens(held, card, monkeypatch)
     monkeypatch.setattr(run, "publish_plan", lambda st, lane: published.append(lane))
     run.gate_action(state, GP, "gp", 1)
     assert published == [1]
+
+
+def test_a_noted_fix_is_read_out_of_the_verdict():
+    """Both Liferay reviews named this fix and it shipped; the gate said PASS.
+
+    `work.swift15-27b`'s plan review: "no criterion covers console warnings, so this is a
+    note, not a finding"; its implementation review repeats it. `work.qwen38-27b` names the
+    fix twice (implementation-review-r1.md:65) and never applies it — its own retained
+    build-out.log:52 prints the warning beside `Tests 19 passed (19)`.
+    """
+    result = ("PASS: (a)-(f) hold. NOTES:\n"
+              "RomanEvaluator.js:53-59 passes the two ClayButton elements as an array "
+              "without key props — fix: add key props.\n"
+              "package.json pins @clayui/list which is never imported.")
+
+    assert run.noted_fixes(result) == [
+        "RomanEvaluator.js:53-59 passes the two ClayButton elements as an array without "
+        "key props — fix: add key props.",
+        "package.json pins @clayui/list which is never imported.",
+    ]
+
+
+def test_a_single_line_notes_clause_is_one_note():
+    """A verdict is usually ONE long line, so a one-line clause counts once — the reader
+    wants to know a fix was named, not to have it split at sentences."""
+    result = ("PASS: (a)-(f) hold. NOTES: RomanEvaluator.js:53-59 has no key props "
+              "— fix: add key props.")
+
+    assert run.noted_fixes(result) == [
+        "RomanEvaluator.js:53-59 has no key props — fix: add key props."]
+
+
+def test_a_rejects_findings_are_not_notes():
+    result = ("REJECT: item 4 fails. VERIFIED: 1 — the header names no Architecture line. "
+              "NOTES: none.")
+    assert run.noted_fixes(result) == []
+
+
+def test_a_result_with_no_notes_clause_is_no_notes():
+    assert run.noted_fixes("PASS: checklist 1-8 hold.") == []
+
+
+def test_a_notes_clause_reading_none_is_no_notes():
+    assert run.noted_fixes("PASS: (a)-(f) hold. NOTES: none.") == []
+    assert run.noted_fixes("PASS: (a)-(f) hold. NOTES:") == []
+
+
+def test_the_gate_evidence_counts_noted_fixes(monkeypatch, tmp_path):
+    """The count has to reach the line a person reads in driver.log."""
+    monkeypatch.setattr(run, "WORKDIR", str(tmp_path / "work"))
+    (tmp_path / "work").mkdir()
+    monkeypatch.setattr(run.STATE, "verdicts_path", str(tmp_path / "verdicts.jsonl"))
+    monkeypatch.setattr(run.STATE, "snap_dir", str(tmp_path / "snapshots"))
+    (tmp_path / "snapshots").mkdir()
+    (tmp_path / "snapshots" / "lane-1-workdir-at-gate.md").write_text("x")
+    import json as _json
+    (tmp_path / "verdicts.jsonl").write_text(_json.dumps({
+        "event": "verdict", "lane": 1, "code": "RVa1", "verdict": "PASS",
+        "text": ("PASS: (a)-(f) hold. NOTES: RomanEvaluator.js:53-59 has no key props "
+                 "— fix: add key props.")}) + "\n")
+
+    evidence = run.gate_evidence(1, {}, staged=[], commit_target="nowhere")
+
+    assert "1 noted fix" in evidence
+    assert evidence.startswith("verdict PASS, ")
+
+
+def test_the_gate_evidence_is_unchanged_when_nothing_was_noted(monkeypatch, tmp_path):
+    """Byte-for-byte the sentence it was before the count existed, when there is none."""
+    monkeypatch.setattr(run, "WORKDIR", str(tmp_path / "work"))
+    (tmp_path / "work").mkdir()
+    monkeypatch.setattr(run.STATE, "verdicts_path", str(tmp_path / "verdicts.jsonl"))
+    monkeypatch.setattr(run.STATE, "snap_dir", str(tmp_path / "snapshots"))
+    (tmp_path / "snapshots").mkdir()
+    (tmp_path / "snapshots" / "lane-1-workdir-at-gate.md").write_text("x")
+
+    evidence = run.gate_evidence(1, {}, staged=["a.py"], commit_target="nowhere")
+
+    assert "noted fix" not in evidence
+    assert evidence.startswith("verdict PASS, work directory not git-controlled")
+
+
+def test_a_trailing_clause_is_not_counted_as_a_note():
+    """The swift15 Liferay plan review of 2026-10-01: three notes, then the worker
+    contract's `GIT ABSENT — nothing staged.` in the same single-line result field. NOTES
+    is written LAST in the shape the bodies prescribe, so anything after it is the next
+    clause — and counting it made a clean git report read as a fourth defect."""
+    result = ("PASS: checklist 1-8 hold. NOTES:\n"
+              "RomanEvaluator.js:53-59 has no key props.\n"
+              "package.json pins @clayui/list which is never imported.\n"
+              "downstream cards must copy the Task 6 helper scripts.\n"
+              "GIT ABSENT — nothing staged.")
+
+    assert run.noted_fixes(result) == [
+        "RomanEvaluator.js:53-59 has no key props.",
+        "package.json pins @clayui/list which is never imported.",
+        "downstream cards must copy the Task 6 helper scripts.",
+    ]
+
+
+def test_the_gate_records_what_it_counted_for_the_summary(monkeypatch, tmp_path):
+    """A fact recorded when it was true, not re-derived when the run ends.
+
+    On a board that runs integration tests, RVc sits above Gc. The gate counted RVa's
+    notes and said so in its evidence line; a summary that re-derives at the end finds
+    RVc's `NOTES: none` and reports none — a run whose gate said "2 noted fixes" finishing
+    with an empty key.
+    """
+    monkeypatch.setattr(run, "WORKDIR", str(tmp_path / "work"))
+    (tmp_path / "work").mkdir()
+    monkeypatch.setattr(run.STATE, "verdicts_path", str(tmp_path / "verdicts.jsonl"))
+    monkeypatch.setattr(run.STATE, "snap_dir", str(tmp_path / "snapshots"))
+    (tmp_path / "snapshots").mkdir()
+    (tmp_path / "snapshots" / "lane-1-workdir-at-gate.md").write_text("x")
+    run.STATE.noted_at_gate.clear()
+    (tmp_path / "verdicts.jsonl").write_text(json.dumps(
+        {"event": "verdict", "lane": 1, "code": "RVa1", "verdict": "PASS",
+         "text": "PASS: (a)-(f) hold. NOTES:\nRomanEvaluator.js has no key props."}) + "\n")
+
+    evidence = run.gate_evidence(1, {}, staged=[], commit_target="nowhere")
+
+    assert "1 noted fix" in evidence
+    assert run.STATE.noted_at_gate[1] == ["RomanEvaluator.js has no key props."]
+
+    # a later review, above the gate, saying none — the record does not move
+    (tmp_path / "verdicts.jsonl").write_text(json.dumps(
+        {"event": "verdict", "lane": 1, "code": "RVc1", "verdict": "PASS",
+         "text": "PASS: checklist 1-8 hold. NOTES: none."}) + "\n")
+    assert run.STATE.noted_at_gate[1] == ["RomanEvaluator.js has no key props."]
+    assert run.lane_noted_fixes(1) == []

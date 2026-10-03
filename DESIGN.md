@@ -218,7 +218,9 @@ Gi(n)      ──REWORK───────→ I(n)-rev-N          → Gi(n)-r(
   checks the necessary conditions of plan checklist items 1 (header fields, Global
   Constraints, no "For agentic workers", no Execution Handoff, a `Spec:` that exists), 2
   (every `SCn` in the spec's Success criteria is named by some step, unless the spec marks
-  it `manual at Gc`), 4 (every step has a `Tick:` sentence; no path is written by both a
+  it `manual at Gc`), 4 (every step has a `Tick:` sentence; a `Tick:` that names another
+  step's command where this step has no `Run:` line of its own has nothing to tick on; no
+  path is written by both a
   [TW] and a [C] step) and 6 (no Run command commits, pushes, stashes, branches or runs
   `hermes kanban`), and `untagged` lists every file block and Run command under a step
   heading with no tag, or under none (a tagless heading ends the step before it, so what
@@ -229,7 +231,11 @@ Gi(n)      ──REWORK───────→ I(n)-rev-N          → Gi(n)-r(
   `untagged n`), and either makes the probe exit 1. Why: plan reviews rejected, on
   rule-decidable grounds the probe had passed, five untagged step headings and two steps
   with no tick sentence (is-even, 2026-09-30) and a stray `sc5/` fixture plus two unlisted
-  build by-products (Liferay, 2026-09-30) — each a whole review round.
+  build by-products (Liferay, 2026-09-30) — each a whole review round. And one the
+  review *recorded* as sound: the is-even plan of 2026-10-03 has a `Step 1 [C]` with no Run
+  command whose Tick waits on "the Step 2 [C] command", and the review wrote "every step
+  carries a Tick sentence in an allowed form" without running the step. The example in
+  `p-body.txt` taught that shape, so the example was corrected too.
 - **The driver writes the review header.** `stamp_review_header` puts
   `review_header` on a review card's `review.md` before attaching it: card and run,
   verdict, plan, spec, what was judged (the plan version for RVp, the lane's patches for
@@ -378,6 +384,22 @@ maintenance is in [template/roles/README.md](template/roles/README.md).
 
 ## Driver behaviour
 
+- **The open states the lane's cards, because only the open knows them.** The cards are
+  filed IT-complete — filing happens before the idea exists, and `integration-tests`,
+  `unit-tests` and `refinement` are resolved at open — so a body cannot state which of them
+  this lane runs. The driver posts one comment on the lane's root card naming `LIVE CARDS:`
+  and `PRUNED: <code> (<reason>)`, and the plan card and checklist item 4 read that line
+  instead of telling a model to go and run `hermes kanban list`. Measured 2026-10-01: the
+  Liferay plan ignored the board read, wrote `src/integration.test.js` and expected
+  `21 passed` for a lane whose `TI1` had been archived seconds earlier, and the plan review
+  checked the arithmetic (10+7+2+2) without noticing. The comment is the same move as the
+  `set-model` pinning a few lines below it — a fact only the open has, delivered before the
+  root is released — on **P and RVp**, not the lane root, because `p-body.txt` says the
+  line is on *this* card, `_plan-checklist.txt` item 4 makes the reviewer decide from it,
+  and `_worker-contract.txt` scopes a worker to `<YOUR-CARD-ID>`. The two halves are
+  disjoint by construction: PRUNED is built first, LIVE is what is left of the cards the
+  board actually has, so a card named in both, or one deleted from the board, cannot
+  happen. A comment that throws is logged and the open continues.
 - **Serve mode.** The driver releases nothing until a Triage card is promoted. Arming
   validates headers and manifest, adopts the text into `lane-<k>.md`, mints
   `runs/<run-id>/`, archives the previous run's cards and files a fresh lane set. The
@@ -488,6 +510,24 @@ external `default-workdir` says where its deliverable went.
 Inside the work directory (and declared `targets`) the lane owns the tree: it may
 change, replace or delete anything there, and no staged or uncommitted file is
 promised to survive. Outside those roots the board touches nothing.
+
+**A model change moves the previous model's product aside** (`rotate_work_directory`,
+at the lane open, before anything reads the tree). `workdir.json` records the model as
+well as the git facts, because the next run has to know whose product it is looking at:
+when the board's model differs from the recorded one and `work/` holds files, the
+directory is renamed to `work.<previous model>/` and an empty one is created in its
+place. Three models ran `is-even` in a row on 2026-10-03 and each product had to be kept
+by hand, because the driver offered nowhere to put one — every rule that reads the work
+directory (the docs publishing, E16, E19, the probe-tree pruning) addresses `work/`, so
+keeping the results took them out of the audit's sight and left `boards/is-even/work`
+not existing at all. It runs **below the lane's two guards**
+  (`lane_paths_agree`, `lane_opened_on_record`) and above everything that reads the tree: it
+  is an `os.rename`, the one mutation at the open that fixing `runs/current` cannot undo, so
+  a lane the driver was not pointed at is escalated with its work directory untouched.
+  Nothing is deleted, a destination that already exists is stepped
+around rather than overwritten, and **the same model never rotates**: re-running one
+usually means the next idea is a fix of what the last run built, which is exactly what
+`workdir_state` reports to the researcher on purpose.
 
 ## How a lane avoids and escapes a stall
 
@@ -841,8 +881,24 @@ later failure and label every later halt.
   finishes (attached patch, result, verdict, and for worker cards the staged set).
   Rework-round cards (`RVa1-r2`, `P1-rev-1`) are recorded like base cards. Every gate
   rework adds a `rework` record (gate, round, cards filed, findings).
+- **A verdict's `NOTES:` clause is counted, and the count is recorded where it was
+  taken.** `noted_fixes` reads the clause, cuts it at the next prescribed clause marker
+  (`OCR:`, `GIT ABSENT`, `VERIFIED:`, `PROBE:` — NOTES is written last in the shape
+  `rvp-body.txt` prescribes, so anything after it is the next clause), and splits it one
+  note per line. `gate_evidence` prints the count in the gate's evidence line and
+  **records it** in `STATE.noted_at_gate`; `run-summary.json` reads that record rather than
+  re-deriving it at the end of the run, because on a board that runs integration tests RVc
+  sits above Gc and a re-derivation reports THAT review's notes — so a run whose gate said
+  "2 noted fixes" could finish with an empty key. A verdict that predates the clause reads
+  as no notes, which is why `rvp-body.txt`/`rva-body.txt`/`rvc-body.txt` now require it.
 - **Verdict ledger** — `runs/<run-id>/verdicts.jsonl`: every verdict, rework and
-  escalation.
+  escalation. The verdict line keeps the **whole** result text plus `text_bytes`; the
+  chain record keeps a 200-character head with `result_truncated` beside it. Both halves
+  used to cut silently — the ledger at 600 characters, mid-word, so on is-even
+  `run-20261003-152343` RVp1's line ended `"Step 1 [TW] (35) states pre"` and RVa1's ended
+  `summary "`. A cut with no marker cannot be told from a reviewer that stopped writing,
+  and this file is the run's own index of what the reviews decided — `lane_noted_fixes`
+  reads it, so a truncated NOTES clause is a count that comes out wrong rather than absent.
 - `driver/doc-chain.py --runs boards/<slug>/runs` checks the chain against the
   filesystem and exits 1 on: a named document that is missing (F1); one a card reads
   but that was written after it started (F2); one written before the run began — a
@@ -969,9 +1025,77 @@ Each is current behaviour, with what to do about it.
   stale content. `reset.sh` stops this board's workers before archiving;
   `run-audit.py` warns on a worker that outlived the run (E8) — and only on one that is
   really still running: a zombie (`pgrep` lists it, `/proc` says `Z`), a worker whose card
-  is already `done`, and a worker whose card is not on this board are all ignored. Each of
+  is already `done`, and a worker whose card belongs to another run are all ignored. Each of
   those three produced a false warning on the is-even run of 2026-09-15, and a run summary
-  is written once, so a false one can never be withdrawn.
+  is written once, so a false one can never be withdrawn. A fourth was found on 2026-10-03:
+  the "not this run's card" filter needs a card list, and the only list was the **live
+  board's** — so on a board that had been removed after its run (is-even, again) the filter
+  was skipped and E8 named the Liferay board's live I1 worker (pid 539300, `t_9c08932f`,
+  started seven minutes after the audited run finished). E8 now has two sources and consults
+  both: the live board wins wherever it knows the card, and the run's own `cards/<id>.jsonl`
+  (`last_card_records`) answers wherever it does not — including when the board is readable
+  but no longer lists that card, which is the same silence pointed the other way. A `pgrep`
+  line with no task id is not judged at all. The same file is E12's second source for the end
+  state, so a removed board no longer leaves the end state unchecked; it filters out codes
+  the driver itself retired (`driver_archived_codes`: a card archived at lane open keeps its
+  pre-archive status in the log, because the log records observations, not decisions).
+- **A card can die at the very end and take the board with it.** Two shapes, measured on
+  2026-10-03. The ceiling: P1 killed at 1804 s against an 1800 s limit
+  (`run-20261003-120232`). The repetition abort: P1's worker exited 1 with Hermes' own
+  words — "Response dominated by repeated text — stopping the stream mid-loop" — retries
+  spent, board halted (`run-20261003-155632`, 300m, `max-reworks: 8`, the first such death
+  on record). A stopped stream is not a card that did the work wrong, and the halt could not
+  tell them apart, so the cause is now **recorded**: `repetition_stop` reads the same
+  attempt-scoped log slice `provider_hits` reads and the halt reason gains "stream stopped
+  mid-repetition" beside the provider note — and the same marker is what makes the card
+  salvageable at all, so the two entries are one mechanism read in two places. Deliberately not reclassified — the retry
+  budget still governs, and what a stopped stream deserves is a template-semantics
+  question, not one to settle because a board lost a run.
+- **A P card that finished and was not heard from is salvageable, and which death it was
+  decides whether the driver looks.** `salvage_finished_plan` closes the card as `SALVAGED:`
+  before either halt when its plan is written, its probe log is complete and full-pass, wrote
+  every file block, skipped no command, is UNTAGGED-clean, and records that plan's own
+  sha256. It is reachable from **both** deaths — the ceiling, and a worker the client's
+  repetition guard stopped. That second path was added on 2026-10-03 because it is the more
+  salvageable failure of the two: P1 on the Liferay board wrote a 36 KB plan (8 tasks, 19
+  steps), probed it clean and full (16 file blocks, 11/11 Run commands exit 0), and the probe
+  recorded that plan's sha256 — and then the stream was stopped, the worker exited 1, the
+  retries were spent and a 300m board halted. A stopped stream is a card that finished and
+  was not heard from, so the first version, reachable only from the ceiling, could not help
+  the one case that most deserved it.
+
+  **A LINT defect does not block; an UNTAGGED one does.** A LINT defect is a property of the
+  plan's text — an uncovered `SCn`, an unlisted by-product — and the fix is to edit it. The
+  10-03 plan carried two (item 2 and item 7) and refusing to salvage would have made the
+  alternative a regeneration of the whole document, which is the expensive path: the
+  rejection round is not waste, it is what hands `P1-rev-1` its findings, and a revision edits
+  two lines rather than writing 839. An UNTAGGED block is different in kind — a file block or
+  a Run command under no step heading, so no card will ever write or run it — so the hand-off
+  is then not the plan but a document that silently drops work, and the salvage refuses. The
+  count of LINT defects is carried into the `SALVAGED:` result, so the review and the card's
+  own text both see what the probe found.
+- **Nothing in this repo can read a card's tool calls, retries or compactions.**
+  `hermes kanban runs --json` carries `outcome`, `elapsed_min`, `summary` and `started`,
+  and that is the whole of a finished card's record. So a compaction is invisible after the
+  fact: TIMELINE §15 had to export a session by hand to find one, and §17's runs cannot be
+  compared on process reliability at all. On the local rig the same gap hides a model
+  running out of room — nine `qwen38-27b` assistant turns ended mid-reasoning on
+  2026-10-01, 332 of one run's 509 agent minutes, and neither `token_count` (NULL on all
+  48 319 messages) nor the llama-swap journal said so. The marker is chosen by the model
+  config and has already changed once, so any detector must read the string from the
+  config rather than hardcode it. Until the data exists, the audit cannot rule on it and
+  no rule should pretend to.
+- **A lint that fires on a legitimate plan costs a review round, so its class must be
+  the unmakeable one.** The item-4 Tick rule rejects a `Tick:` that hands the box to
+  **another card's** step — a `[TW]` step naming a `[C]` command, a `[C]` step naming a
+  `[TI]` one. Naming another step of the *same* tag is makeable and correct: `p-body.txt`
+  says the C card runs every `[C]` step in the same turn and records the output, which is
+  the "exact line the recorded command prints" form checklist item 4 allows. A first
+  version rejected the other shape and would have rejected all four plans that shipped on
+  2026-10-01 and 10-03 — three hits each on the Liferay board's two, one on is-even's. A
+  lint's blast radius is one review round per false positive, which is why every lint here
+  is checked against the real corpus (`boards/*/work.*/docs/superpowers/plans/`) before it
+  ships, not only against its own fixture.
 - **The goal judge can wedge every worker card** when it cannot answer, and a working
   probe proves only that it answers. Mechanism, probe and levers:
   [the goal judge](#the-goal-judge).

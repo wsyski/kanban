@@ -692,11 +692,15 @@ def spec_path(text):
     return None
 
 
+_TASK_OF = re.compile(r"Task (\S+) Step (\d+)")
+
+
 def lint_plan(text, files, commands):
     """[(item, where, message)] — the plan checklist's rule-decidable defects:
     item 1 the header, item 2 a success criterion no step names, item 4 a step with no
-    `Tick:` sentence and a path both a [TW] and a [C] step write, item 6 a Run command
-    that commits, branches, pushes, stashes or drives the board."""
+    `Tick:` sentence, a `Tick:` that names another step's command where this step has no
+    Run command of its own, and a path both a [TW] and a [C] step write, item 6 a Run
+    command that commits, branches, pushes, stashes or drives the board."""
     out = []
     text = text.replace("\r\n", "\n")
     for name in ("Goal", "Architecture", "Tech Stack", "Spec"):
@@ -724,9 +728,39 @@ def lint_plan(text, files, commands):
                                    f"and is not `manual at Gc` in the spec"))
     elif spec:
         out.append((1, "header", f"the Spec line names {spec}, which does not exist"))
+    # Which card owns which step, by task: `Step 2` inside Task 2 means Task 2's Step 2,
+    # and a Tick's reference is only makeable if that step's tag is the one this card runs.
+    tags_by_task = {}
+    for st in steps:
+        m = _TASK_OF.match(st["where"])
+        if m and st["tag"]:
+            tags_by_task.setdefault(m.group(1), {})[m.group(2)] = st["tag"]
     for st in steps:
         if not re.search(r"\bTick\b\s*(?:\*\*)?\s*:", st["prose"]):
             out.append((4, st["where"], "no `Tick:` sentence — say what ticks this step's box"))
+        elif st["tag"]:
+            # A Tick that hands the box to ANOTHER CARD is unmakeable: each card runs
+            # only its own steps' Run commands, so a [TW] step cannot tick on a [C]
+            # command, nor a [C] step on a [TI] one. Naming another step of the SAME
+            # tag is fine and is what the template's example taught — the C card runs
+            # every [C] step in the same turn and records the output, which is the
+            # "the exact line the recorded command prints" form checklist item 4 allows.
+            # An earlier version of this check rejected the four real plans of
+            # 2026-10-01 and 10-03 on that shape, one per Task, all `[C]` naming `[C]`.
+            tick = re.search(r"\bTick\b\s*(?:\*\*)?\s*:(.*)", st["prose"], re.S)
+            refs = set(re.findall(r"\bStep\s+(\d+)\b", tick.group(1))) if tick else set()
+            mine = re.search(r"Step (\d+)", st["where"])
+            foreign = sorted(n for n in refs
+                             if n != (mine.group(1) if mine else None)
+                             and tags_by_task.get(_TASK_OF.match(st["where"]).group(1), {}).get(n)
+                             not in (None, st["tag"]))
+            if foreign:
+                task_tags = tags_by_task.get(_TASK_OF.match(st["where"]).group(1), {})
+                other = ", ".join(f"Step {n} [{task_tags.get(n)}]" for n in foreign)
+                out.append((4, st["where"],
+                            f"the Tick sentence names {other}, and this step is [{st['tag']}] "
+                            f"— another card's steps, whose commands this card never runs, so "
+                            f"nothing it records can tick this box"))
     by_tag = {}
     for f in files:
         if f["tag"] in ("TW", "C"):
