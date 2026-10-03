@@ -24,6 +24,7 @@ __pycache__/
 # staged one reaches every later card's `git diff --cached` (run-audit E14).
 boards/*/runs/
 boards/*/work/
+boards/*/work.*/
 
 # Verdict texts captured by hand from real runs; nothing reads them.
 tests/integration/verdicts/
