@@ -14,8 +14,8 @@
   "goal-cards": [
     "C"
   ],
-  "max-runtime": "30m",
-  "max-reworks": 2,
-  "model": "swift15-27b",
+  "max-runtime": "60m",
+  "max-reworks": 3,
+  "model": "gsq38-27b",
   "provider": "llama-swap"
 }
